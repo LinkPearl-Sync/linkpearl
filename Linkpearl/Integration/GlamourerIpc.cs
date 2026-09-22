@@ -27,6 +27,7 @@ public sealed class GlamourerIpc
     private readonly ApplyState _applyState;
     private readonly RevertState _revertState;
     private readonly UnlockState _unlockState;
+    private readonly UnlockAll _unlockAll;
 
     public GlamourerIpc(IDalamudPluginInterface pi)
     {
@@ -35,6 +36,7 @@ public sealed class GlamourerIpc
         _applyState  = new ApplyState(pi);
         _revertState = new RevertState(pi);
         _unlockState = new UnlockState(pi);
+        _unlockAll   = new UnlockAll(pi);
     }
 
     public (int Major, int Minor)? TryGetVersion()
@@ -61,6 +63,26 @@ public sealed class GlamourerIpc
         var ec = _applyState.Invoke(base64, objectIndex, LockKey, ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization);
         if (ec is not GlamourerApiEc.Success)
             throw new InvalidOperationException($"application d'état refusée par Glamourer : {ec}");
+    }
+
+    /// <summary>
+    /// Relâche tous les verrous posés avec notre clé, sans rien changer d'autre.
+    /// </summary>
+    /// <remarks>
+    /// Non destructif, contrairement à <see cref="Release"/> : cela ne touche
+    /// pas à l'apparence, cela retire seulement une éventuelle mainmise de notre
+    /// part. Sert quand on soupçonne qu'un verrou oublié gêne un autre plugin.
+    /// </remarks>
+    public int UnlockEverything()
+    {
+        try
+        {
+            return _unlockAll.Invoke(LockKey);
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
     }
 
     /// <summary>Rend le personnage à son état normal et relâche notre verrou.</summary>

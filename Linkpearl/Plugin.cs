@@ -106,6 +106,8 @@ public sealed class Plugin : IDalamudPlugin
             case "pairs":         ShowPairs();                                 break;
             case "id":            Report($"votre identifiant : {_pairing.Id}"); break;
             case "":              Open();                                      break;
+            case "diag":          RunSafely(DiagnoseAsync);                    break;
+            case "unlock":        RunSafely(UnlockAsync);                      break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
@@ -138,13 +140,34 @@ public sealed class Plugin : IDalamudPlugin
                 }
 
                 Report("invite | pair <nom> | check | pairs | rename <a> <b> | unpair <nom>");
-                Report("rdv <hôte> | id | announce | capture | apply | revert");
+                Report("rdv <hôte> | id | announce | capture | apply | revert | diag | unlock");
                 Report("capture | capture force | apply | revert");
                 break;
         }
     }
 
     private void Open() => _window.IsOpen = true;
+
+    /// <summary>Dit ce que le plugin a laissé sur le personnage, s'il a laissé quelque chose.</summary>
+    private async Task DiagnoseAsync()
+    {
+        var report = await Framework.RunOnFrameworkThread(_selfLoop.Diagnose).ConfigureAwait(false);
+        Report(report);
+        Log.Information($"Diagnostic Linkpearl : {report}");
+    }
+
+    /// <summary>Retire toute mainmise sur Glamourer, sans toucher à l'apparence.</summary>
+    private async Task UnlockAsync()
+    {
+        var released = await Framework.RunOnFrameworkThread(_selfLoop.UnlockGlamourer).ConfigureAwait(false);
+
+        Report(released switch
+        {
+            < 0 => "Glamourer n'a pas répondu.",
+            0 => "aucun verrou de notre part : Linkpearl ne tenait rien.",
+            _ => $"{released} verrou(x) relâché(s).",
+        });
+    }
 
     /// <summary>
     /// Tient à jour ce que l'interface affiche.

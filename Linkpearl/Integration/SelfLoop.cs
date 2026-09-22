@@ -310,6 +310,25 @@ public sealed class SelfLoop : IDisposable
         }
     }
 
+    /// <summary>Ce que le plugin a laissé, et ce que le jeu en dit.</summary>
+    public string Diagnose()
+    {
+        var collection = ReadRememberedCollection();
+        var glamourer = File.Exists(GlamourerMarkerPath);
+
+        return $"trace de collection : {(collection is { } id ? id.ToString() : "aucune")}. "
+             + $"Trace Glamourer : {(glamourer ? "présente" : "aucune")}. "
+             + $"Penumbra pour votre personnage : {_penumbra.DescribeCollection(PlayerIndex)}";
+    }
+
+    /// <summary>Retire toute mainmise de notre part sur Glamourer, sans rien changer d'autre.</summary>
+    public int UnlockGlamourer()
+    {
+        var released = _glamourer.UnlockEverything();
+        ForgetGlamourer();
+        return released;
+    }
+
     /// <summary>Vrai s'il reste quelque chose à nettoyer d'une session précédente.</summary>
     public bool HasLeftovers() => ReadRememberedCollection() is not null || File.Exists(GlamourerMarkerPath);
 
