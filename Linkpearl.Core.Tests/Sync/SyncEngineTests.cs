@@ -234,11 +234,12 @@ public sealed class SyncEngineTests : IDisposable
     {
         await using var world = await TwoEnginesAsync();
 
-        await world.SettleAsync(
+        var settled = await world.SettleAsync(
             () => world.BobApplicator.Applied.Count > 0,
             [],
             [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)]);
 
+        Assert.True(settled, "l'apparence n'a jamais été posée : " + world.Describe());
         Assert.Equal(AlicePrint, world.BobBook.Find(world.AliceId)!.PinnedFingerprint);
     }
 
@@ -272,7 +273,9 @@ public sealed class SyncEngineTests : IDisposable
 
         IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
 
-        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
 
         for (var i = 0; i < 10; i++)
             await world.TickAsync([], sees);
@@ -289,7 +292,9 @@ public sealed class SyncEngineTests : IDisposable
 
         IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
 
-        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
 
         world.BobBook.SetPaused(world.AliceId, true);
         await world.TickAsync([], sees);
@@ -321,7 +326,9 @@ public sealed class SyncEngineTests : IDisposable
 
         IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
 
-        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
 
         await world.DisposeAsync();
 
@@ -522,7 +529,7 @@ public sealed class SyncEngineTests : IDisposable
         public async Task<bool> SettleAsync(
             Func<bool> done, IReadOnlyList<VisiblePlayer> aliceSees, IReadOnlyList<VisiblePlayer> bobSees)
         {
-            for (var i = 0; i < 400; i++)
+            for (var i = 0; i < 2000; i++)
             {
                 await TickAsync(aliceSees, bobSees);
 

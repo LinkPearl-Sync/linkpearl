@@ -11,6 +11,12 @@ La seule infrastructure est un service de rendez-vous, auto-hébergeable, qui ai
 publique, ni nom de personnage, ni manifeste, ni fichier : seulement des adresses IP et des
 jetons opaques qui tournent toutes les dix minutes.
 
+Ce service vit dans son propre dépôt,
+[linkpearl-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-rendezvous). Les trois
+fichiers du format de fil y sont copiés littéralement, et `Linkpearl.Core.Tests/Fixtures/rendezvous-vectors.json`
+est le même fichier des deux côtés : le premier qui touche à un octet du format casse son
+propre test.
+
 ## État
 
 En cours de conception et de construction. Rien n'est utilisable pour l'instant.

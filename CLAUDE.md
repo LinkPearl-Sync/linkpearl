@@ -16,6 +16,18 @@ itérations ont été invalidées pour les avoir ignorées.
 `docs/pairage.md` explique pourquoi le pairage ne ressemble pas à ce que la
 spec prévoyait.
 
+## Le serveur vit ailleurs
+
+Le service de rendez-vous est dans [linkpearl-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-rendezvous).
+Il porte une copie littérale de trois fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
+`Core/Transport/Rendezvous/RendezvousTicket.cs` et `Core/Abstractions/IClock.cs`.
+
+Toucher à l'un des trois oblige à recopier là-bas, et à vérifier que `diff` est vide.
+`Linkpearl.Core.Tests/Fixtures/rendezvous-vectors.json` et `RendezvousVectorTests.cs` sont
+identiques dans les deux dépôts, et ce sont eux qui attrapent une dérive. Ils attestent d'une
+cohérence de format, pas de la justesse du protocole : ils ont été produits par
+l'implémentation qu'ils testent.
+
 ## Les trois règles dont la violation coûte le plus cher
 
 1. **`Linkpearl/Core/` ne référence jamais Dalamud.** C'est ce qui permet à

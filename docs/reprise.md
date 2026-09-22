@@ -42,7 +42,7 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 | 2 bis, traversée de NAT | NAT classé favorable. Test de paire réel en attente d'une seconde personne. |
 | 3, crypto et protocole | **Clos**. Relecture externe toujours due, voir plus bas. |
 | 4, cache et transfert | **Clos**, chaîne vérifiée de bout en bout sur des données réelles. |
-| 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. |
+| 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit désormais dans son propre dépôt. |
 | 6, moteur de synchronisation | **En cours**, voir ci-dessous. |
 | 7, interface | Partiellement fait, en avance sur le plan. |
 
