@@ -10,6 +10,16 @@ if (args.Length > 0 && args[0] == "vectors")
     return;
 }
 
+if (args.Length > 0 && args[0] == "rdv")
+{
+    var host = args.Length > 1 ? args[1] : "127.0.0.1";
+    var rdvPort = args.Length > 2 && int.TryParse(args[2], out var p2) ? p2 : 47900;
+    var role = args.Length > 3 ? args[3] : "a";
+
+    Environment.ExitCode = await RendezvousRun.ExecuteAsync(host, rdvPort, role, CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "pairing")
 {
     using var identity = Linkpearl.Core.Crypto.CryptoPrimitives.GenerateIdentity();

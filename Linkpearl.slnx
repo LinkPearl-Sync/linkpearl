@@ -2,6 +2,7 @@
   <Project Path="Linkpearl.Core.Tests/Linkpearl.Core.Tests.csproj" />
   <Project Path="Linkpearl.Harness/Linkpearl.Harness.csproj" />
   <Project Path="Linkpearl.Probe/Linkpearl.Probe.csproj" />
+  <Project Path="Linkpearl.Rendezvous/Linkpearl.Rendezvous.csproj" />
   <Project Path="Linkpearl/Linkpearl.csproj">
     <Platform Project="x64" />
   </Project>
