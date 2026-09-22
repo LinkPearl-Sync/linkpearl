@@ -1,8 +1,11 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
+using LiteNetLib.Utils;
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Core.Transport;
 
@@ -46,7 +49,9 @@ public sealed class PeerLinkFactory : IDisposable
         _listener.PeerConnectedEvent += OnPeerConnected;
         _listener.PeerDisconnectedEvent += OnPeerDisconnected;
         _listener.NetworkReceiveEvent += OnReceive;
+        _listener.NetworkReceiveUnconnectedEvent += OnUnconnected;
 
+        _manager.UnconnectedMessagesEnabled = true;
         _manager.Start();
     }
 
@@ -120,6 +125,73 @@ public sealed class PeerLinkFactory : IDisposable
 
     /// <summary>À appeler depuis le thread du jeu, à chaque image.</summary>
     public void Poll() => _manager.PollEvents();
+
+    /// <summary>
+    /// Demande au rendez-vous l'adresse publique de <em>cette</em> socket.
+    /// </summary>
+    /// <remarks>
+    /// Par un message hors connexion, donc sur la socket même qui portera les
+    /// liens. C'est essentiel : le NAT associe une adresse publique à une socket
+    /// précise, et découvrir celle d'une autre socket donnerait une adresse
+    /// que le pair ne pourrait pas joindre.
+    /// </remarks>
+    public async Task<IPEndPoint?> ReflectAsync(IPEndPoint rendezvous, TimeSpan timeout, CancellationToken ct)
+    {
+        var completion = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _reflection = completion;
+
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(timeout);
+
+            var writer = new NetDataWriter();
+            writer.Put(RendezvousKind.Reflect);
+
+            while (deadline.IsCancellationRequested is false && completion.Task.IsCompleted is false)
+            {
+                _manager.SendUnconnectedMessage(writer, rendezvous);
+                await Task.Delay(300, deadline.Token).ConfigureAwait(false);
+            }
+
+            return completion.Task.IsCompletedSuccessfully ? await completion.Task.ConfigureAwait(false) : null;
+        }
+        catch (OperationCanceledException)
+        {
+            return completion.Task.IsCompletedSuccessfully ? await completion.Task.ConfigureAwait(false) : null;
+        }
+        finally
+        {
+            _reflection = null;
+        }
+    }
+
+    private TaskCompletionSource<IPEndPoint>? _reflection;
+
+    private void OnUnconnected(IPEndPoint from, NetPacketReader reader, UnconnectedMessageType type)
+    {
+        var data = reader.GetRemainingBytes();
+        reader.Recycle();
+
+        if (data.Length < 4 || data[0] != RendezvousKind.Reflected)
+            return;
+
+        var length = data[1];
+
+        if (data.Length < 2 + length + 2)
+            return;
+
+        try
+        {
+            var address = new IPAddress(data.AsSpan(2, length));
+            var port = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(2 + length));
+            _reflection?.TrySetResult(new IPEndPoint(address, port));
+        }
+        catch (Exception e)
+        {
+            _log.Debug($"Réflexion illisible : {e.Message}");
+        }
+    }
 
     private void OnConnectionRequest(ConnectionRequest request)
     {
