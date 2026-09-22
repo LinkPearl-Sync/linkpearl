@@ -49,10 +49,42 @@ Conséquences :
    qui définira le débit réel, et il le fixera sous les chiffres ci-dessus.
 2. Le critère du jalon devient une contrainte sur le ping du jeu, à mesurer en
    jeu et non sur le banc.
-3. Cent secondes pour un personnage lourd est acceptable si le jeu reste
-   jouable pendant ce temps. Le projet passe.
-4. Vendoriser LiteNetLib pour élargir sa fenêtre n'a plus d'intérêt immédiat :
-   le débit brut n'est pas le facteur limitant, la congestion l'est.
+3. Cent secondes pour un personnage de 298 Mo est acceptable si le jeu reste
+   jouable pendant ce temps.
+
+## Révision : 298 Mo n'est pas représentatif
+
+Le personnage mesuré est un cas favorable. D'après l'observation de
+l'utilisateur, **la moyenne se situe plutôt autour de 800 Mo**. Cela change les
+conclusions, et pas à la marge.
+
+| Débit | 298 Mo | 800 Mo |
+|---|---|---|
+| 3,00 Mo/s (60 ms, 1 %) | 1 min 40 | **4 min 27** |
+| 2,27 Mo/s (150 ms, 1 %) | 2 min 11 | **5 min 52** |
+
+Et le goulot change de nature selon la ligne de l'émetteur :
+
+- **Sur une ligne à faible débit montant** (ADSL, câble à 10 Mbit/s), c'est le
+  lien qui domine : 800 Mo demandent environ 11 minutes, quel que soit le
+  protocole. LiteNetLib n'y est pour rien.
+- **Sur une fibre symétrique**, le lien pourrait passer 800 Mo en une vingtaine
+  de secondes, mais le plafond mesuré de 3 à 4,7 Mo/s (soit 25 à 37 Mbit/s)
+  devient la limite. **Là, LiteNetLib coûte plusieurs minutes.**
+
+Conséquences révisées :
+
+4. Vendoriser LiteNetLib pour élargir sa fenêtre redevient pertinent, pour les
+   utilisateurs en fibre chez qui c'est la bibliothèque et non le lien qui
+   plafonne. À décider après la mesure du ping en jeu.
+5. **Le pré-téléchargement dès que les deux pairs sont en ligne, et non quand
+   ils se voient, cesse d'être un confort.** À cinq minutes par pair, attendre
+   la mise à portée rendrait la synchronisation inutilisable.
+6. La déduplication entre pairs prend une importance qu'elle n'avait pas : un
+   cercle partage souvent les mêmes corps et les mêmes peaux de base, et ce qui
+   est déjà en cache ne coûte rien.
+7. L'arithmétique du lien montant devient le vrai sujet : cinq pairs qui
+   arrivent ensemble, c'est cinq fois 800 Mo à émettre depuis une seule box.
 
 ## Reste à mesurer
 
