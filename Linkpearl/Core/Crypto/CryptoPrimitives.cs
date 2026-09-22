@@ -25,6 +25,9 @@ public static class CryptoPrimitives
     /// <summary>Point P-256 non compressé : préfixe 0x04, puis X et Y sur 32 octets.</summary>
     public const int PublicPointLength = 65;
 
+    /// <summary>Point P-256 compressé : préfixe de parité, puis X sur 32 octets.</summary>
+    public const int CompressedPointLength = 33;
+
     /// <summary>Signature au format concaténé r||s, de taille fixe.</summary>
     public const int SignatureLength = 64;
 
@@ -120,6 +123,73 @@ public static class CryptoPrimitives
 
         plaintext = output;
         return true;
+    }
+
+    /// <summary>
+    /// Ramène un point à sa forme compressée.
+    /// </summary>
+    /// <remarks>
+    /// L'ordonnée d'un point de la courbe se retrouve à partir de son abscisse,
+    /// au signe près. Un seul bit de parité suffit donc à lever l'ambiguïté, et
+    /// le code d'invitation passe de cent quarante à quatre-vingt-huit
+    /// caractères. Sur quelque chose que l'on colle dans un salon de discussion,
+    /// cela compte.
+    /// </remarks>
+    public static byte[] Compress(ReadOnlySpan<byte> point)
+    {
+        if (point.Length != PublicPointLength || point[0] != 0x04)
+            throw new CryptographicException("point public P-256 malformé");
+
+        var compressed = new byte[CompressedPointLength];
+        compressed[0] = (byte)(0x02 | (point[^1] & 1));
+        point.Slice(1, CoordinateLength).CopyTo(compressed.AsSpan(1));
+        return compressed;
+    }
+
+    /// <summary>
+    /// Retrouve l'ordonnée à partir de l'abscisse et du bit de parité.
+    /// </summary>
+    /// <remarks>
+    /// Le module de P-256 vaut 3 modulo 4, donc la racine carrée modulaire
+    /// s'obtient par une simple exponentiation à la puissance (p+1)/4. Il faut
+    /// ensuite vérifier que le résultat est bien une racine : une abscisse sur
+    /// deux n'appartient à aucun point de la courbe, et rendre un point faux
+    /// serait pire que refuser.
+    /// </remarks>
+    public static byte[] Decompress(ReadOnlySpan<byte> compressed)
+    {
+        if (compressed.Length != CompressedPointLength || compressed[0] is not (0x02 or 0x03))
+            throw new CryptographicException("point public P-256 compressé malformé");
+
+        var x = new BigInteger(compressed[1..], isUnsigned: true, isBigEndian: true);
+
+        if (x >= P)
+            throw new CryptographicException("abscisse hors du corps de P-256");
+
+        var square = (BigInteger.ModPow(x, 3, P) - (3 * x) + B) % P;
+        if (square.Sign < 0)
+            square += P;
+
+        var y = BigInteger.ModPow(square, (P + 1) / 4, P);
+
+        if (BigInteger.ModPow(y, 2, P) != square)
+            throw new CryptographicException("abscisse n'appartenant à aucun point de la courbe");
+
+        if ((y.IsEven ? 0 : 1) != (compressed[0] & 1))
+            y = P - y;
+
+        var point = new byte[PublicPointLength];
+        point[0] = 0x04;
+        WriteCoordinate(x, point.AsSpan(1));
+        WriteCoordinate(y, point.AsSpan(1 + CoordinateLength));
+        return point;
+    }
+
+    private static void WriteCoordinate(BigInteger value, Span<byte> destination)
+    {
+        destination.Clear();
+        var bytes = value.ToByteArray(isUnsigned: true, isBigEndian: true);
+        bytes.CopyTo(destination[(CoordinateLength - bytes.Length)..]);
     }
 
     private static byte[] Encode(ECParameters parameters)
