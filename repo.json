@@ -20,6 +20,7 @@
     "AcceptsFeedback": true,
     "DownloadCount": 0,
     "LastUpdate": 1790117416,
+    "IconUrl": "https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl/main/Plugin_Logo.png",
     "DownloadLinkInstall": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.1.3/Linkpearl.zip",
     "DownloadLinkUpdate": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.1.3/Linkpearl.zip",
     "DownloadLinkTesting": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.1.3/Linkpearl.zip",
