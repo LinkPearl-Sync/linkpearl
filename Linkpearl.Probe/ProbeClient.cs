@@ -11,10 +11,13 @@ public sealed class ProbeClient
     private readonly string _host;
     private readonly int _basePort;
 
-    public ProbeClient(string host, int basePort)
+    private readonly string? _v6Override;
+
+    public ProbeClient(string host, int basePort, string? v6Override = null)
     {
         _host = host;
         _basePort = basePort;
+        _v6Override = v6Override;
 
         _socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp) { DualMode = true };
         _socket.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
@@ -28,9 +31,14 @@ public sealed class ProbeClient
         Console.WriteLine($"Socket locale sur le port {LocalPort}.");
         Console.WriteLine();
 
+        // Une IP littérale ne permet pas de découvrir l'autre famille d'adresses.
+        // L'IPv6 est notre meilleure atténuation, donc elle doit pouvoir être
+        // donnée explicitement plutôt que devoir passer par un nom DNS.
         var addresses = Dns.GetHostAddresses(_host);
         var v4 = addresses.FirstOrDefault(a => a.AddressFamily is AddressFamily.InterNetwork);
-        var v6 = addresses.FirstOrDefault(a => a.AddressFamily is AddressFamily.InterNetworkV6);
+        var v6 = _v6Override is not null
+            ? IPAddress.Parse(_v6Override)
+            : addresses.FirstOrDefault(a => a.AddressFamily is AddressFamily.InterNetworkV6);
 
         Console.WriteLine($"Serveur : IPv4 {(v4?.ToString() ?? "aucune")}, IPv6 {(v6?.ToString() ?? "aucune")}");
 

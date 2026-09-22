@@ -9,7 +9,7 @@ if (args.Length == 0)
         Sonde Linkpearl.
 
           lpprobe server [port]                     à lancer sur le VPS (défaut 47800)
-          lpprobe classify <hôte> [port]            classe votre NAT, sans personne d'autre
+          lpprobe classify <hôte> [port] [--v6 <adr>]  classe votre NAT, sans personne d'autre
           lpprobe pair <hôte> <code> [port]         essaie de joindre un autre exemplaire
 
         Le mode « pair » se lance des deux côtés avec le même code. Les deux
@@ -27,8 +27,13 @@ switch (args[0])
         break;
 
     case "classify":
-        new ProbeClient(args[1], args.Length > 2 ? int.Parse(args[2]) : 47800).Classify();
+    {
+        var v6Index = Array.IndexOf(args, "--v6");
+        var v6 = v6Index >= 0 && v6Index + 1 < args.Length ? args[v6Index + 1] : null;
+        var port = args.Length > 2 && int.TryParse(args[2], out var p) ? p : 47800;
+        new ProbeClient(args[1], port, v6).Classify();
         break;
+    }
 
     case "pair":
         new ProbeClient(args[1], args.Length > 3 ? int.Parse(args[3]) : 47800).Pair(args[2]);
