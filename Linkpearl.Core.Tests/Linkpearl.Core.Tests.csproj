@@ -14,6 +14,12 @@
   <!-- Le noyau est compilé par inclusion de sources : référencer le plugin
        exigerait les assemblies Dalamud et un TargetFramework Windows, et ces
        tests cesseraient de tourner sous Linux. -->
+  <ItemGroup>
+    <None Include="Fixtures\protocol-vectors.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <Import Project="..\build\Core.Deps.props" />
   <Import Project="..\build\Core.Sources.props" />
 

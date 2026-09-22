@@ -4,6 +4,12 @@ using Linkpearl.Harness;
 // seule question, celle de savoir si LiteNetLib peut porter 298 Mo dans un
 // temps acceptable, et sous quelles conditions.
 
+if (args.Length > 0 && args[0] == "vectors")
+{
+    Console.WriteLine(VectorGenerator.Build());
+    return;
+}
+
 var totalBytes  = Arg("--size", 298) * 1024L * 1024L;
 var latencies   = ArgList("--latency", [20, 60, 150]);
 var channelSets = ArgList("--channels", [1, 8, 24]);

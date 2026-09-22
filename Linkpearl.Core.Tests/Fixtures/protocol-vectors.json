@@ -1,0 +1,44 @@
+{
+  "note": "Vecteurs figes. Toute difference signale un changement de protocole sur le fil.",
+  "keySchedule": {
+    "sharedSecret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "transcript": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "responderToInitiator": "85e33d74f706bcd80c2a7d4b0e02e1ec35aeb9fc2243e6b4a6ec44ce43dc3783",
+    "initiatorToResponder": "2c1a6ffe589077f3790ec24779485922dea71750b5ee782f83184f792c0a14cb",
+    "binding": "b2e1f7535f51afe2cb48b09a8f0fdac177a39d2f76bc40932c1bf3fd4717f2ea",
+    "sessionId": "808097f73bc5bff7f324b2f36466604c",
+    "dataInitiatorToResponder": "07c55fc75e9025f57600c6983f73307188f3658efed036844d521e10a0be5e55",
+    "dataResponderToInitiator": "7c21a996f01ecde085756702c98a5574bbe55a48b8e23699dc954170221cf97f"
+  },
+  "secureChannel": {
+    "sendKey": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+    "receiveKey": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "sessionId": "909192939495969798999a9b9c9d9e9f",
+    "frames": [
+      {
+        "channel": 0,
+        "kind": 1,
+        "payload": "7072656d696572",
+        "frame": "0100000000000000000164facfaf6ff72edc4d3712954399a9016d7cdcc0c1c1c7"
+      },
+      {
+        "channel": 0,
+        "kind": 2,
+        "payload": "6465757869656d6520737572206c65206d656d652063616e616c",
+        "frame": "0200000000000000000248195b670401fdab597d70d968fb37e59b704e9b5639b730563db309dfb1c93f55b045429c41a36f5785"
+      },
+      {
+        "channel": 23,
+        "kind": 8,
+        "payload": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "frame": "08171700000000000001e8548f31f73c2b2d445c25885baecfd85e899eb499638fdde758df4787df5a7c0d081954d341e9883fc3ec613d60ff8850cf963f6501a1386083a390b5c853edc3d130e6563814b79a4f71422ca998f9"
+      },
+      {
+        "channel": 63,
+        "kind": 12,
+        "payload": "",
+        "frame": "0c3f3f0000000000000141c5d5f0d3129efc46af5851e5403ab6"
+      }
+    ]
+  }
+}
