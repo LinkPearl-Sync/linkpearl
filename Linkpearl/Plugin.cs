@@ -32,6 +32,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly SelfLoop _selfLoop;
+    private readonly PairingService _pairing;
+    private readonly Configuration _configuration;
     private readonly CancellationTokenSource _shutdown = new();
 
     public Plugin()
@@ -39,6 +41,12 @@ public sealed class Plugin : IDalamudPlugin
         var penumbra  = new PenumbraIpc(PluginInterface);
         var glamourer = new GlamourerIpc(PluginInterface);
         _selfLoop = new SelfLoop(penumbra, glamourer, Framework, Log);
+
+        _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        var root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Linkpearl");
+        _pairing = new PairingService(root, _configuration, new SystemClock(), Log);
 
         Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
@@ -66,12 +74,99 @@ public sealed class Plugin : IDalamudPlugin
         {
             case "capture":       RunSafely(() => CaptureAsync(force: false)); break;
             case "capture force": RunSafely(() => CaptureAsync(force: true));  break;
+            case "code":          ShowInvitation();                            break;
+            case "pairs":         ShowPairs();                                 break;
+            case "announce":      RunSafely(AnnounceAsync);                    break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
             default:
-                Report("capture : relève l'apparence. apply : la réapplique depuis le cache. revert : nettoie.");
+                if (arguments.StartsWith("rdv ", StringComparison.OrdinalIgnoreCase))
+                {
+                    SetRendezvous(arguments[4..].Trim());
+                    break;
+                }
+
+                if (arguments.StartsWith("pair ", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddPair(arguments[5..].Trim());
+                    break;
+                }
+
+                if (arguments.StartsWith("unpair ", StringComparison.OrdinalIgnoreCase))
+                {
+                    Report(_pairing.Remove(arguments[7..].Trim()));
+                    break;
+                }
+
+                Report("rdv <hôte> | code | pair <nom> <code> | unpair <nom> | pairs | announce");
+                Report("capture | capture force | apply | revert");
                 break;
         }
+    }
+
+    private void SetRendezvous(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            Report($"rendez-vous actuel : {(_configuration.RendezvousHost is "" ? "aucun" : _configuration.RendezvousHost)}");
+            return;
+        }
+
+        _configuration.RendezvousHost = host;
+        _configuration.Save();
+        Report($"rendez-vous réglé sur {host}. C'est lui qui figurera dans vos invitations.");
+    }
+
+    private void ShowInvitation()
+    {
+        if (_configuration.RendezvousHost is "")
+        {
+            Report("réglez d'abord un rendez-vous : /lpearl rdv <hôte>");
+            return;
+        }
+
+        var code = _pairing.Invitation();
+        Report($"votre identifiant : {_pairing.Id}");
+        Report("code d'invitation (à copier depuis /xllog, le chat tronque) :");
+        Report(code);
+        Log.Information($"Code d'invitation Linkpearl : {code}");
+    }
+
+    private void AddPair(string arguments)
+    {
+        var space = arguments.IndexOf(' ');
+
+        if (space <= 0)
+        {
+            Report("usage : /lpearl pair <nom> <code>");
+            return;
+        }
+
+        Report(_pairing.AddFromCode(arguments[(space + 1)..].Trim(), arguments[..space].Trim()));
+    }
+
+    private void ShowPairs()
+    {
+        var pairs = _pairing.Book.All.ToList();
+
+        if (pairs.Count == 0)
+        {
+            Report("carnet vide. /lpearl pair <nom> <code> pour ajouter quelqu'un.");
+            return;
+        }
+
+        foreach (var pair in pairs)
+            Report($"{pair.DisplayName} : {pair.Trust}, rendez-vous {pair.RendezvousHost}, {pair.Id}");
+    }
+
+    private async Task AnnounceAsync()
+    {
+        var report = await _pairing.AnnounceAsync(_shutdown.Token).ConfigureAwait(false);
+
+        Report($"{report.Pairs} pairs actifs, {report.Announced} annonces envoyées, {report.Matched} appariés.");
+
+        if (report.Failure is not null)
+            Report($"échec : {report.Failure}");
     }
 
     private async Task CaptureAsync(bool force)
@@ -130,6 +225,7 @@ public sealed class Plugin : IDalamudPlugin
         _shutdown.Cancel();
         Commands.RemoveHandler(Command);
         _selfLoop.Dispose();
+        _pairing.Dispose();
         _shutdown.Dispose();
     }
 }
