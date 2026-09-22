@@ -1,0 +1,84 @@
+# Le pairage, et pourquoi il ne ressemble pas à ce que la spec prévoyait
+
+Écrit le 22 septembre 2026, après trois itérations en jeu.
+
+## Ce que la spec prévoyait, et pourquoi c'était faux
+
+Un code d'invitation portant la clé publique complète, échangé hors du jeu. Le
+raisonnement était juste sur le plan cryptographique et faux sur le plan humain :
+
+1. **Cent vingt et un caractères, puis soixante-sept.** Toujours trop pour
+   quelque chose qu'on envoie à quelqu'un.
+2. **La vérification par six mots comparés de vive voix** supposait que les gens
+   se parlent sur Discord. Ils ne le font pas. Au mieux ils s'échangent quelque
+   chose par message privé en jeu.
+3. Plus profondément : **je concevais le pairage comme un échange de secrets
+   entre inconnus, alors que ce sont deux personnes debout l'une à côté de
+   l'autre dans le même jeu.**
+
+## Ce qui remplace
+
+**On ne montre jamais une clé à un utilisateur.** Il voit des noms de
+personnage, qui sont l'identité qui l'intéresse : il veut voir les mods de
+Jhalen Tavari, pas ceux de la clé 4QF0WG.
+
+### La boîte aux lettres
+
+Chaque plugin dépose au rendez-vous une boîte dont l'adresse se calcule depuis
+le nom et le monde du personnage :
+
+```
+adresse = SHA-256("linkpearl:mbox:v1" || nom@monde || fenêtre)[0..6]
+```
+
+Quiconque voit le personnage peut donc calculer l'adresse. C'est délibéré, et
+cela donne les deux fonctions d'un coup :
+
+- **La détection** : la boîte existe, donc la personne utilise Linkpearl. Le
+  plugin peut la signaler parmi les joueurs alentour.
+- **La demande** : on cible quelqu'un, on dépose une demande dans sa boîte, il
+  voit une fenêtre « untel veut se synchroniser avec vous » et accepte ou refuse.
+
+### Le prix, énoncé sans détour
+
+Pour qu'un inconnu puisse reconnaître un joueur, l'adresse doit dériver de son
+nom. L'espace des noms de FFXIV est énumérable. **Donc l'opérateur du
+rendez-vous peut savoir qui est en ligne et quand.**
+
+C'est exactement ce que faisait Mare, et exactement ce que ce projet prétendait
+éviter. Les jetons tournants n'y changent rien : ils empêchent de relier deux
+fenêtres dans le temps, pas de deviner un nom dans une fenêtre donnée.
+
+Ce n'est pas une faute de conception, c'est une conséquence logique : **être
+découvrable, c'est être découvrable.** On ne peut pas à la fois permettre à un
+inconnu de vous reconnaître et empêcher le serveur de le faire.
+
+Décision prise : **la détection est active par défaut**, parce qu'une fonction
+désactivée par défaut n'existe pas, avec un réglage pour s'en retirer et une
+phrase claire à la première utilisation. Ce qui n'est toujours pas révélé au
+serveur : les manifestes, les fichiers, et le contenu des demandes.
+
+### Ce qui reste protégé
+
+| Le rendez-vous voit | Il ne voit pas |
+|---|---|
+| Qu'un nom de personnage est en ligne | Les manifestes |
+| Les adresses IP | Les fichiers |
+| Que deux boîtes échangent une demande | Le contenu des apparences |
+| | Les échanges une fois la session établie |
+
+### Ce qui remplace la vérification par six mots
+
+Le nom du personnage. Celui qui reçoit une demande voit **de qui elle vient**,
+et peut vérifier d'un coup d'œil que cette personne est bien devant lui. C'est
+une vérification que les gens font naturellement, contrairement à la
+comparaison de six mots sur un canal qu'ils n'utilisent pas.
+
+Un opérateur de rendez-vous malveillant peut toujours s'intercaler. C'est
+assumé : pour un cercle qui héberge son propre service, l'opérateur est l'un
+d'eux.
+
+## Ce qui garde les codes
+
+Les groupes, quand ils viendront. Un groupe n'a pas de nom de personnage, donc
+il lui faut bien un identifiant à échanger.
