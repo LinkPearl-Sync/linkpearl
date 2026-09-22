@@ -19,7 +19,11 @@ namespace Linkpearl;
 /// </remarks>
 public sealed class Plugin : IDalamudPlugin
 {
-    private const string Command = "/linkpearl";
+    /// <summary>
+    /// Le jeu intercepte « /linkpearl » avant Dalamud : c'est une commande de
+    /// chat native. Toute commande choisie ici doit être vérifiée en jeu.
+    /// </summary>
+    private const string Command = "/lpearl";
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager         Commands        { get; private set; } = null!;

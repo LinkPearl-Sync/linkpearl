@@ -43,9 +43,19 @@ cercle, relever la taille sur disque des dossiers de mods activés dans sa colle
 le personnage. C'est précisément ce que le plugin minimal du jalon 1 produira, donc ce
 tableau se corrigera à ce moment-là.
 
-| Personnage | Nb de mods activés | Taille brute | Taille compressée | Méthode |
-|---|---|---|---|---|
-| _à compléter_ | | | | approx. |
+| Personnage | Fichiers | Taille brute | Manifeste compressé | Échanges | Écartés | Méthode |
+|---|---|---|---|---|---|---|
+| Jhalen Tavari | 60 | 298,1 Mo | 12 Ko | 0 | 11 | exacte, 2026-09-22 |
+| _autres à compléter_ | | | | | | |
+
+Relevé avec `/lpearl capture`. Hachage des 298 Mo en 537 ms (environ 555 Mo/s,
+SHA-NI), copie vers le cache en 789 ms. Le hachage n'est donc pas un goulot.
+
+**Conséquence directe pour le jalon 2** : à 60 ms de latence, un seul canal
+LiteNetLib plafonne à 1,5 Mo/s, soit **3 min 20 pour 298 Mo**. Avec 24 canaux,
+une quarantaine de secondes. Le critère de passage du jalon 2 doit donc être
+vérifié sur un corpus de cet ordre, et non sur les 300 Mo synthétiques prévus
+au hasard.
 
 Repère communautaire hérité de Mare : la recommandation était de rester **sous 500 Mo** par
 personnage. Un personnage lourd (textures 4K, animations) monte à 200 à 600 Mo, un cas
