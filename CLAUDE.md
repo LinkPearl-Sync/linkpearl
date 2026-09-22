@@ -19,10 +19,14 @@ spec prévoyait.
 ## Le serveur vit ailleurs
 
 Le service de rendez-vous est dans [linkpearl-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-rendezvous).
-Il porte une copie littérale de trois fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
-`Core/Transport/Rendezvous/RendezvousTicket.cs` et `Core/Abstractions/IClock.cs`.
+Il porte une copie littérale de cinq fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
+`Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Transport/Rendezvous/RendezvousAddress.cs`,
+`Core/Abstractions/IClock.cs` et `Core/Safety/BanList.cs`.
 
-Toucher à l'un des trois oblige à recopier là-bas, et à vérifier que `diff` est vide.
+Toucher à l'un des cinq oblige à recopier là-bas, et à vérifier que `diff` est vide.
+`Linkpearl.Core.Tests/Safety/BanListTests.cs` est copié lui aussi : le service dérive les
+empreintes de bannissement, le client les vérifie, et une dérive entre les deux ferait une
+liste qui ne protège personne sans qu'aucun test ne tombe.
 `Linkpearl.Core.Tests/Fixtures/rendezvous-vectors.json` et `RendezvousVectorTests.cs` sont
 identiques dans les deux dépôts, et ce sont eux qui attrapent une dérive. Ils attestent d'une
 cohérence de format, pas de la justesse du protocole : ils ont été produits par
