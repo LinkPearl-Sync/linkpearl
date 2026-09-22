@@ -44,6 +44,21 @@ public sealed class PairingService : IDisposable
 
     public PeerId Id => _identity.Id;
 
+    public IdentityKeyPair Identity => _identity;
+
+    /// <summary>Ajoute un pair depuis une demande acceptée dans l'interface.</summary>
+    public string AddFromRequest(IncomingRequest request)
+    {
+        if (_book.Find(request.Id) is { } existing)
+            return $"déjà appairé avec {existing.DisplayName}.";
+
+        _book.Add(request.Id, request.PublicKey, request.PairingNonce, _identity.Id,
+                  request.CharacterName, _configuration.RendezvousHost);
+        _bookStore.Save(_book);
+
+        return $"{request.CharacterName} ajouté à vos pairs.";
+    }
+
     public PairBook Book => _book;
 
     public int PendingInvitations => _pending.Count;

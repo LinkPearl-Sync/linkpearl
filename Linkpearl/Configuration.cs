@@ -22,6 +22,18 @@ public sealed class Configuration : IPluginConfiguration
 
     public int RendezvousPort { get; set; } = 47900;
 
+    /// <summary>
+    /// Se signaler aux autres joueurs.
+    /// </summary>
+    /// <remarks>
+    /// Activé par défaut : une fonction désactivée par défaut n'existe pas, et
+    /// sans elle personne ne se trouve. Le prix est que l'opérateur du
+    /// rendez-vous peut savoir quels personnages sont en ligne, parce qu'une
+    /// adresse de boîte dérive du nom. Être découvrable par un inconnu implique
+    /// de l'être par le serveur.
+    /// </remarks>
+    public bool Discoverable { get; set; } = true;
+
     /// <summary>Répertoire du cache. Vide pour le défaut sous LOCALAPPDATA.</summary>
     public string CacheDirectory { get; set; } = "";
 

@@ -1,9 +1,11 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Linkpearl.Integration;
+using Linkpearl.Ui;
 
 namespace Linkpearl;
 
@@ -30,10 +32,17 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICommandManager         Commands        { get; private set; } = null!;
     [PluginService] internal static IFramework              Framework       { get; private set; } = null!;
     [PluginService] internal static IChatGui                Chat            { get; private set; } = null!;
+    [PluginService] internal static IObjectTable            Objects         { get; private set; } = null!;
+    [PluginService] internal static IClientState            ClientState     { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly SelfLoop _selfLoop;
     private readonly PairingService _pairing;
+    private readonly PresenceService _presence;
+    private readonly DalamudObjectSource _objectSource;
+    private readonly PluginState _state = new();
+    private readonly WindowSystem _windows = new("Linkpearl");
+    private readonly MainWindow _window;
     private readonly Configuration _configuration;
     private readonly CancellationTokenSource _shutdown = new();
 
@@ -47,7 +56,24 @@ public sealed class Plugin : IDalamudPlugin
 
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Linkpearl");
-        _pairing = new PairingService(root, _configuration, new SystemClock(), Log);
+
+        var clock = new SystemClock();
+        _pairing = new PairingService(root, _configuration, clock, Log);
+        _presence = new PresenceService(_configuration, _pairing.Identity, clock, Log);
+        _objectSource = new DalamudObjectSource(Objects, ClientState, Framework);
+
+        _window = new MainWindow(
+            _pairing, _presence, _state, _configuration,
+            player => RunSafely(() => RequestPairAsync(player)),
+            request => RunSafely(() => AcceptAsync(request)),
+            Decline);
+
+        _windows.AddWindow(_window);
+        PluginInterface.UiBuilder.Draw += _windows.Draw;
+        PluginInterface.UiBuilder.OpenMainUi += Open;
+        PluginInterface.UiBuilder.OpenConfigUi += Open;
+
+        _ = Task.Run(() => RefreshLoopAsync(_shutdown.Token), _shutdown.Token);
 
         Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
@@ -79,6 +105,7 @@ public sealed class Plugin : IDalamudPlugin
             case "check":         RunSafely(CheckAsync);                       break;
             case "pairs":         ShowPairs();                                 break;
             case "id":            Report($"votre identifiant : {_pairing.Id}"); break;
+            case "":              Open();                                      break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
@@ -115,6 +142,80 @@ public sealed class Plugin : IDalamudPlugin
                 Report("capture | capture force | apply | revert");
                 break;
         }
+    }
+
+    private void Open() => _window.IsOpen = true;
+
+    /// <summary>
+    /// Tient à jour ce que l'interface affiche.
+    /// </summary>
+    /// <remarks>
+    /// En tâche de fond, à intervalle lâche : la détection interroge le
+    /// rendez-vous, et le faire à chaque image en ferait un service de sondage.
+    /// </remarks>
+    private async Task RefreshLoopAsync(CancellationToken ct)
+    {
+        while (ct.IsCancellationRequested is false)
+        {
+            try
+            {
+                if (_objectSource.IsLoggedIn)
+                {
+                    var self = await _objectSource.LocalAsync(ct).ConfigureAwait(false);
+                    _state.Self = self;
+
+                    if (self is not null)
+                    {
+                        await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
+
+                        _state.Nearby = await _objectSource.SnapshotAsync(ct).ConfigureAwait(false);
+                        await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    _state.Nearby = [];
+                }
+            }
+            catch (Exception e) when (ct.IsCancellationRequested is false)
+            {
+                Log.Warning(e, "Rafraîchissement en échec.");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RequestPairAsync(NearbyPlayer target)
+    {
+        if (_state.Self is not { } self)
+        {
+            Report("personnage introuvable.");
+            return;
+        }
+
+        Report(await _presence.RequestPairAsync(target, self, _shutdown.Token).ConfigureAwait(false));
+    }
+
+    private async Task AcceptAsync(IncomingRequest request)
+    {
+        if (_state.Self is not { } self)
+        {
+            Report("personnage introuvable.");
+            return;
+        }
+
+        _presence.TryTakeRequest(out _);
+
+        var message = await _presence.AcceptAsync(request, self, _shutdown.Token).ConfigureAwait(false);
+        Report(_pairing.AddFromRequest(request));
+        Report(message);
+    }
+
+    private void Decline(IncomingRequest request)
+    {
+        _presence.TryTakeRequest(out _);
+        Report($"{request.CharacterName} refusé.");
     }
 
     private void SetRendezvous(string host)
@@ -312,8 +413,15 @@ public sealed class Plugin : IDalamudPlugin
         // ici ferait fuir l'AssemblyLoadContext, et le rechargement suivant en
         // créerait un second.
         _shutdown.Cancel();
+
+        PluginInterface.UiBuilder.Draw -= _windows.Draw;
+        PluginInterface.UiBuilder.OpenMainUi -= Open;
+        PluginInterface.UiBuilder.OpenConfigUi -= Open;
+        _windows.RemoveAllWindows();
+
         Commands.RemoveHandler(Command);
         _selfLoop.Dispose();
+        _presence.Dispose();
         _pairing.Dispose();
         _shutdown.Dispose();
     }
