@@ -50,7 +50,7 @@ public sealed class SelfLoop : IDisposable
     }
 
     private string ManifestPath => Path.Combine(_root, "capture.json.br");
-    private string BlobDir(bool withExtension) => Path.Combine(_root, "cache", withExtension ? "blobs-ext" : "blobs");
+    private string BlobDir => Path.Combine(_root, "cache", "blobs");
 
     public async Task<CaptureReport> CaptureAsync(CancellationToken ct)
     {
@@ -97,15 +97,16 @@ public sealed class SelfLoop : IDisposable
 
         var build = ManifestBuilder.Build(resolved, meta, glamourerState, Quotas.Default);
 
-        // Les deux variantes de nommage, pour trancher la question en jeu.
+        // Le blob porte son hash pour seul nom : vérifié en jeu le 22 septembre
+        // 2026, Penumbra n'a pas besoin de l'extension d'origine. C'est ce qui
+        // évite que l'extension devienne une donnée fournie par le pair.
         var copyWatch = Stopwatch.StartNew();
         foreach (var file in classified.Files)
         {
             if (hashes.TryGetValue(file.LocalPath, out var entry) is false)
                 continue;
 
-            await CopyIntoCacheAsync(file.LocalPath, entry.Hash, extension: null, ct).ConfigureAwait(false);
-            await CopyIntoCacheAsync(file.LocalPath, entry.Hash, ExtensionOf(file.GamePaths[0]), ct).ConfigureAwait(false);
+            await CopyIntoCacheAsync(file.LocalPath, entry.Hash, ct).ConfigureAwait(false);
         }
         copyWatch.Stop();
 
@@ -128,12 +129,12 @@ public sealed class SelfLoop : IDisposable
             Skipped: classified.Skipped.Concat(build.Skipped).ToList());
     }
 
-    private async Task CopyIntoCacheAsync(string source, BlobHash hash, string? extension, CancellationToken ct)
+    private async Task CopyIntoCacheAsync(string source, BlobHash hash, CancellationToken ct)
     {
-        var directory = Path.Combine(BlobDir(extension is not null), hash.CacheLevel1, hash.CacheLevel2);
+        var directory = Path.Combine(BlobDir, hash.CacheLevel1, hash.CacheLevel2);
         Directory.CreateDirectory(directory);
 
-        var destination = Path.Combine(directory, hash.ToHex() + extension);
+        var destination = Path.Combine(directory, hash.ToHex());
         if (File.Exists(destination))
             return;
 
@@ -151,7 +152,7 @@ public sealed class SelfLoop : IDisposable
     /// Réapplique le manifeste capturé, depuis le cache et non depuis les
     /// fichiers d'origine : c'est le chemin réel qu'un pair emprunterait.
     /// </summary>
-    public async Task<int> ApplyAsync(bool withExtension, CancellationToken ct)
+    public async Task<int> ApplyAsync(CancellationToken ct)
     {
         var compressed = await File.ReadAllBytesAsync(ManifestPath, ct).ConfigureAwait(false);
 
@@ -165,16 +166,14 @@ public sealed class SelfLoop : IDisposable
 
         foreach (var replacement in manifest!.Replacements)
         {
-            foreach (var gamePath in replacement.GamePaths)
-            {
-                var extension = withExtension ? ExtensionOf(gamePath) : null;
-                var blob = Path.Combine(
-                    BlobDir(withExtension), replacement.Hash.CacheLevel1, replacement.Hash.CacheLevel2,
-                    replacement.Hash.ToHex() + extension);
+            var blob = Path.Combine(
+                BlobDir, replacement.Hash.CacheLevel1, replacement.Hash.CacheLevel2, replacement.Hash.ToHex());
 
-                if (File.Exists(blob))
-                    pathMap[gamePath] = blob;
-            }
+            if (File.Exists(blob) is false)
+                continue;
+
+            foreach (var gamePath in replacement.GamePaths)
+                pathMap[gamePath] = blob;
         }
 
         var state = manifest.GlamourerState;
@@ -217,12 +216,6 @@ public sealed class SelfLoop : IDisposable
         {
             _log.Error(e, "Nettoyage incomplet.");
         }
-    }
-
-    private static string? ExtensionOf(string gamePath)
-    {
-        var dot = gamePath.LastIndexOf('.');
-        return dot > gamePath.LastIndexOf('/') ? gamePath[dot..] : null;
     }
 
     public void Dispose()

@@ -618,3 +618,10 @@ zone, punch réel entre deux connexions distinctes. Liste de contrôle manuelle 
 dotnet build Linkpearl/Linkpearl.csproj -c Release     # doit passer sans warning
 ./scripts/deploy-plugin-dev.sh                         # essai en jeu depuis WSL
 ```
+
+
+## Inconnue levée le 22 septembre 2026
+
+Penumbra applique sans difficulté un fichier nommé par son seul hash, sans extension.
+Le nom d'un blob est donc uniquement son empreinte, recalculée localement, et l'extension
+ne devient jamais une donnée fournie par le pair.

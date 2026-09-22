@@ -42,7 +42,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
-            HelpMessage = "capture | apply | apply-ext | revert",
+            HelpMessage = "capture | apply | revert",
         });
 
         Report($"chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
@@ -56,12 +56,10 @@ public sealed class Plugin : IDalamudPlugin
         switch (arguments.Trim().ToLowerInvariant())
         {
             case "capture":   RunSafely(CaptureAsync);                      break;
-            case "apply":     RunSafely(() => ApplyAsync(withExtension: false)); break;
-            case "apply-ext": RunSafely(() => ApplyAsync(withExtension: true));  break;
+            case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
             default:
-                Report("capture : relève l'apparence. apply : la réapplique depuis des blobs sans extension. "
-                     + "apply-ext : idem avec extension. revert : nettoie.");
+                Report("capture : relève l'apparence. apply : la réapplique depuis le cache. revert : nettoie.");
                 break;
         }
     }
@@ -82,10 +80,10 @@ public sealed class Plugin : IDalamudPlugin
             Log.Information($"écarté : {skipped.GamePath} ({skipped.Reason})");
     }
 
-    private async Task ApplyAsync(bool withExtension)
+    private async Task ApplyAsync()
     {
-        var applied = await _selfLoop.ApplyAsync(withExtension, _shutdown.Token).ConfigureAwait(false);
-        Report($"appliqué {applied} chemins depuis des blobs {(withExtension ? "avec" : "sans")} extension.");
+        var applied = await _selfLoop.ApplyAsync(_shutdown.Token).ConfigureAwait(false);
+        Report($"appliqué {applied} chemins de jeu depuis le cache.");
     }
 
     /// <summary>
