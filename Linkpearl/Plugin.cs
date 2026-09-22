@@ -57,6 +57,14 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Configuration _configuration;
     private readonly CancellationTokenSource _shutdown = new();
 
+    /// <summary>Les empreintes visibles à la ronde précédente.</summary>
+    /// <remarks>
+    /// La détection n'interroge les services que lorsque cet ensemble change :
+    /// redemander toutes les quinze secondes pour les mêmes personnes est du
+    /// trafic pur, multiplié par le nombre de services.
+    /// </remarks>
+    private HashSet<Linkpearl.Core.Abstractions.PlayerFingerprint> _lastVisible = [];
+
     public Plugin()
     {
         var penumbra  = new PenumbraIpc(PluginInterface);
@@ -262,12 +270,25 @@ public sealed class Plugin : IDalamudPlugin
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
                         _state.Nearby = await _objectSource.SnapshotAsync(ct).ConfigureAwait(false);
-                        await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
+
+                        // Mesuré : 345 Mo par mois et par joueur à trois
+                        // secondes, contre 20 à quinze et seulement quand le
+                        // champ change. La fédération multiplie encore ce coût
+                        // par le nombre de services, ce qui fait de cette
+                        // cadence une nécessité et non un confort.
+                        var visible = _state.Nearby.Select(player => player.Fingerprint).ToHashSet();
+
+                        if (visible.SetEquals(_lastVisible) is false)
+                        {
+                            _lastVisible = visible;
+                            await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
+                        }
                     }
                 }
                 else
                 {
                     _state.Nearby = [];
+                    _lastVisible.Clear();
                 }
             }
             catch (Exception e) when (ct.IsCancellationRequested is false)
@@ -275,7 +296,7 @@ public sealed class Plugin : IDalamudPlugin
                 Log.Warning(e, "Rafraîchissement en échec.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
         }
     }
 
