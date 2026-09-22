@@ -98,19 +98,27 @@ public sealed class PairingService : IDisposable
             return (null, rejection);
 
         _pending.Add(new PendingInvitation(ticket.Encode(), nonce, DateTimeOffset.UtcNow));
+
+        // Le texte porte le lieu du dépôt : celui qui colle doit pouvoir
+        // retirer le ticket là où il est, et non là où il a réglé le sien.
+        var here = Here()[0];
         _invitationStore.Save(_pending);
 
-        return (ticket.Encode(), null);
+        return (InvitationTicketText.Encode(ticket, here), null);
     }
 
     /// <summary>Retire une invitation et ajoute son auteur au carnet.</summary>
     public async Task<string> RedeemAsync(string text, string displayName, CancellationToken ct)
     {
-        if (InvitationTicket.TryParse(text, out var ticket, out var why) is false)
+        if (InvitationTicketText.TryParse(text, out var ticket, out var at, out var why) is false)
             return $"ticket refusé : {why}";
 
+        // Sans suffixe, le ticket vient d'avant la fédération : on retombe sur
+        // notre propre service, qui est ce qu'il désignait implicitement.
+        var where = at ?? Here()[0];
+
         await using var client = new RendezvousClient();
-        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+        await client.ConnectAsync(where.Host, where.Port, ct).ConfigureAwait(false);
 
         var (payload, rejection) = await client.RedeemInvitationAsync(ticket.ToBytes(), ct).ConfigureAwait(false);
 
@@ -139,7 +147,15 @@ public sealed class PairingService : IDisposable
         if (_book.Find(theirId) is { } existing)
             return $"déjà dans le carnet sous le nom « {existing.DisplayName} ».";
 
-        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, Here());
+        // Les deux lieux, celui du ticket d'abord puis le nôtre : c'est ce qui
+        // fait survivre le pairage à la disparition de l'un des deux.
+        var places = new List<RendezvousAddress> { where };
+
+        foreach (var mine in Here())
+            if (places.Contains(mine) is false)
+                places.Add(mine);
+
+        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, places);
         _bookStore.Save(_book);
 
         // On dépose notre propre identité dans la case de réponse : sans elle,
