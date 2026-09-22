@@ -21,9 +21,13 @@ jobs:
     permissions:
       contents: write
 
+    # Les actions sont épinglées sur une empreinte de commit et non sur une
+    # étiquette. Une étiquette se redéplace : celui qui la contrôle exécuterait
+    # son code dans ce workflow, qui écrit sur le dépôt et publie les versions
+    # que les joueurs installent.
     steps:
       - name: Récupérer le dépôt
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
       - name: Lire le tag
         id: tag
@@ -40,7 +44,7 @@ jobs:
           echo "IS_TEST=$IS_TEST" >> $GITHUB_OUTPUT
 
       - name: Installer .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4
         with:
           dotnet-version: '10.0.x'
 
@@ -67,11 +71,15 @@ jobs:
         # sinon avec les droits du workflow, qui écrit sur le dépôt.
         env:
           VERSION: ${{ steps.tag.outputs.VERSION }}
+        # « -p: » et non « /p: » : sous Windows, Git Bash prend un argument qui
+        # commence par une barre oblique pour un chemin et le convertit, ce qui
+        # livrait à MSBuild un « p:Version=... » qu'il lisait comme un second
+        # projet à compiler.
         run: >
           dotnet build Linkpearl/Linkpearl.csproj
           -c Release
           -warnaserror
-          "/p:Version=$VERSION"
+          "-p:Version=$VERSION"
 
       - name: Empaqueter
         shell: bash
@@ -81,7 +89,7 @@ jobs:
           unzip -l Linkpearl.zip
 
       - name: Publier la version
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ github.ref_name }}
           name: v${{ steps.tag.outputs.VERSION }}${{ steps.tag.outputs.IS_TEST == 'true' && ' (test)' || '' }}
