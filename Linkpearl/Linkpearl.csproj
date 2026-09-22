@@ -1,0 +1,10 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <AssemblyName>Linkpearl</AssemblyName>
+  </PropertyGroup>
+
+  <Import Project="..\build\Core.Deps.props" />
+
+</Project>

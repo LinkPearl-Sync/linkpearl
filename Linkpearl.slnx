@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Linkpearl.Core.Tests/Linkpearl.Core.Tests.csproj" />
+  <Project Path="Linkpearl/Linkpearl.csproj">
+    <Platform Project="x64" />
+  </Project>
+</Solution>
