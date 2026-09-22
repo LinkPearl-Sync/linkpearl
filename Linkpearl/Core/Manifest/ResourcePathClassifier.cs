@@ -41,49 +41,55 @@ public static class ResourcePathClassifier
 
         foreach (var (actualPath, rawGamePaths) in resources)
         {
+            // La nature du chemin réel se détermine en premier. La liste blanche
+            // d'extensions ne s'applique qu'à ce qu'on synchroniserait vraiment :
+            // l'appliquer avant ferait rapporter comme « écartées » les
+            // ressources vanilla que Penumbra rend aussi, gonflant un compteur
+            // montré à l'utilisateur.
+            var isLocalFile = LooksLikeFileSystemPath(actualPath);
+            string? target = null;
+
+            if (isLocalFile is false)
+            {
+                if (GamePathPolicy.TryNormalize(actualPath, quotas, out var normalizedTarget, out var targetWhy) is false)
+                {
+                    skipped.Add(new SkippedFile(actualPath, targetWhy!));
+                    continue;
+                }
+
+                target = normalizedTarget;
+            }
+
             var gamePaths = new List<string>();
 
             foreach (var raw in rawGamePaths)
             {
-                if (GamePathPolicy.TryNormalize(raw, quotas, out var normalized, out var why) is false)
+                if (GamePathPolicy.TryNormalize(raw, quotas, out var gamePath, out var why) is false)
                 {
                     skipped.Add(new SkippedFile(raw, why!));
                     continue;
                 }
 
-                if (ExtensionAllowList.IsAllowed(normalized, out var refus) is false)
+                // Ressource non moddée : rien à synchroniser, et rien à signaler.
+                if (target is not null && string.Equals(gamePath, target, StringComparison.Ordinal))
+                    continue;
+
+                if (ExtensionAllowList.IsAllowed(gamePath, out var refus) is false)
                 {
                     skipped.Add(new SkippedFile(raw, refus!));
                     continue;
                 }
 
-                gamePaths.Add(normalized);
+                if (isLocalFile)
+                    gamePaths.Add(gamePath);
+                else
+                    swaps.Add(new FileSwap(gamePath, target!));
             }
 
-            if (gamePaths.Count == 0)
-                continue;
-
-            gamePaths.Sort(StringComparer.Ordinal);
-
-            if (LooksLikeFileSystemPath(actualPath))
+            if (isLocalFile && gamePaths.Count > 0)
             {
+                gamePaths.Sort(StringComparer.Ordinal);
                 files.Add(new LocalFile(actualPath, gamePaths));
-                continue;
-            }
-
-            // Chemin de jeu : échange, ou ressource non moddée.
-            if (GamePathPolicy.TryNormalize(actualPath, quotas, out var target, out var targetWhy) is false)
-            {
-                skipped.Add(new SkippedFile(actualPath, targetWhy!));
-                continue;
-            }
-
-            foreach (var gamePath in gamePaths)
-            {
-                if (string.Equals(gamePath, target, StringComparison.Ordinal))
-                    continue;   // vanilla : rien à synchroniser
-
-                swaps.Add(new FileSwap(gamePath, target));
             }
         }
 

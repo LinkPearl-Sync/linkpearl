@@ -52,6 +52,39 @@ public class ResourcePathClassifierTests
         Assert.Empty(result.Skipped);
     }
 
+    [Fact]
+    public void Une_ressource_vanilla_hors_perimetre_ne_compte_pas_comme_ecartee()
+    {
+        // Observe en jeu : Penumbra rend aussi les shaders standard du jeu, qui
+        // ne sont pas moddes. Les rapporter comme ecartes gonflerait un compteur
+        // montre a l'utilisateur et ferait croire que quelque chose manque.
+        var result = Classify(("shader/sm5/shpk/skin.shpk", ["shader/sm5/shpk/skin.shpk"]));
+
+        Assert.Empty(result.Files);
+        Assert.Empty(result.Swaps);
+        Assert.Empty(result.Skipped);
+    }
+
+    [Fact]
+    public void Une_ressource_hors_perimetre_reellement_moddee_reste_rapportee()
+    {
+        // Le meme shader, mais redirige vers un fichier : la, il est bien exclu
+        // du perimetre v1 et l'utilisateur doit le savoir.
+        var result = Classify((@"C:\mods\skin.shpk", ["shader/sm5/shpk/skin.shpk"]));
+
+        Assert.Empty(result.Files);
+        Assert.Contains("shader", Assert.Single(result.Skipped).Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Un_echange_hors_perimetre_est_rapporte()
+    {
+        var result = Classify(("shader/sm5/shpk/autre.shpk", ["shader/sm5/shpk/skin.shpk"]));
+
+        Assert.Empty(result.Swaps);
+        Assert.Single(result.Skipped);
+    }
+
     [Theory]
     [InlineData(@"C:\mods\a.tex")]
     [InlineData("C:/mods/a.tex")]
