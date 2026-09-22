@@ -48,9 +48,20 @@ fi
 #
 # --delete pour qu'une DLL d'une compilation précédente ne survive pas à la
 # suppression de sa dépendance.
+#
+# --inplace est ce qui fait marcher le rechargement automatique de Dalamud.
+# Sans lui, rsync écrit dans un fichier temporaire puis le renomme par-dessus
+# la cible : le surveillant de fichiers de Dalamud reçoit une création, là où il
+# attend une écriture sur la DLL, et ne recharge pas. Le réglage « Automatic
+# reloading » a beau être actif, il ne voit rien passer.
 echo "==> Copie vers $DEST"
 mkdir -p "$DEST"
-rsync -a --delete "$BUILD_DIR/" "$DEST/"
+rsync -a --delete --inplace "$BUILD_DIR/" "$DEST/"
+
+# Dernière écriture sur la DLL elle-même, après tout le reste : c'est elle que
+# Dalamud surveille, et elle doit être le dernier événement qu'il reçoive, sans
+# quoi il rechargerait pendant que les dépendances changent encore.
+touch "$DEST/Linkpearl.dll"
 
 echo "==> Déployé :"
 ls -la "$DEST"
