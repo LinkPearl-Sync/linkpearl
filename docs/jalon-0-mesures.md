@@ -83,9 +83,22 @@ Pour chacun :
 | Débit montant | Un test de débit. C'est le débit **montant** qui compte, pas le descendant. |
 | UPnP activé sur le routeur ? | Interface d'administration du routeur. |
 
-| Personne | Windows | Accès | IPv6 global | CGNAT | Montant | UPnP |
+| Personne | Accès | IPv6 global | Type de NAT | CGNAT | Montant | Relevé |
 |---|---|---|---|---|---|---|
-| _à compléter_ | | | | | | |
+| Yann | fixe, Swisscom | **non** | mapping indépendant de la destination, **port préservé** | non | à relever | 2026-09-22 |
+| _autres à compléter_ | | | | | | |
+
+Relevé avec `lpprobe classify` contre le VPS. Le port public observé est
+identique sur les deux ports du serveur **et** identique au port local : c'est le
+cas IPv4 le plus favorable qui existe, la traversée directe devrait fonctionner.
+
+Mesure faite depuis WSL, donc à travers un NAT supplémentaire. Que le port soit
+préservé de bout en bout montre que les deux NAT sont permissifs. À reconfirmer
+depuis Windows.
+
+**L'absence d'IPv6 est la mauvaise nouvelle** : c'était l'atténuation gratuite,
+celle qui supprime le NAT entièrement. Elle reste utile pour qui en dispose, mais
+on ne peut pas bâtir dessus.
 
 ### Comment lire le résultat
 
