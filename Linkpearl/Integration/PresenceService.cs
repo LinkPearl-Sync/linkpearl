@@ -37,9 +37,33 @@ public sealed class PresenceService : IDisposable
     private readonly ConcurrentQueue<IncomingRequest> _incoming = new();
     private readonly ConcurrentDictionary<PlayerFingerprint, DateTimeOffset> _detected = new();
 
-    private RendezvousClient? _client;
-    private CancellationTokenSource? _session;
-    private PlayerFingerprint? _openedFor;
+    private readonly Dictionary<RendezvousAddress, Session> _sessions = [];
+    private readonly HashSet<string> _seen = [];
+    private readonly Lock _gate = new();
+
+    /// <summary>
+    /// Ce que nous tenons ouvert auprès d'un service.
+    /// </summary>
+    /// <remarks>
+    /// Une par service activé. La connexion elle-même vaut présence : la fermer
+    /// déclare l'absence, sans battement de cœur à gérer. Chaque session a son
+    /// propre compte à rebours de reprise, pour qu'un service en panne ne
+    /// retarde pas les autres.
+    /// </remarks>
+    private sealed class Session
+    {
+        public required RendezvousAddress At { get; init; }
+
+        public RendezvousClient? Client { get; set; }
+
+        public CancellationTokenSource? Life { get; set; }
+
+        public PlayerFingerprint? OpenedFor { get; set; }
+
+        public string? Failure { get; set; }
+
+        public DateTimeOffset NextAttempt { get; set; }
+    }
 
     public PresenceService(Configuration configuration, IdentityKeyPair identity, IClock clock, IPluginLog log)
     {
@@ -49,9 +73,33 @@ public sealed class PresenceService : IDisposable
         _log = log;
     }
 
-    public bool Connected => _client is not null;
+    /// <summary>Vrai dès qu'un seul service répond.</summary>
+    /// <remarks>
+    /// Un seul suffit à être vu et à voir : exiger que tous répondent ferait
+    /// dépendre l'affichage du plus mal en point.
+    /// </remarks>
+    public bool Connected => ConnectedCount > 0;
 
-    public string? LastFailure { get; private set; }
+    public int ConnectedCount
+    {
+        get
+        {
+            lock (_gate)
+                return _sessions.Values.Count(session => session.Client is not null);
+        }
+    }
+
+    public int ConfiguredCount => _configuration.ActiveRendezvous.Count;
+
+    /// <summary>La panne du premier service qui en signale une, s'il y en a.</summary>
+    public string? LastFailure
+    {
+        get
+        {
+            lock (_gate)
+                return _sessions.Values.FirstOrDefault(session => session.Failure is not null)?.Failure;
+        }
+    }
 
     /// <summary>Les empreintes reconnues comme utilisant le plugin, avec leur fraîcheur.</summary>
     public IReadOnlyDictionary<PlayerFingerprint, DateTimeOffset> Detected => _detected;
@@ -76,20 +124,57 @@ public sealed class PresenceService : IDisposable
     {
         if (_configuration.Discoverable is false)
         {
-            Close();
+            CloseAll();
             return;
         }
 
-        if (_client is not null && _openedFor == fingerprint)
-            return;
+        Reconcile();
 
-        Close();
+        foreach (var session in Snapshot())
+        {
+            // Le changement de personnage compte : les boîtes dérivent du nom,
+            // donc celles de l'ancien doivent se fermer et celles du nouveau
+            // s'ouvrir.
+            if (session.Client is not null && session.OpenedFor != fingerprint)
+                Close(session);
 
+            if (session.Client is not null || _clock.UtcNow < session.NextAttempt)
+                continue;
+
+            await OpenAsync(session, fingerprint, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Aligne les sessions sur la liste des services activés.</summary>
+    private void Reconcile()
+    {
+        var active = _configuration.ActiveRendezvous.Select(entry => entry.Address).ToHashSet();
+
+        lock (_gate)
+        {
+            foreach (var (at, session) in _sessions.ToList())
+            {
+                if (active.Contains(at))
+                    continue;
+
+                // Retiré des réglages : on ferme, sinon l'utilisateur resterait
+                // annoncé sur un service qu'il croit avoir quitté.
+                CloseLocked(session);
+                _sessions.Remove(at);
+            }
+
+            foreach (var at in active)
+                if (_sessions.ContainsKey(at) is false)
+                    _sessions[at] = new Session { At = at, NextAttempt = _clock.UtcNow };
+        }
+    }
+
+    private async Task OpenAsync(Session session, PlayerFingerprint fingerprint, CancellationToken ct)
+    {
         try
         {
             var client = new RendezvousClient();
-            await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct)
-                        .ConfigureAwait(false);
+            await client.ConnectAsync(session.At.Host, session.At.Port, ct).ConfigureAwait(false);
 
             client.Delivered += OnDelivered;
 
@@ -99,83 +184,156 @@ public sealed class PresenceService : IDisposable
 
             await client.OpenMailboxesAsync(addresses, ct).ConfigureAwait(false);
 
-            _session = new CancellationTokenSource();
-            _client = client;
-            _openedFor = fingerprint;
-            LastFailure = null;
+            var life = new CancellationTokenSource();
 
-            _ = Task.Run(() => ListenAsync(client, _session.Token), _session.Token);
+            lock (_gate)
+            {
+                session.Client = client;
+                session.Life = life;
+                session.OpenedFor = fingerprint;
+                session.Failure = null;
+            }
+
+            _ = Task.Run(() => ListenAsync(session, client, life.Token), life.Token);
         }
         catch (Exception e)
         {
-            LastFailure = e.Message;
-            _log.Warning(e, "Ouverture des boîtes en échec.");
+            lock (_gate)
+            {
+                session.Failure = e.Message;
+
+                // Trente secondes avant de réessayer : un service éteint ne doit
+                // pas être sollicité à chaque ronde de détection.
+                session.NextAttempt = _clock.UtcNow + TimeSpan.FromSeconds(30);
+            }
+
+            _log.Warning(e, $"Ouverture des boîtes en échec sur {session.At}.");
         }
     }
 
-    /// <summary>Demande au rendez-vous lesquels de ces joueurs utilisent le plugin.</summary>
+    /// <summary>
+    /// Demande à tous les services lesquels de ces joueurs utilisent le plugin.
+    /// </summary>
+    /// <remarks>
+    /// Un joueur est détecté dès qu'un seul service reconnaît sa boîte, et
+    /// l'union se fait sur ceux qui répondent. Exiger l'accord de tous rendrait
+    /// la détection dépendante du plus mal en point ; et le silence d'un service
+    /// n'est pas une réponse négative, donc il ne retire personne.
+    /// </remarks>
     public async Task RefreshDetectionAsync(IReadOnlyList<NearbyPlayer> nearby, CancellationToken ct)
     {
-        if (_client is null || nearby.Count == 0)
+        if (nearby.Count == 0)
             return;
 
-        // Le serveur plafonne les interrogations : on découpe plutôt que de se
-        // faire refuser, et on ne demande rien pour une zone déserte.
-        foreach (var batch in nearby.Chunk(RendezvousWire.MaxQueriedAddresses))
+        var connected = Snapshot().Where(session => session.Client is not null).ToList();
+
+        if (connected.Count == 0)
+            return;
+
+        var seenSomewhere = new HashSet<PlayerFingerprint>();
+        var answered = false;
+
+        foreach (var session in connected)
         {
-            var addresses = batch
-                .Select(p => MailboxAddress.Of(p.Fingerprint, _clock.UtcNow).ToBytes())
-                .ToList();
-
-            try
+            // Le serveur plafonne les interrogations : on découpe plutôt que de
+            // se faire refuser.
+            foreach (var batch in nearby.Chunk(RendezvousWire.MaxQueriedAddresses))
             {
-                var present = await _client.QueryPresenceAsync(addresses, ct).ConfigureAwait(false);
+                var addresses = batch
+                    .Select(player => MailboxAddress.Of(player.Fingerprint, _clock.UtcNow).ToBytes())
+                    .ToList();
 
-                if (present is null)
-                    return;
-
-                for (var i = 0; i < batch.Length && i < present.Length; i++)
+                try
                 {
-                    if (present[i])
-                        _detected[batch[i].Fingerprint] = _clock.UtcNow;
-                    else
-                        _detected.TryRemove(batch[i].Fingerprint, out _);
+                    var present = await session.Client!.QueryPresenceAsync(addresses, ct).ConfigureAwait(false);
+
+                    if (present is null)
+                        break;
+
+                    answered = true;
+
+                    for (var i = 0; i < batch.Length && i < present.Length; i++)
+                        if (present[i])
+                            seenSomewhere.Add(batch[i].Fingerprint);
+                }
+                catch (Exception e)
+                {
+                    lock (_gate)
+                        session.Failure = e.Message;
+
+                    _log.Warning(e, $"Interrogation de présence en échec sur {session.At}.");
+                    break;
                 }
             }
-            catch (Exception e)
-            {
-                LastFailure = e.Message;
-                _log.Warning(e, "Interrogation de présence en échec.");
-                return;
-            }
+        }
+
+        // Rien de retiré tant que personne n'a répondu : perdre tout le monde
+        // parce que le réseau a hoqueté ferait clignoter la liste.
+        if (answered is false)
+            return;
+
+        foreach (var player in nearby)
+        {
+            if (seenSomewhere.Contains(player.Fingerprint))
+                _detected[player.Fingerprint] = _clock.UtcNow;
+            else
+                _detected.TryRemove(player.Fingerprint, out _);
         }
     }
 
     /// <summary>Dépose une demande de pairage dans la boîte d'un joueur.</summary>
     public async Task<string> RequestPairAsync(NearbyPlayer target, NearbyPlayer self, CancellationToken ct)
     {
-        if (_client is null)
-            return "pas connecté au rendez-vous.";
+        if (Connected is false)
+            return "aucun service de rendez-vous joignable.";
 
         var nonce = RandomNumberGenerator.GetBytes(PairRequestMessage.NonceLength);
 
         var message = new PairRequestMessage(
             IsAccept: false, _identity.PublicKey, nonce, self.Name, self.WorldId);
 
-        try
-        {
-            await _client.DepositAsync(
-                MailboxAddress.Of(target.Fingerprint, _clock.UtcNow).ToBytes(), message.Encode(), ct)
-                .ConfigureAwait(false);
+        var address = MailboxAddress.Of(target.Fingerprint, _clock.UtcNow).ToBytes();
+        var (delivered, failure) = await DepositEverywhereAsync(address, message.Encode(), ct).ConfigureAwait(false);
 
-            PendingOutgoing[target.Fingerprint] = nonce;
-            return $"demande envoyée à {target.Name}.";
-        }
-        catch (Exception e)
+        if (delivered == 0)
+            return $"envoi impossible : {failure}";
+
+        PendingOutgoing[target.Fingerprint] = nonce;
+        return $"demande envoyée à {target.Name}.";
+    }
+
+    /// <summary>
+    /// Dépose sur tous nos services à la fois.
+    /// </summary>
+    /// <remarks>
+    /// Nous ignorons lequel la cible utilise : sa boîte vit chez le service
+    /// qu'elle a choisi, pas chez nous. Déposer partout est donc la seule façon
+    /// de l'atteindre, et le destinataire dédoublonne à la réception.
+    /// </remarks>
+    private async Task<(int Delivered, string? Failure)> DepositEverywhereAsync(
+        byte[] address, byte[] payload, CancellationToken ct)
+    {
+        var delivered = 0;
+        string? failure = null;
+
+        foreach (var session in Snapshot())
         {
-            _log.Warning(e, "Dépôt de demande en échec.");
-            return $"envoi impossible : {e.Message}";
+            if (session.Client is null)
+                continue;
+
+            try
+            {
+                await session.Client.DepositAsync(address, payload, ct).ConfigureAwait(false);
+                delivered++;
+            }
+            catch (Exception e)
+            {
+                failure = e.Message;
+                _log.Warning(e, $"Dépôt en échec sur {session.At}.");
+            }
         }
+
+        return (delivered, failure);
     }
 
     /// <summary>Les aléas des demandes que nous avons envoyées, en attente de réponse.</summary>
@@ -184,8 +342,8 @@ public sealed class PresenceService : IDisposable
     /// <summary>Accepte une demande reçue et renvoie notre identité au demandeur.</summary>
     public async Task<string> AcceptAsync(IncomingRequest request, NearbyPlayer self, CancellationToken ct)
     {
-        if (_client is null)
-            return "pas connecté au rendez-vous.";
+        if (Connected is false)
+            return "aucun service de rendez-vous joignable.";
 
         var reply = new PairRequestMessage(
             IsAccept: true, _identity.PublicKey, request.PairingNonce, self.Name, self.WorldId);
@@ -194,9 +352,12 @@ public sealed class PresenceService : IDisposable
 
         try
         {
-            await _client.DepositAsync(
+            var (delivered, failure) = await DepositEverywhereAsync(
                 MailboxAddress.Of(theirFingerprint, _clock.UtcNow).ToBytes(), reply.Encode(), ct)
                 .ConfigureAwait(false);
+
+            if (delivered == 0)
+                return $"réponse impossible : {failure}";
 
             return $"{request.CharacterName} accepté.";
         }
@@ -220,13 +381,22 @@ public sealed class PresenceService : IDisposable
         if (id == _identity.Id)
             return;   // notre propre écho, sans intérêt
 
+        // Un expéditeur qui dépose sur plusieurs services ne doit produire
+        // qu'une seule invite : la même demande nous arrive alors par autant de
+        // chemins que nous partageons de services avec lui.
+        var key = $"{id.ToHex()}:{Convert.ToHexStringLower(message.PairingNonce)}";
+
+        lock (_gate)
+            if (_seen.Add(key) is false)
+                return;
+
         _incoming.Enqueue(new IncomingRequest(
             id, message.PublicKey, message.PairingNonce, message.CharacterName, message.WorldId, _clock.UtcNow));
 
         _log.Information($"Demande de pairage reçue de {message.CharacterName}.");
     }
 
-    private async Task ListenAsync(RendezvousClient client, CancellationToken ct)
+    private async Task ListenAsync(Session session, RendezvousClient client, CancellationToken ct)
     {
         try
         {
@@ -234,32 +404,60 @@ public sealed class PresenceService : IDisposable
         }
         catch (Exception e) when (ct.IsCancellationRequested is false)
         {
-            LastFailure = e.Message;
-            _log.Warning(e, "Écoute du rendez-vous interrompue.");
+            lock (_gate)
+                session.Failure = e.Message;
+
+            _log.Warning(e, $"Écoute interrompue sur {session.At}.");
         }
         finally
         {
             if (ct.IsCancellationRequested is false)
-                Close();
+                Close(session);
         }
     }
 
-    private void Close()
+    private List<Session> Snapshot()
     {
-        _session?.Cancel();
-        _session?.Dispose();
-        _session = null;
+        lock (_gate)
+            return [.. _sessions.Values];
+    }
 
-        if (_client is not null)
+    private void Close(Session session)
+    {
+        lock (_gate)
+            CloseLocked(session);
+    }
+
+    private void CloseLocked(Session session)
+    {
+        session.Life?.Cancel();
+        session.Life?.Dispose();
+        session.Life = null;
+
+        if (session.Client is not null)
         {
-            _client.Delivered -= OnDelivered;
-            _ = _client.DisposeAsync();
-            _client = null;
+            session.Client.Delivered -= OnDelivered;
+            _ = session.Client.DisposeAsync();
+            session.Client = null;
         }
 
-        _openedFor = null;
+        session.OpenedFor = null;
+    }
+
+    private void CloseAll()
+    {
+        lock (_gate)
+        {
+            foreach (var session in _sessions.Values)
+                CloseLocked(session);
+
+            _sessions.Clear();
+        }
+
+        // Plus personne n'est joignable : garder les détections ferait croire
+        // que des joueurs utilisent le plugin alors que plus rien ne le dit.
         _detected.Clear();
     }
 
-    public void Dispose() => Close();
+    public void Dispose() => CloseAll();
 }

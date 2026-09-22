@@ -68,4 +68,82 @@ public class RendezvousWireTests
         Assert.Equal(7, framed.Length);
         Assert.Equal(3, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(framed));
     }
+
+    [Fact]
+    public void Un_annuaire_fait_l_aller_retour()
+    {
+        var entries = new List<DirectoryEntry>
+        {
+            new("rdv.ami.ch", "Chez l'amie"),
+            new("rdv.exemple.ch:443", "Service commun"),
+        };
+
+        Assert.True(RendezvousWire.TryReadDirectory(RendezvousWire.Directory(entries), out var back, out var why), why);
+        Assert.Equal(2, back.Count);
+        Assert.Equal("rdv.ami.ch", back[0].Address);
+        Assert.Equal("Service commun", back[1].Label);
+    }
+
+    [Fact]
+    public void Un_annuaire_vide_est_lisible()
+    {
+        // Un service sans pair déclaré doit pouvoir répondre, sinon le client
+        // ne distingue pas « personne » de « service en panne ».
+        Assert.True(RendezvousWire.TryReadDirectory(RendezvousWire.Directory([]), out var back, out _));
+        Assert.Empty(back);
+    }
+
+    [Fact]
+    public void Un_annuaire_trop_long_est_refuse_a_l_ecriture()
+    {
+        var entries = Enumerable.Range(0, RendezvousWire.MaxDirectoryEntries + 1)
+            .Select(i => new DirectoryEntry($"rdv{i}.exemple.ch", "x"))
+            .ToList();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => RendezvousWire.Directory(entries));
+    }
+
+    [Fact]
+    public void Un_libelle_demesure_est_refuse_a_la_lecture()
+    {
+        // Le libellé vient du réseau et finit à l'écran : la borne est ici.
+        var frame = new byte[] { RendezvousKind.DirectoryList, 1, 3 }
+            .Concat("abc"u8.ToArray())
+            .Concat(new byte[] { 200 })
+            .Concat(Enumerable.Repeat((byte)0x41, 200))
+            .ToArray();
+
+        Assert.False(RendezvousWire.TryReadDirectory(frame, out _, out var why));
+        Assert.Contains("libellé", why);
+    }
+
+    [Fact]
+    public void Un_annuaire_tronque_est_refuse()
+    {
+        var frame = new byte[] { RendezvousKind.DirectoryList, 2, 3 }.Concat("abc"u8.ToArray()).ToArray();
+
+        Assert.False(RendezvousWire.TryReadDirectory(frame, out _, out var why));
+        Assert.Contains("tronqué", why);
+    }
+
+    [Fact]
+    public void Une_candidature_fait_l_aller_retour()
+    {
+        var frame = RendezvousWire.DirectorySubmit("rdv.nouveau.ch:47900", "Chez le nouveau");
+
+        Assert.True(RendezvousWire.TryReadDirectory(frame, out var back, out var why), why);
+        var entry = Assert.Single(back);
+        Assert.Equal("rdv.nouveau.ch:47900", entry.Address);
+        Assert.Equal("Chez le nouveau", entry.Label);
+    }
+
+    [Fact]
+    public void Un_libelle_vide_est_accepte()
+    {
+        // L'opérateur n'est pas obligé de nommer les services qu'il connaît.
+        Assert.True(RendezvousWire.TryReadDirectory(
+            RendezvousWire.Directory([new DirectoryEntry("rdv.ami.ch", "")]), out var back, out _));
+
+        Assert.Equal("", Assert.Single(back).Label);
+    }
 }

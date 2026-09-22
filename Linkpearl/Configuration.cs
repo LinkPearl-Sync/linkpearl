@@ -1,11 +1,12 @@
 using Dalamud.Configuration;
+using Linkpearl.Core.Sync;
 
 namespace Linkpearl;
 
 /// <summary>Réglages du plugin, conservés par Dalamud.</summary>
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     /// <summary>
     /// Hôte du service de rendez-vous.
@@ -21,6 +22,40 @@ public sealed class Configuration : IPluginConfiguration
     public string RendezvousHost { get; set; } = "83.228.242.221";
 
     public int RendezvousPort { get; set; } = 47900;
+
+    /// <summary>
+    /// Les services de rendez-vous, par ordre de préférence.
+    /// </summary>
+    /// <remarks>
+    /// Une liste et non un service unique : c'est ce qui permet de voir des
+    /// joueurs qui n'ont pas fait le même choix que vous. Chaque entrée activée
+    /// apprend que votre personnage est en ligne et qui se tient autour de vous,
+    /// donc la liste reste courte par défaut.
+    /// </remarks>
+    public List<RendezvousEntry> Rendezvous { get; set; } = [];
+
+    /// <summary>Les services activés, ceux que le moteur emploiera.</summary>
+    public IReadOnlyList<RendezvousEntry> ActiveRendezvous =>
+        Rendezvous.Where(entry => entry.Enabled).ToList();
+
+    /// <summary>
+    /// Construit la liste depuis l'ancien réglage, la première fois.
+    /// </summary>
+    /// <remarks>
+    /// <c>RendezvousHost</c> et <c>RendezvousPort</c> restent lus pour cela, et
+    /// pour cela seulement : ils ne sont plus la source de vérité.
+    /// </remarks>
+    public void MigrateIfNeeded()
+    {
+        var migrated = RendezvousList.Migrate(RendezvousHost, RendezvousPort, Rendezvous);
+
+        if (ReferenceEquals(migrated, Rendezvous))
+            return;
+
+        Rendezvous = [.. migrated];
+        Version = 2;
+        Save();
+    }
 
     /// <summary>
     /// Se signaler aux autres joueurs.

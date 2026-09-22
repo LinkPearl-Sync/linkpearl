@@ -89,6 +89,42 @@ public sealed class RendezvousClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Demande à ce service la liste de ceux qu'il connaît.
+    /// </summary>
+    /// <remarks>
+    /// Il publie ce que son opérateur a écrit, rien de plus : il n'interroge
+    /// aucun autre service et ne relaie rien. Ce qui revient est une
+    /// proposition, jamais un ajout : c'est l'utilisateur qui coche.
+    /// </remarks>
+    public async Task<IReadOnlyList<DirectoryEntry>?> QueryDirectoryAsync(CancellationToken ct)
+    {
+        await SendAsync(RendezvousWire.Simple(RendezvousKind.DirectoryQuery), ct).ConfigureAwait(false);
+
+        while (true)
+        {
+            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+            if (frame is null)
+                return null;
+
+            switch (frame[0])
+            {
+                case RendezvousKind.DirectoryList:
+                    return RendezvousWire.TryReadDirectory(frame, out var entries, out _) ? entries : null;
+
+                case RendezvousKind.MailboxDelivery:
+                    // Une demande arrivée pendant l'attente : on la met de côté
+                    // plutôt que de la perdre.
+                    Delivered?.Invoke(frame[1..]);
+                    break;
+
+                case RendezvousKind.Error:
+                    return null;
+            }
+        }
+    }
+
     /// <summary>Dépose une demande dans la boîte de quelqu'un.</summary>
     public Task DepositAsync(ReadOnlyMemory<byte> address, ReadOnlyMemory<byte> payload, CancellationToken ct)
         => SendAsync(RendezvousWire.MailboxDeposit(address.Span, payload.Span), ct);

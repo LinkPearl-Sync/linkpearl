@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Integration;
 
@@ -21,10 +22,20 @@ public sealed class PairBookStore(string path)
 {
     private static readonly byte[] Entropy = "linkpearl:pairs:v1"u8.ToArray();
 
+    /// <summary>
+    /// La forme sur disque.
+    /// </summary>
+    /// <remarks>
+    /// <c>RendezvousHost</c> est nullable et n'est plus écrit : il n'existe que
+    /// pour relire un carnet d'avant la fédération, qui ne portait qu'un hôte.
+    /// <c>Rendezvous</c> vient en dernier et vaut null à l'absence, ce que la
+    /// désérialisation d'un enregistrement positionnel donne naturellement.
+    /// </remarks>
     private sealed record Dto(
-        string Id, string? PublicKey, string PairSecret, string DisplayName, string RendezvousHost,
+        string Id, string? PublicKey, string PairSecret, string DisplayName, string? RendezvousHost,
         int Trust, int Permissions, int Policy, bool Paused,
-        long PairedAt, long? LastSeenAt, string? PinnedFingerprint);
+        long PairedAt, long? LastSeenAt, string? PinnedFingerprint,
+        string[]? Rendezvous = null);
 
     public void Load(PairBook book)
     {
@@ -53,14 +64,15 @@ public sealed class PairBookStore(string path)
             record.PublicKey is { } key ? Convert.ToHexStringLower(key) : null,
             Convert.ToHexStringLower(record.PairSecret),
             record.DisplayName,
-            record.RendezvousHost,
+            null,   // l'hôte unique n'est plus écrit, seulement relu
             (int)record.Trust,
             (int)record.Permissions,
             (int)record.Policy,
             record.Paused,
             record.PairedAt.ToUnixTimeSeconds(),
             record.LastSeenAt?.ToUnixTimeSeconds(),
-            record.PinnedFingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null));
+            record.PinnedFingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null,
+            record.Rendezvous.Select(place => place.ToString()).ToArray()));
 
         var plain = JsonSerializer.SerializeToUtf8Bytes(dtos.ToList());
 
@@ -74,13 +86,21 @@ public sealed class PairBookStore(string path)
     {
         try
         {
+            var rendezvous = ReadPlaces(dto);
+
+            // Un pair sans lieu de rendez-vous est injoignable : le garder
+            // afficherait une entrée que rien ne peut jamais joindre, et dont
+            // l'utilisateur ne comprendrait pas le silence.
+            if (rendezvous.Count == 0)
+                return null;
+
             return new PairRecord
             {
                 Id = PeerId.FromBytes(Convert.FromHexString(dto.Id)),
                 PublicKey = dto.PublicKey is { } key ? Convert.FromHexString(key) : null,
                 PairSecret = Convert.FromHexString(dto.PairSecret),
                 DisplayName = dto.DisplayName,
-                RendezvousHost = dto.RendezvousHost,
+                Rendezvous = rendezvous,
                 Trust = (PairTrust)dto.Trust,
                 Permissions = (PairPermissions)dto.Permissions,
                 Policy = (ConnectionPolicy)dto.Policy,
@@ -96,5 +116,28 @@ public sealed class PairBookStore(string path)
         {
             return null;   // une entrée abîmée ne doit pas emporter tout le carnet
         }
+    }
+
+    /// <summary>Les lieux de rendez-vous d'un pair, migration comprise.</summary>
+    /// <remarks>
+    /// Un carnet d'avant la fédération ne porte qu'un hôte, le port étant alors
+    /// une variable globale de la configuration. On ne peut pas le retrouver
+    /// ici, donc on prend celui par défaut : c'est celui qu'avaient tous les
+    /// réglages d'alors, et l'utilisateur peut corriger dans les réglages.
+    /// </remarks>
+    private static List<RendezvousAddress> ReadPlaces(Dto dto)
+    {
+        if (dto.Rendezvous is { Length: > 0 } stored)
+        {
+            return stored
+                .Select(text => RendezvousAddress.TryParse(text, out var place, out _) ? place : (RendezvousAddress?)null)
+                .OfType<RendezvousAddress>()
+                .ToList();
+        }
+
+        return dto.RendezvousHost is { } legacy
+            && RendezvousAddress.TryParse(legacy, out var one, out _)
+                ? [one]
+                : [];
     }
 }

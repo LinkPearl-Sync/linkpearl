@@ -1,4 +1,5 @@
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Core.Identity;
 
@@ -62,7 +63,17 @@ public sealed record PairRecord
     /// <summary>Nom donné localement. Jamais transmis.</summary>
     public required string DisplayName { get; init; }
 
-    public required string RendezvousHost { get; init; }
+    /// <summary>
+    /// Les lieux où ce pair et nous nous donnons rendez-vous, par ordre de
+    /// préférence.
+    /// </summary>
+    /// <remarks>
+    /// Une liste et non un service unique : c'est ce qui fait survivre un
+    /// pairage à la disparition de l'un d'eux. Les deux côtés s'annoncent sur
+    /// tous ceux qu'ils partagent, et se trouvent sur le premier qui répond.
+    /// Le premier de la liste sert aussi de relais préféré.
+    /// </remarks>
+    public required IReadOnlyList<RendezvousAddress> Rendezvous { get; init; }
 
     public PairTrust Trust { get; init; } = PairTrust.Pending;
     public PairPermissions Permissions { get; init; } = PairPermissions.Both;
@@ -117,7 +128,7 @@ public sealed class PairBook(IClock clock)
     /// <summary>Ajoute un pair dont on vient d'apprendre la clé.</summary>
     public PairRecord Add(
         PeerId theirId, byte[] theirPublicKey, ReadOnlySpan<byte> pairingNonce,
-        PeerId ourId, string displayName, string rendezvousHost)
+        PeerId ourId, string displayName, IReadOnlyList<RendezvousAddress> rendezvous)
     {
         var record = new PairRecord
         {
@@ -125,7 +136,7 @@ public sealed class PairBook(IClock clock)
             PublicKey = theirPublicKey,
             PairSecret = PairSecret.Derive(pairingNonce, ourId, theirId),
             DisplayName = displayName,
-            RendezvousHost = rendezvousHost,
+            Rendezvous = rendezvous,
             Trust = PairTrust.Accepted,
             PairedAt = clock.UtcNow,
         };

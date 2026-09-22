@@ -2,6 +2,7 @@ using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport.Rendezvous;
 using Xunit;
 
 namespace Linkpearl.Core.Tests.Sync;
@@ -147,6 +148,9 @@ public class VisibilityMatcherTests
 
 public class PairBookTests
 {
+    /// <summary>Un lieu de rendez-vous quelconque, ces tests ne portant pas dessus.</summary>
+    private static readonly RendezvousAddress Place = new("rdv.exemple.ch", 47900);
+
     private static PairBook New() => new(new MovableClock());
 
     private static (PairingCode Code, PeerId Ours, byte[] TheirKey) Invitation()
@@ -167,7 +171,7 @@ public class PairBookTests
         var book = New();
         var (code, ours, theirKey) = Invitation();
 
-        var record = book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        var record = book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
 
         Assert.Equal(PairTrust.Accepted, record.Trust);
         Assert.False(record.KeyVerified);
@@ -180,7 +184,7 @@ public class PairBookTests
         // jamais la demande à confirmer. Rien ne lui est appliqué pour autant.
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
 
         Assert.True(book.IsAuthorized(theirKey));
         Assert.Single(book.Active);
@@ -191,7 +195,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
 
         Assert.Single(book.Active);
     }
@@ -201,7 +205,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Gêneur", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Gêneur", [Place]);
         book.Block(code.Id);
 
         Assert.False(book.IsAuthorized(theirKey));
@@ -213,7 +217,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
         book.SetPaused(code.Id, true);
 
         Assert.True(book.IsAuthorized(theirKey));
@@ -242,7 +246,7 @@ public class PairBookTests
         var bobBook = new PairBook(new MovableClock());
         var chezBob = bobBook.Add(
             aliceId, CryptoPrimitives.ExportPublicPoint(alice), codeFromAlice.PairingNonce,
-            bobId, "Alice", "rdv.exemple.ch");
+            bobId, "Alice", [Place]);
 
         var chezAlice = PairSecret.Derive(codeFromAlice.PairingNonce, aliceId, bobId);
 
@@ -259,7 +263,7 @@ public class PairBookTests
         book.Load([new PairRecord
         {
             Id = code.Id, PairSecret = new byte[32], DisplayName = "Amie",
-            RendezvousHost = "rdv.exemple.ch", Trust = PairTrust.Accepted, PairedAt = default,
+            Rendezvous = [new RendezvousAddress("rdv.exemple.ch", 47900)], Trust = PairTrust.Accepted, PairedAt = default,
         }]);
 
         Assert.Null(book.Find(code.Id)!.PublicKey);
@@ -272,7 +276,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
 
         // Deux clés différentes de même empreinte seraient une contradiction.
         var falsifiee = theirKey.ToArray();
@@ -282,11 +286,50 @@ public class PairBookTests
     }
 
     [Fact]
+    public void Un_pair_garde_plusieurs_lieux_de_rendez_vous()
+    {
+        // C'est ce qui fait survivre un pairage à la mort d'un service : les
+        // deux côtés s'annoncent sur tous les lieux partagés et se trouvent sur
+        // le premier qui répond.
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+
+        var lieux = new[]
+        {
+            new RendezvousAddress("rdv.ami.ch", 47900),
+            new RendezvousAddress("rdv.exemple.ch", 443),
+        };
+
+        var record = book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", lieux);
+
+        Assert.Equal(lieux, record.Rendezvous);
+    }
+
+    [Fact]
+    public void L_ordre_des_lieux_est_conserve()
+    {
+        // Le premier sert de relais préféré : le réordonner silencieusement
+        // changerait par qui transitent les octets.
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+
+        var lieux = new[]
+        {
+            new RendezvousAddress("second.exemple.ch", 47900),
+            new RendezvousAddress("premier.exemple.ch", 47900),
+        };
+
+        var record = book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", lieux);
+
+        Assert.Equal("second.exemple.ch", record.Rendezvous[0].Host);
+    }
+
+    [Fact]
     public void L_empreinte_du_personnage_s_epingle()
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
 
         book.PinFingerprint(code.Id, PlayerFingerprint.Of("amie", 21));
 

@@ -11,6 +11,16 @@ namespace Linkpearl.Core.Sync;
 /// <summary>Où joindre le service de rendez-vous.</summary>
 public sealed record RendezvousEndpoint(string Host, int Port);
 
+/// <summary>Ce qui sait s'annoncer auprès d'un service de rendez-vous.</summary>
+/// <remarks>
+/// Abstrait pour que le choix du lieu se teste sans réseau. L'implémentation
+/// réelle ouvre un <see cref="RendezvousClient"/> et attend l'appariement.
+/// </remarks>
+public interface IRendezvousDialer
+{
+    Task<byte[]?> AnnounceAsync(RendezvousAddress at, Announcement announcement, CancellationToken ct);
+}
+
 /// <summary>Ce qu'une tentative de connexion a donné.</summary>
 public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, string? Failure);
 
@@ -45,8 +55,69 @@ public sealed class PeerConnector(
         return Convert.ToHexStringLower(token);
     }
 
+    /// <summary>
+    /// S'annonce sur tous les lieux à la fois, et rend le premier appariement.
+    /// </summary>
+    /// <remarks>
+    /// En parallèle et non l'un après l'autre : en séquence, deux personnes
+    /// pourtant en ligne se manquent dès qu'elles essaient les services dans un
+    /// ordre différent, l'une attendant sur le premier pendant que l'autre
+    /// attend sur le second.
+    ///
+    /// Le lieu rendu est celui qui a apparié : c'est par lui que passera le
+    /// relais si le direct échoue, puisque c'est le seul que les deux ont
+    /// atteint.
+    /// </remarks>
+    public static async Task<(RendezvousAddress At, byte[] Theirs)?> AnnounceEverywhereAsync(
+        IRendezvousDialer dialer, IReadOnlyList<RendezvousAddress> places,
+        Announcement announcement, TimeSpan budget, CancellationToken ct)
+    {
+        if (places.Count == 0)
+            return null;
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(budget);
+
+        var attempts = places.Select(async place =>
+        {
+            try
+            {
+                var theirs = await dialer.AnnounceAsync(place, announcement, deadline.Token).ConfigureAwait(false);
+
+                return theirs is null ? null : ((RendezvousAddress At, byte[] Theirs)?)(place, theirs);
+            }
+            catch (Exception)
+            {
+                // Un service injoignable n'est pas une erreur : c'est
+                // précisément ce à quoi sert d'en avoir plusieurs. Rattrapé ici
+                // pour qu'aucune tâche ne se termine en faute, dont l'exception
+                // resterait non observée après qu'une autre a gagné.
+                return null;
+            }
+        }).ToList();
+
+        while (attempts.Count > 0)
+        {
+            var finished = await Task.WhenAny(attempts).ConfigureAwait(false);
+            attempts.Remove(finished);
+
+            if (await finished.ConfigureAwait(false) is { } match)
+            {
+                // Le premier gagne : les autres n'ont plus lieu d'être, et leur
+                // annulation ferme leurs connexions.
+                await deadline.CancelAsync().ConfigureAwait(false);
+                return match;
+            }
+        }
+
+        return null;
+    }
+
     public async Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
     {
+        if (pair.Rendezvous.Count == 0)
+            return new ConnectionAttempt(null, false, "aucun lieu de rendez-vous enregistré pour ce pair");
+
         var candidates = await GatherCandidatesAsync(ct).ConfigureAwait(false);
 
         if (candidates.Count == 0)
@@ -56,37 +127,29 @@ public sealed class PeerConnector(
         var sealedCandidates = CryptoPrimitives.Seal(
             key, new byte[CryptoPrimitives.NonceLength], CandidateSet.Encode(candidates), CandidateKeyInfo);
 
-        byte[]? theirs;
+        var announcement = new Announcement(
+            new RendezvousTicket(clock).Announce(pair.PairSecret), sealedCandidates);
 
-        try
+        // Le pair n'est peut-être pas en ligne : on n'attend pas longtemps, et
+        // son absence n'est pas une erreur.
+        var dialer = new LiveDialer();
+
+        var match = await AnnounceEverywhereAsync(
+            dialer, pair.Rendezvous, announcement, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+
+        if (match is null)
         {
-            await using var client = new RendezvousClient();
-            await client.ConnectAsync(pair.RendezvousHost, rendezvous.Port, ct).ConfigureAwait(false);
-
-            var tickets = new RendezvousTicket(clock).Announce(pair.PairSecret);
-
-            // Le pair n'est peut-être pas en ligne : on n'attend pas longtemps,
-            // et son absence n'est pas une erreur.
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            deadline.CancelAfter(TimeSpan.FromSeconds(5));
-
-            theirs = await client.AnnounceAndWaitAsync(
-                new Announcement(tickets, sealedCandidates), deadline.Token).ConfigureAwait(false);
+            // Deux silences très différents. Si un service nous a reçus, le pair
+            // n'était simplement pas là et il reviendra. Si aucun ne nous a
+            // reçus, la réparation est d'ajouter un service ou de se repairer,
+            // et dire « hors ligne » enverrait attendre pour rien.
+            return dialer.Reached > 0
+                ? new ConnectionAttempt(null, true, null)
+                : new ConnectionAttempt(null, false, "aucun lieu de rendez-vous commun joignable");
         }
-        catch (OperationCanceledException)
-        {
-            return new ConnectionAttempt(null, true, null);
-        }
-        catch (Exception e)
-        {
-            return new ConnectionAttempt(null, false, $"rendez-vous injoignable : {e.Message}");
-        }
-
-        if (theirs is null)
-            return new ConnectionAttempt(null, true, null);
 
         if (CryptoPrimitives.TryOpen(
-                key, new byte[CryptoPrimitives.NonceLength], theirs, CandidateKeyInfo, out var plain) is false)
+                key, new byte[CryptoPrimitives.NonceLength], match.Value.Theirs, CandidateKeyInfo, out var plain) is false)
             return new ConnectionAttempt(null, false, "bloc de candidats illisible : secret de paire différent ?");
 
         if (CandidateSet.TryDecode(plain, out var theirCandidates, out var why) is false)
@@ -133,6 +196,30 @@ public sealed class PeerConnector(
         candidates.AddRange(links.LocalCandidates());
 
         return candidates;
+    }
+
+    /// <summary>L'annonceur réel : une connexion par lieu, le temps d'attendre.</summary>
+    /// <remarks>
+    /// Il compte les services atteints, ce dont l'appelant a besoin pour
+    /// distinguer un pair absent d'un réseau sans lieu commun. Une instance par
+    /// tentative, donc le compteur n'a pas à se remettre à zéro.
+    /// </remarks>
+    private sealed class LiveDialer : IRendezvousDialer
+    {
+        private int _reached;
+
+        public int Reached => Volatile.Read(ref _reached);
+
+        public async Task<byte[]?> AnnounceAsync(
+            RendezvousAddress at, Announcement announcement, CancellationToken ct)
+        {
+            await using var client = new RendezvousClient();
+            await client.ConnectAsync(at.Host, at.Port, ct).ConfigureAwait(false);
+
+            Interlocked.Increment(ref _reached);
+
+            return await client.AnnounceAndWaitAsync(announcement, ct).ConfigureAwait(false);
+        }
     }
 
     private static byte[] CandidateKey(ReadOnlySpan<byte> pairSecret)

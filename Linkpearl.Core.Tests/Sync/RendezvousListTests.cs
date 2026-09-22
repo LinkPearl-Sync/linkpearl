@@ -1,0 +1,56 @@
+using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport.Rendezvous;
+using Xunit;
+
+namespace Linkpearl.Core.Tests.Sync;
+
+/// <summary>
+/// La migration d'un réglage unique vers une liste. Elle vit dans le noyau et
+/// non dans Configuration, qui dépend de Dalamud et ne se testerait pas sous
+/// Linux.
+/// </summary>
+public class RendezvousListTests
+{
+    [Fact]
+    public void Un_reglage_d_avant_la_federation_devient_une_liste_d_une_entree()
+    {
+        var list = RendezvousList.Migrate("83.228.242.221", 47900, null);
+
+        var entry = Assert.Single(list);
+        Assert.Equal("83.228.242.221", entry.Address.Host);
+        Assert.Equal(47900, entry.Address.Port);
+        Assert.True(entry.Enabled);
+    }
+
+    [Fact]
+    public void Un_port_non_standard_est_conserve()
+    {
+        var entry = Assert.Single(RendezvousList.Migrate("rdv.exemple.ch", 443, null));
+
+        Assert.Equal(443, entry.Address.Port);
+    }
+
+    [Fact]
+    public void Une_liste_deja_migree_n_est_pas_retouchee()
+    {
+        // La migration ne doit jamais écraser un choix fait depuis.
+        var current = new[] { new RendezvousEntry(new RendezvousAddress("rdv.ami.ch", 443), "Amie", true) };
+
+        Assert.Same(current, RendezvousList.Migrate("83.228.242.221", 47900, current));
+    }
+
+    [Fact]
+    public void Un_reglage_vide_ne_fabrique_pas_d_entree()
+    {
+        // Mieux vaut une liste vide, que l'interface signale, qu'une entrée
+        // pointant nulle part dont l'utilisateur ne comprendrait pas l'échec.
+        Assert.Empty(RendezvousList.Migrate("", 47900, null));
+        Assert.Empty(RendezvousList.Migrate(null, 47900, []));
+    }
+
+    [Fact]
+    public void Un_reglage_illisible_ne_fabrique_pas_d_entree()
+    {
+        Assert.Empty(RendezvousList.Migrate("rdv exemple.ch", 47900, null));
+    }
+}

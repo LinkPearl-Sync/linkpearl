@@ -42,6 +42,23 @@ public sealed class PairingService : IDisposable
         _pending = _invitationStore.Load();
     }
 
+    /// <summary>Nos propres lieux de rendez-vous, ceux qui sont activés.</summary>
+    /// <remarks>
+    /// Vide quand l'utilisateur les a tous retirés : les appelants doivent le
+    /// dire plutôt que de tomber sur un index hors bornes.
+    /// </remarks>
+    private IReadOnlyList<RendezvousAddress> Here() =>
+        [.. _configuration.ActiveRendezvous.Select(entry => entry.Address)];
+
+    /// <summary>Ce qu'on répond quand l'utilisateur n'a plus aucun service actif.</summary>
+    /// <remarks>
+    /// Le cas est atteignable en deux clics dans les réglages, et sans message
+    /// il se manifesterait par un index hors bornes que personne ne saurait
+    /// relier à la case qu'il vient de décocher.
+    /// </remarks>
+    private const string NoService =
+        "aucun service de rendez-vous actif : ajoutez-en un dans les réglages.";
+
     public PeerId Id => _identity.Id;
 
     public IdentityKeyPair Identity => _identity;
@@ -53,7 +70,7 @@ public sealed class PairingService : IDisposable
             return $"déjà appairé avec {existing.DisplayName}.";
 
         _book.Add(request.Id, request.PublicKey, request.PairingNonce, _identity.Id,
-                  request.CharacterName, _configuration.RendezvousHost);
+                  request.CharacterName, Here());
         _bookStore.Save(_book);
 
         return $"{request.CharacterName} ajouté à vos pairs.";
@@ -81,8 +98,13 @@ public sealed class PairingService : IDisposable
         CryptoPrimitives.Compress(_identity.PublicKey).CopyTo(payload.AsSpan());
         nonce.CopyTo(payload.AsSpan(CryptoPrimitives.CompressedPointLength));
 
+        // Le lieu d'abord : c'est là que le ticket se dépose, et c'est lui que
+        // le texte portera pour que l'autre sache où le retirer.
+        if (Here() is not [var here, ..])
+            return (null, NoService);
+
         await using var client = new RendezvousClient();
-        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+        await client.ConnectAsync(here.Host, here.Port, ct).ConfigureAwait(false);
 
         var rejection = await client.RegisterInvitationAsync(ticket.ToBytes(), payload, ct).ConfigureAwait(false);
 
@@ -92,17 +114,26 @@ public sealed class PairingService : IDisposable
         _pending.Add(new PendingInvitation(ticket.Encode(), nonce, DateTimeOffset.UtcNow));
         _invitationStore.Save(_pending);
 
-        return (ticket.Encode(), null);
+        return (InvitationTicketText.Encode(ticket, here), null);
     }
 
     /// <summary>Retire une invitation et ajoute son auteur au carnet.</summary>
     public async Task<string> RedeemAsync(string text, string displayName, CancellationToken ct)
     {
-        if (InvitationTicket.TryParse(text, out var ticket, out var why) is false)
+        if (InvitationTicketText.TryParse(text, out var ticket, out var at, out var why) is false)
             return $"ticket refusé : {why}";
 
+        // Sans suffixe, le ticket vient d'avant la fédération : on retombe sur
+        // notre propre service, qui est ce qu'il désignait implicitement.
+        // Sans suffixe, le ticket vient d'avant la fédération : on retombe sur
+        // notre premier service, qui est ce qu'il désignait implicitement.
+        if (at is null && Here() is not [_, ..])
+            return NoService;
+
+        var where = at ?? Here()[0];
+
         await using var client = new RendezvousClient();
-        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+        await client.ConnectAsync(where.Host, where.Port, ct).ConfigureAwait(false);
 
         var (payload, rejection) = await client.RedeemInvitationAsync(ticket.ToBytes(), ct).ConfigureAwait(false);
 
@@ -131,7 +162,15 @@ public sealed class PairingService : IDisposable
         if (_book.Find(theirId) is { } existing)
             return $"déjà dans le carnet sous le nom « {existing.DisplayName} ».";
 
-        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, _configuration.RendezvousHost);
+        // Les deux lieux, celui du ticket d'abord puis le nôtre : c'est ce qui
+        // fait survivre le pairage à la disparition de l'un des deux.
+        var places = new List<RendezvousAddress> { where };
+
+        foreach (var mine in Here())
+            if (places.Contains(mine) is false)
+                places.Add(mine);
+
+        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, places);
         _bookStore.Save(_book);
 
         // On dépose notre propre identité dans la case de réponse : sans elle,
@@ -185,7 +224,7 @@ public sealed class PairingService : IDisposable
                 if (_book.Find(theirId) is null)
                 {
                     _book.Add(theirId, theirKey, invitation.Nonce, _identity.Id,
-                              $"pair-{theirId.ToHex()[..6]}", _configuration.RendezvousHost);
+                              $"pair-{theirId.ToHex()[..6]}", Here());
                     added.Add(theirId.ToHex()[..6]);
                 }
             }
@@ -257,7 +296,8 @@ public sealed class PairingService : IDisposable
             try
             {
                 await using var client = new RendezvousClient();
-                await client.ConnectAsync(pair.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+                var place = pair.Rendezvous[0];
+                await client.ConnectAsync(place.Host, place.Port, ct).ConfigureAwait(false);
 
                 var tickets = _tickets.Announce(pair.PairSecret);
 

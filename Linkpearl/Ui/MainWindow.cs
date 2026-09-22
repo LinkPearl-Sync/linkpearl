@@ -2,6 +2,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
 using Linkpearl.Ui.Pages;
 using Linkpearl.Ui.Shell;
@@ -30,7 +31,8 @@ public sealed class MainWindow : ThemedWindow
 
     public MainWindow(
         PairingService pairing, PresenceService presence, PluginState state, Configuration configuration,
-        Func<IReadOnlyList<PeerStatus>> statuses,
+        Func<IReadOnlyList<PeerStatus>> statuses, DiscoveryState discovery,
+        Action<RendezvousAddress> discover,
         Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
@@ -42,7 +44,7 @@ public sealed class MainWindow : ThemedWindow
 
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
         var pairs  = new PairsPage(pairing, statuses);
-        var settings = new SettingsPage(configuration);
+        var settings = new SettingsPage(configuration, discovery, discover);
 
         _requests = new RequestsPage(state, presence, accept, decline);
 

@@ -43,6 +43,33 @@ if (args.Length > 0 && args[0] == "hostile")
     return;
 }
 
+if (args.Length > 0 && args[0] == "federation")
+{
+    // Les deux services tournent à côté : ils vivent dans un autre dépôt, et le
+    // harnais ne peut pas les instancier. Le troisième n'est jamais lancé, c'est
+    // le cas « aucun lieu joignable ».
+    Linkpearl.Core.Transport.Rendezvous.RendezvousAddress Address(string name, string fallback)
+    {
+        var text = ArgString(name, fallback);
+
+        if (Linkpearl.Core.Transport.Rendezvous.RendezvousAddress.TryParse(text, out var parsed, out var why))
+            return parsed;
+
+        Console.WriteLine($"{name} illisible : {why}");
+        Environment.Exit(2);
+        return default;
+    }
+
+    Environment.ExitCode = await FederationRun.ExecuteAsync(
+        new FederationSettings(
+            ServiceA: Address("--rdv-a", "127.0.0.1:47901"),
+            ServiceB: Address("--rdv-b", "127.0.0.1:47902"),
+            Dead: Address("--rdv-mort", "127.0.0.1:47999"),
+            TimeoutSeconds: Arg("--timeout", 60)),
+        CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "fakepeer")
 {
     var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");

@@ -1,4 +1,5 @@
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Transport.Rendezvous;
 using Xunit;
 
 namespace Linkpearl.Core.Tests.Identity;
@@ -113,5 +114,65 @@ public class InvitationTicketTests
     {
         Assert.False(InvitationTicket.TryParse(text, out _, out var why));
         Assert.NotNull(why);
+    }
+}
+
+/// <summary>
+/// La forme collable du ticket : douze caractères, puis le lieu où le retirer.
+/// </summary>
+public class InvitationTicketTextTests
+{
+    [Fact]
+    public void Un_ticket_colle_porte_le_lieu_ou_le_retirer()
+    {
+        var ticket = InvitationTicket.Create();
+        var at = new RendezvousAddress("rdv.ami.ch", 443);
+
+        var text = InvitationTicketText.Encode(ticket, at);
+
+        Assert.True(InvitationTicketText.TryParse(text, out var back, out var where, out var why), why);
+        Assert.Equal(ticket, back);
+        Assert.Equal(at, where);
+    }
+
+    [Fact]
+    public void Un_ticket_sans_lieu_reste_lisible()
+    {
+        // Les tickets émis avant la fédération n'ont pas de suffixe. Celui qui
+        // colle retombe alors sur son premier service, ce que l'appelant décide.
+        var ticket = InvitationTicket.Create();
+
+        Assert.True(InvitationTicketText.TryParse(ticket.Encode(), out var back, out var where, out _));
+        Assert.Equal(ticket, back);
+        Assert.Null(where);
+    }
+
+    [Fact]
+    public void Un_lieu_malforme_fait_refuser_le_ticket_entier()
+    {
+        // Refuser en entier plutôt que d'ignorer le suffixe : coller un ticket
+        // vers un service illisible et le retirer silencieusement ailleurs
+        // enverrait la demande à quelqu'un d'autre.
+        var text = InvitationTicket.Create().Encode() + "@rdv exemple.ch";
+
+        Assert.False(InvitationTicketText.TryParse(text, out _, out _, out var why));
+        Assert.Contains("caractère", why);
+    }
+
+    [Fact]
+    public void Les_espaces_de_recopie_sont_toleres()
+    {
+        var ticket = InvitationTicket.Create();
+        var text = " " + InvitationTicketText.Encode(ticket, new RendezvousAddress("rdv.ami.ch", 47900)) + " ";
+
+        Assert.True(InvitationTicketText.TryParse(text, out var back, out _, out _));
+        Assert.Equal(ticket, back);
+    }
+
+    [Fact]
+    public void Un_ticket_vide_est_refuse()
+    {
+        Assert.False(InvitationTicketText.TryParse("   ", out _, out _, out var why));
+        Assert.Contains("vide", why);
     }
 }

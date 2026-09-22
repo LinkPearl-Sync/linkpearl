@@ -9,8 +9,10 @@ using Linkpearl.Core.Cache;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport;
+using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
 using Linkpearl.Ui;
+using Linkpearl.Ui.Pages;
 
 namespace Linkpearl;
 
@@ -52,10 +54,19 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PresenceService _presence;
     private readonly DalamudObjectSource _objectSource;
     private readonly PluginState _state = new();
+    private readonly DiscoveryState _discovery = new();
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
     private readonly Configuration _configuration;
     private readonly CancellationTokenSource _shutdown = new();
+
+    /// <summary>Les empreintes visibles à la ronde précédente.</summary>
+    /// <remarks>
+    /// La détection n'interroge les services que lorsque cet ensemble change :
+    /// redemander toutes les quinze secondes pour les mêmes personnes est du
+    /// trafic pur, multiplié par le nombre de services.
+    /// </remarks>
+    private HashSet<Linkpearl.Core.Abstractions.PlayerFingerprint> _lastVisible = [];
 
     public Plugin()
     {
@@ -64,6 +75,10 @@ public sealed class Plugin : IDalamudPlugin
         _selfLoop = new SelfLoop(penumbra, glamourer, Framework, Log);
 
         _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        // Un réglage d'avant la fédération devient une liste d'une entrée. Rien
+        // n'est demandé à l'utilisateur, et rien n'est écrasé s'il a déjà choisi.
+        _configuration.MigrateIfNeeded();
 
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Linkpearl");
@@ -119,6 +134,8 @@ public sealed class Plugin : IDalamudPlugin
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
             () => _engine.Statuses,
+            _discovery,
+            at => RunSafely(() => DiscoverAsync(at)),
             player => RunSafely(() => RequestPairAsync(player)),
             request => RunSafely(() => AcceptAsync(request)),
             Decline);
@@ -258,12 +275,25 @@ public sealed class Plugin : IDalamudPlugin
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
                         _state.Nearby = await _objectSource.SnapshotAsync(ct).ConfigureAwait(false);
-                        await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
+
+                        // Mesuré : 345 Mo par mois et par joueur à trois
+                        // secondes, contre 20 à quinze et seulement quand le
+                        // champ change. La fédération multiplie encore ce coût
+                        // par le nombre de services, ce qui fait de cette
+                        // cadence une nécessité et non un confort.
+                        var visible = _state.Nearby.Select(player => player.Fingerprint).ToHashSet();
+
+                        if (visible.SetEquals(_lastVisible) is false)
+                        {
+                            _lastVisible = visible;
+                            await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
+                        }
                     }
                 }
                 else
                 {
                     _state.Nearby = [];
+                    _lastVisible.Clear();
                 }
             }
             catch (Exception e) when (ct.IsCancellationRequested is false)
@@ -271,7 +301,46 @@ public sealed class Plugin : IDalamudPlugin
                 Log.Warning(e, "Rafraîchissement en échec.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Demande à un service la liste de ceux qu'il connaît.
+    /// </summary>
+    /// <remarks>
+    /// Le résultat n'est qu'une proposition : rien n'entre dans la liste de
+    /// l'utilisateur sans qu'il coche une case. C'est ce qui empêche un annuaire
+    /// de devenir une autorité.
+    /// </remarks>
+    private async Task DiscoverAsync(RendezvousAddress at)
+    {
+        _discovery.Reset();
+        _discovery.From = at;
+        _discovery.Running = true;
+
+        try
+        {
+            await using var client = new RendezvousClient();
+            await client.ConnectAsync(at.Host, at.Port, _shutdown.Token).ConfigureAwait(false);
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+            var offered = await client.QueryDirectoryAsync(deadline.Token).ConfigureAwait(false);
+
+            _discovery.Offered = offered ?? [];
+
+            if (offered is null)
+                _discovery.Failure = "ce service ne publie pas d'annuaire.";
+        }
+        catch (Exception e)
+        {
+            _discovery.Failure = $"interrogation impossible : {e.Message}";
+        }
+        finally
+        {
+            _discovery.Running = false;
         }
     }
 
