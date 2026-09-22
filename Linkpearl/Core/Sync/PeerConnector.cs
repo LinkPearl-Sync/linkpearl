@@ -47,6 +47,9 @@ public sealed class PeerConnector(
 
     public async Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
     {
+        if (pair.Rendezvous.Count == 0)
+            return new ConnectionAttempt(null, false, "aucun lieu de rendez-vous enregistré pour ce pair");
+
         var candidates = await GatherCandidatesAsync(ct).ConfigureAwait(false);
 
         if (candidates.Count == 0)
@@ -61,7 +64,10 @@ public sealed class PeerConnector(
         try
         {
             await using var client = new RendezvousClient();
-            await client.ConnectAsync(pair.RendezvousHost, rendezvous.Port, ct).ConfigureAwait(false);
+            // Le premier lieu seulement, pour l'instant : la tâche qui suit
+            // remplace cet appel par une annonce parallèle sur tous.
+            var place = pair.Rendezvous[0];
+            await client.ConnectAsync(place.Host, place.Port, ct).ConfigureAwait(false);
 
             var tickets = new RendezvousTicket(clock).Announce(pair.PairSecret);
 

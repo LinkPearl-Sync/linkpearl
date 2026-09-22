@@ -7,6 +7,7 @@ using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Core.Transport;
 using Xunit;
 
@@ -437,7 +438,7 @@ public sealed class SyncEngineTests : IDisposable
             PublicKey = publicKey,
             PairSecret = new byte[32],
             DisplayName = "Pair",
-            RendezvousHost = "rdv.exemple.ch",
+            Rendezvous = [new RendezvousAddress("rdv.exemple.ch", 47900)],
             Trust = PairTrust.Accepted,
             PairedAt = new DateTimeOffset(2026, 9, 22, 12, 0, 0, TimeSpan.Zero),
             PinnedFingerprint = pinned,

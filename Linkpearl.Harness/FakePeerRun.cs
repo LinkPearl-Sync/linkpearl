@@ -9,6 +9,7 @@ using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Core.Transport;
 
 namespace Linkpearl.Harness;
@@ -338,7 +339,7 @@ public static class FakePeerRun
             PublicKey = publicKey,
             PairSecret = secret,
             DisplayName = name,
-            RendezvousHost = "127.0.0.1",
+            Rendezvous = [new RendezvousAddress("127.0.0.1", 47900)],
             Trust = PairTrust.Accepted,
             PairedAt = DateTimeOffset.UnixEpoch,
         };

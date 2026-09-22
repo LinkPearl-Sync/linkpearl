@@ -42,6 +42,14 @@ public sealed class PairingService : IDisposable
         _pending = _invitationStore.Load();
     }
 
+    /// <summary>Notre propre lieu de rendez-vous, en une liste d'un élément.</summary>
+    /// <remarks>
+    /// Provisoire : la fédération donnera ici le lieu d'où vient l'invitation
+    /// suivi du nôtre, de sorte qu'un pairage survive à la perte de l'un d'eux.
+    /// </remarks>
+    private IReadOnlyList<RendezvousAddress> Here() =>
+        [new RendezvousAddress(_configuration.RendezvousHost, _configuration.RendezvousPort)];
+
     public PeerId Id => _identity.Id;
 
     public IdentityKeyPair Identity => _identity;
@@ -53,7 +61,7 @@ public sealed class PairingService : IDisposable
             return $"déjà appairé avec {existing.DisplayName}.";
 
         _book.Add(request.Id, request.PublicKey, request.PairingNonce, _identity.Id,
-                  request.CharacterName, _configuration.RendezvousHost);
+                  request.CharacterName, Here());
         _bookStore.Save(_book);
 
         return $"{request.CharacterName} ajouté à vos pairs.";
@@ -131,7 +139,7 @@ public sealed class PairingService : IDisposable
         if (_book.Find(theirId) is { } existing)
             return $"déjà dans le carnet sous le nom « {existing.DisplayName} ».";
 
-        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, _configuration.RendezvousHost);
+        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, Here());
         _bookStore.Save(_book);
 
         // On dépose notre propre identité dans la case de réponse : sans elle,
@@ -185,7 +193,7 @@ public sealed class PairingService : IDisposable
                 if (_book.Find(theirId) is null)
                 {
                     _book.Add(theirId, theirKey, invitation.Nonce, _identity.Id,
-                              $"pair-{theirId.ToHex()[..6]}", _configuration.RendezvousHost);
+                              $"pair-{theirId.ToHex()[..6]}", Here());
                     added.Add(theirId.ToHex()[..6]);
                 }
             }
@@ -257,7 +265,8 @@ public sealed class PairingService : IDisposable
             try
             {
                 await using var client = new RendezvousClient();
-                await client.ConnectAsync(pair.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+                var place = pair.Rendezvous[0];
+                await client.ConnectAsync(place.Host, place.Port, ct).ConfigureAwait(false);
 
                 var tickets = _tickets.Announce(pair.PairSecret);
 
