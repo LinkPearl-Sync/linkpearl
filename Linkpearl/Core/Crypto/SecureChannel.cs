@@ -43,7 +43,12 @@ public sealed class SecureChannel
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(channel, MaxChannels);
 
-        var sequence = ++_sent[channel];
+        // Incrément atomique : plusieurs blobs sont servis de front, et deux
+        // scellements qui liraient le même compteur produiraient deux fois le
+        // même nonce. En AES-GCM, un nonce réutilisé sous la même clé ne fuit
+        // pas seulement les deux messages, il livre de quoi forger.
+        var sequence = System.Threading.Interlocked.Increment(ref _sent[channel]);
+
         if (sequence > MaxSequence)
             throw new InvalidOperationException("compteur de canal épuisé : la session doit être renégociée");
 

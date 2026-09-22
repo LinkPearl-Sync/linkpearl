@@ -12,12 +12,18 @@ namespace Linkpearl.Core.Transport;
 ///
 /// Le canal zéro est réservé au plan de contrôle : un message de présence ou
 /// une annulation ne doit jamais attendre derrière des mégaoctets de texture.
+///
+/// Le choix se fait sous verrou. Plusieurs blobs sont servis de front, un par
+/// canal, et deux qui choisiraient le même canal se retrouveraient entrelacés
+/// dessus : le receveur refuse un second transfert sur un canal occupé, donc
+/// l'apparence entière s'arrêterait là.
 /// </remarks>
 public sealed class ChannelPlan
 {
     public const byte ControlChannel = 0;
 
     private readonly long[] _pending;
+    private readonly Lock _gate = new();
 
     public ChannelPlan(int dataChannels)
     {
@@ -32,16 +38,19 @@ public sealed class ChannelPlan
     /// <summary>Choisit le canal le moins chargé et lui impute le bloc.</summary>
     public byte Next(int blockSize)
     {
-        var chosen = 0;
-
-        for (var i = 1; i < _pending.Length; i++)
+        lock (_gate)
         {
-            if (_pending[i] < _pending[chosen])
-                chosen = i;
-        }
+            var chosen = 0;
 
-        _pending[chosen] += blockSize;
-        return (byte)(chosen + 1);   // le canal 0 reste au contrôle
+            for (var i = 1; i < _pending.Length; i++)
+            {
+                if (_pending[i] < _pending[chosen])
+                    chosen = i;
+            }
+
+            _pending[chosen] += blockSize;
+            return (byte)(chosen + 1);   // le canal 0 reste au contrôle
+        }
     }
 
     /// <summary>Signale qu'un bloc a quitté la file d'un canal.</summary>
@@ -52,12 +61,15 @@ public sealed class ChannelPlan
         if (index < 0 || index >= _pending.Length)
             return;
 
-        _pending[index] = Math.Max(0, _pending[index] - blockSize);
+        lock (_gate)
+            _pending[index] = Math.Max(0, _pending[index] - blockSize);
     }
 
     public long PendingOn(byte channel)
     {
         var index = channel - 1;
-        return index >= 0 && index < _pending.Length ? _pending[index] : 0;
+
+        lock (_gate)
+            return index >= 0 && index < _pending.Length ? _pending[index] : 0;
     }
 }

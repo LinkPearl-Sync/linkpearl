@@ -38,6 +38,17 @@ public sealed class PeerExchange : IAsyncDisposable
     private readonly Quotas _quotas;
     private readonly int _blockSize;
 
+    /// <summary>
+    /// Paquets qu'on laisse s'accumuler dans la file d'un canal avant d'attendre.
+    /// </summary>
+    /// <remarks>
+    /// Soit la fenêtre fiable de LiteNetLib, soixante-quatre paquets, ce qui
+    /// borne l'avance à environ un mébioctet par canal. Plus haut ne fait pas
+    /// aller plus vite, la fenêtre ne s'ouvrant pas davantage, et coûte
+    /// directement en mémoire dans le processus du jeu.
+    /// </remarks>
+    private const int QueuedPacketsPerChannel = 64;
+
     private readonly Channel<byte[]> _wanted = Channel.CreateUnbounded<byte[]>();
 
     private BlobReceiver? _receiver;
@@ -231,45 +242,70 @@ public sealed class PeerExchange : IAsyncDisposable
         if (payload.Length < 2 + (count * BlobHash.SizeInBytes))
             return;
 
-        var sender = new BlobSender(_store, _blockSize);
+        var wanted = new List<BlobHash>(count);
 
         for (var i = 0; i < count; i++)
+            wanted.Add(BlobHash.FromBytes(payload.AsSpan(2 + (i * BlobHash.SizeInBytes), BlobHash.SizeInBytes)));
+
+        var sender = new BlobSender(_store, _blockSize);
+
+        // Plusieurs blobs de front, un par canal, et jamais plus que de canaux.
+        //
+        // La fenêtre fiable de LiteNetLib est une constante de soixante-quatre
+        // paquets par canal : servir les blobs l'un après l'autre n'en remplit
+        // qu'une à la fois, et le transfert plafonne au débit d'un canal unique
+        // quel que soit le nombre de canaux ouverts. Mesuré sur une apparence
+        // réelle de 405 Mo en boucle locale : 3,3 Mo/s à un canal comme à
+        // vingt-quatre, tant que le service restait séquentiel.
+        await Parallel.ForEachAsync(
+            wanted,
+            new ParallelOptions { MaxDegreeOfParallelism = _channels.DataChannels, CancellationToken = ct },
+            async (hash, token) => await ServeOneAsync(sender, hash, token).ConfigureAwait(false))
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Envoie un blob, entier, sur un seul canal.</summary>
+    /// <remarks>
+    /// Sur un seul canal parce que le transport ne garantit l'ordre qu'à
+    /// l'intérieur d'un canal, et parce que le receveur refuse un second
+    /// transfert sur un canal déjà occupé.
+    /// </remarks>
+    private async Task ServeOneAsync(BlobSender sender, BlobHash hash, CancellationToken ct)
+    {
+        if (_store.TryGetSize(hash, out var size) is false)
         {
-            var hash = BlobHash.FromBytes(payload.AsSpan(2 + (i * BlobHash.SizeInBytes), BlobHash.SizeInBytes));
+            _log.Warning($"Blob demandé mais absent de notre cache : {hash}");
+            return;
+        }
 
-            if (_store.TryGetSize(hash, out var size) is false)
+        var channel = _channels.Next((int)size);
+
+        try
+        {
+            await foreach (var frame in sender.FramesFor(hash, ct).ConfigureAwait(false))
             {
-                _log.Warning($"Blob demandé mais absent de notre cache : {hash}");
-                continue;
-            }
-
-            // Un blob entier sur un seul canal : le transport ne garantit
-            // l'ordre qu'à l'intérieur d'un canal, donc une clôture envoyée
-            // ailleurs que ses blocs pourrait les précéder.
-            var channel = _channels.Next((int)size);
-
-            try
-            {
-                await foreach (var frame in sender.FramesFor(hash, ct).ConfigureAwait(false))
+                // Deux freins, et ils ne retiennent pas la même chose. Le
+                // limiteur borne ce que l'on prend de la liaison montante, pour
+                // que le ping du jeu ne parte pas à trois cents millisecondes.
+                // La file du canal borne ce que l'on alloue d'avance dans le
+                // processus du jeu : celle de LiteNetLib n'est pas bornée, et
+                // sans ce frein vingt-quatre canaux servis de front y
+                // entasseraient l'apparence entière.
+                while (_limiter.TryConsume(frame.Payload.Length) is false
+                    || _session.Link.PendingOn(channel) > QueuedPacketsPerChannel)
                 {
-                    // Le limiteur est nourri par le moteur, qui observe la perte
-                    // et le temps d'aller-retour du lien à chaque tic. Ici on ne
-                    // fait qu'attendre son tour.
-                    while (_limiter.TryConsume(frame.Payload.Length) is false)
-                    {
-                        if (_session.State is PeerSessionState.Disconnected)
-                            return;
+                    if (_session.State is PeerSessionState.Disconnected)
+                        return;
 
-                        await Task.Delay(5, ct).ConfigureAwait(false);
-                    }
-
-                    await _session.SendAsync(channel, frame.Kind, frame.Payload, ct).ConfigureAwait(false);
+                    await Task.Delay(5, ct).ConfigureAwait(false);
                 }
+
+                await _session.SendAsync(channel, frame.Kind, frame.Payload, ct).ConfigureAwait(false);
             }
-            finally
-            {
-                _channels.Completed(channel, (int)size);
-            }
+        }
+        finally
+        {
+            _channels.Completed(channel, (int)size);
         }
     }
 

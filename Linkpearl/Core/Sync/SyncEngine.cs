@@ -39,7 +39,23 @@ public sealed record SyncEngineSettings
     /// </remarks>
     public TimeSpan AbsentBackoff { get; init; } = TimeSpan.FromSeconds(30);
 
-    public int DataChannels { get; init; } = 24;
+    /// <summary>
+    /// Blobs servis de front, un par canal.
+    /// </summary>
+    /// <remarks>
+    /// Mesuré par le faux pair sur une apparence réelle de 405 Mo en boucle
+    /// locale : 3,3 Mo/s à un canal, 5,8 à deux, 8,9 à quatre, 12,7 à huit,
+    /// 15,5 à seize, puis 4,9 à vingt-quatre, où un passage n'a même pas abouti
+    /// en cinq minutes. Le gain s'inverse donc, et ce n'est plus le réseau qui
+    /// décide mais la localité des lectures et des écritures : vingt-quatre
+    /// blobs ouverts des deux côtés à la fois font bien plus de va-et-vient
+    /// qu'ils ne gagnent en fenêtres.
+    ///
+    /// Huit plutôt que seize, pour rester loin du bord : c'est vingt pour cent
+    /// sous le meilleur mesuré, et trois fois moins de mémoire retenue dans le
+    /// processus du jeu.
+    /// </remarks>
+    public int DataChannels { get; init; } = 8;
 
     public int BlockSize { get; init; } = 16 * 1024;
 

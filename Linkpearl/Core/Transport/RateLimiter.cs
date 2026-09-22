@@ -50,6 +50,8 @@ public sealed record RateLimiterSettings
 /// </remarks>
 public sealed class RateLimiter(IClock clock, RateLimiterSettings settings)
 {
+    private readonly Lock _gate = new();
+
     private double _tokens;
     private long _rate = settings.InitialBytesPerSecond;
     private DateTimeOffset _lastRefill = clock.UtcNow;
@@ -80,24 +82,40 @@ public sealed class RateLimiter(IClock clock, RateLimiterSettings settings)
         }
     }
 
+    /// <summary>
+    /// Prend des jetons pour un bloc, ou rend faux.
+    /// </summary>
+    /// <remarks>
+    /// Sous verrou : plusieurs blobs sont servis de front, et sans lui le seau
+    /// se viderait deux fois pour un seul bloc, ou pas du tout.
+    /// </remarks>
     public bool TryConsume(int bytes)
     {
-        if (_paused)
-            return false;
+        lock (_gate)
+        {
+            if (_paused)
+                return false;
 
-        Refill();
+            Refill();
 
-        if (_tokens < bytes)
-            return false;
+            if (_tokens < bytes)
+                return false;
 
-        _tokens -= bytes;
-        return true;
+            _tokens -= bytes;
+            return true;
+        }
     }
 
     /// <summary>
     /// Alimente l'adaptation avec ce que le transport observe.
     /// </summary>
     public void Observe(double lossPercent, int pingMs)
+    {
+        lock (_gate)
+            Adapt(lossPercent, pingMs);
+    }
+
+    private void Adapt(double lossPercent, int pingMs)
     {
         if (pingMs > 0 && pingMs < _minimumPingMs)
             _minimumPingMs = pingMs;

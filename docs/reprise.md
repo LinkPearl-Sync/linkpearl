@@ -43,7 +43,7 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 | 3, crypto et protocole | **Clos**. Relecture externe toujours due, voir plus bas. |
 | 4, cache et transfert | **Clos**, chaîne vérifiée de bout en bout sur des données réelles. |
 | 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit désormais dans son propre dépôt. |
-| 6, moteur de synchronisation | **En cours**, voir ci-dessous. |
+| 6, moteur de synchronisation | **Écrit**, reste le câblage dans le plugin. Voir ci-dessous. |
 | 7, interface | Partiellement fait, en avance sur le plan. |
 
 ## Ce qui reste au jalon 6
@@ -52,15 +52,38 @@ Fait : carnet de pairs, empreintes, anti-rebond, appariement, boîtes aux lettre
 détection, demande et acceptation par interface, liaison LiteNetLib, réflexion
 d'adresse, candidats, connecteur, session authentifiée, dialogue avec un pair.
 
-Reste à écrire :
+Les trois pièces qui manquaient sont écrites : le moteur (`Core/Sync/SyncEngine.cs`),
+l'applicateur distant (`Integration/RemoteApplicator.cs`, avec la décision dans
+`Core/Sync/AppearancePlan.cs`) et le mode « faux pair » du harnais.
 
-1. **Le moteur qui fait tourner les sessions** : réessais, application quand le
-   pair devient visible, retrait quand il s'en va, nettoyage.
-2. **L'applicateur distant** : poser l'apparence d'un pair via Penumbra et
-   Glamourer, dans l'ordre collection, mod temporaire, redessin, puis Glamourer
-   avec verrou.
-3. **Le mode « faux pair » du harnais**, pour que l'utilisateur éprouve une vraie
-   connexion et un vrai transfert sans avoir besoin de quelqu'un.
+**Reste le câblage dans `Plugin.cs`** : construire le moteur, lui donner un
+`ILocalAppearance` qui lit Penumbra (la capture de `SelfLoop` en tient lieu),
+battre la socket depuis `Framework.Update`, et faire tourner le tic. Rien de
+tout cela n'existe encore : le moteur ne tourne aujourd'hui que dans les tests
+et dans le harnais.
+
+### Ce que le faux pair a mesuré
+
+Une apparence réelle de 405 Mo, 70 blobs, 81 chemins de jeu, en boucle locale,
+sans limiteur :
+
+| canaux | durée | débit |
+|---|---|---|
+| 1 | 123,3 s | 3,3 Mo/s |
+| 2 | 70,0 s | 5,8 Mo/s |
+| 4 | 45,5 s | 8,9 Mo/s |
+| 8 | 31,8 s | 12,7 Mo/s |
+| 16 | 26,1 s | 15,5 Mo/s |
+| 24 | 83,2 s | 4,9 Mo/s, et un passage sans aboutir en cinq minutes |
+
+Le gain s'inverse au-delà de seize, et le défaut par défaut est donc passé à
+huit. Ce n'est plus le réseau qui décide à ce stade mais la localité des
+lectures et des écritures, ce que le jalon 2 ne pouvait pas voir : il mesurait
+un flux synthétique, pas soixante-dix fichiers ouverts de part et d'autre.
+
+Avec le limiteur, qui part à 512 Kio/s et gagne 128 Kio toutes les deux
+secondes, le même transfert prend 143 s. C'est lui qui décide alors, et c'est
+voulu : personne ne veut voir son jeu ramer parce qu'une amie vient d'arriver.
 
 ## Défauts connus, non corrigés
 
