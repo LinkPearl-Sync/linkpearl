@@ -1,3 +1,4 @@
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -76,6 +77,7 @@ public sealed class Plugin : IDalamudPlugin
             case "capture force": RunSafely(() => CaptureAsync(force: true));  break;
             case "code":          ShowInvitation();                            break;
             case "pairs":         ShowPairs();                                 break;
+            case "id":            Report($"votre identifiant : {_pairing.Id}"); break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
@@ -98,7 +100,7 @@ public sealed class Plugin : IDalamudPlugin
                     break;
                 }
 
-                Report("rdv <hôte> | code | pair <nom> <code> | unpair <nom> | pairs | announce");
+                Report("rdv <hôte> | code | id | pair <nom> <code> | unpair <nom> | pairs | announce");
                 Report("capture | capture force | apply | revert");
                 break;
         }
@@ -126,10 +128,39 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         var code = _pairing.Invitation();
+
         Report($"votre identifiant : {_pairing.Id}");
-        Report("code d'invitation (à copier depuis /xllog, le chat tronque) :");
-        Report(code);
+
+        // Le chat de FFXIV ne se copie pas : sans le presse-papiers, un code de
+        // cent vingt caractères serait à recopier à la main, ce que personne ne
+        // fera. C'est la seule façon de transmettre une invitation.
+        if (TryCopyToClipboard(code))
+            Report("code d'invitation copié dans le presse-papiers. Collez-le à la personne concernée.");
+        else
+            Report("presse-papiers indisponible : le code complet est dans /xllog.");
+
         Log.Information($"Code d'invitation Linkpearl : {code}");
+    }
+
+    /// <summary>
+    /// Met un texte dans le presse-papiers de Windows.
+    /// </summary>
+    /// <remarks>
+    /// Passe par le thread du framework : le presse-papiers d'ImGui appartient
+    /// au contexte de rendu, et y toucher depuis un autre fil planterait le jeu.
+    /// </remarks>
+    private static bool TryCopyToClipboard(string text)
+    {
+        try
+        {
+            Framework.RunOnFrameworkThread(() => ImGui.SetClipboardText(text)).Wait(TimeSpan.FromSeconds(2));
+            return true;
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Copie dans le presse-papiers impossible.");
+            return false;
+        }
     }
 
     private void AddPair(string arguments)
