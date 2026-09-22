@@ -111,8 +111,14 @@ public sealed class Plugin : IDalamudPlugin
         // jeu, et la cadence est celle d'une image.
         Framework.Update += PollLinks;
 
+        // Les polices avant la fenêtre : l'atlas est construit en tâche de
+        // fond, et la fenêtre retombe sur celle de Dalamud tant qu'il ne l'est
+        // pas, sans jamais rester vide.
+        Fonts.Build(PluginInterface);
+
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
+            () => _engine.Statuses,
             player => RunSafely(() => RequestPairAsync(player)),
             request => RunSafely(() => AcceptAsync(request)),
             Decline);
@@ -579,6 +585,7 @@ public sealed class Plugin : IDalamudPlugin
         _applicator.Dispose();
         _appearance.Dispose();
         _links.Dispose();
+        Fonts.Dispose();
 
         _selfLoop.Dispose();
         _presence.Dispose();

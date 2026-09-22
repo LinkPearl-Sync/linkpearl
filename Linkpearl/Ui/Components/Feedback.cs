@@ -1,0 +1,125 @@
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
+using System.Numerics;
+
+namespace Linkpearl.Ui.Components;
+
+/// <summary>Infobulles, pastilles d'état, écrans vides et bandeaux.</summary>
+internal static class Feedback
+{
+    public static void Tooltip(string text)
+    {
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Theme.S(Theme.GapL, Theme.GapM));
+        using var color = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.BgSurface);
+
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(Theme.S(320f));
+        Text.Body(text);
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
+    }
+
+    /// <summary>Infobulle affichée si l'élément précédent est survolé.</summary>
+    /// <remarks>
+    /// <c>AllowWhenDisabled</c> : un bouton grisé est précisément celui dont on
+    /// veut savoir pourquoi il l'est.
+    /// </remarks>
+    public static void TooltipOnHover(string text)
+    {
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            Tooltip(text);
+    }
+
+    /// <summary>Pastille colorée, avec un libellé facultatif.</summary>
+    public static void StatusDot(Vector4 color, string? label = null)
+    {
+        var radius = Theme.S(4f);
+        var origin = ImGui.GetCursorScreenPos();
+        var line   = ImGui.GetTextLineHeight();
+
+        ImGui.GetWindowDrawList().AddCircleFilled(
+            new Vector2(origin.X + radius, origin.Y + line * 0.5f), radius, ImGui.GetColorU32(color));
+
+        ImGui.Dummy(new Vector2(radius * 2f, line));
+
+        if (label is null)
+            return;
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+        Text.Small(label, color);
+    }
+
+    /// <summary>
+    /// Écran vide.
+    /// </summary>
+    /// <remarks>
+    /// Une liste vide sans explication se lit comme une panne. Dire ce qui
+    /// manque et comment le remplir coûte trois lignes et évite un ticket.
+    /// </remarks>
+    public static void EmptyState(FontAwesomeIcon icon, string title, string? hint = null)
+    {
+        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXl)));
+
+        var width = ImGui.GetContentRegionAvail().X;
+
+        using (Fonts.PushTitle())
+        {
+            var glyph = icon.S();
+            var size  = ImGui.CalcTextSize(glyph);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (width - size.X) * 0.5f);
+            ImGui.TextColored(Theme.TextFaint, glyph);
+        }
+
+        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapM)));
+
+        Centered(title, Theme.TextMuted);
+
+        if (hint is null)
+            return;
+
+        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXs)));
+        Centered(hint, Theme.TextFaint, small: true);
+    }
+
+    private static void Centered(string text, Vector4 color, bool small = false)
+    {
+        using var font = small ? Fonts.PushSmall() : Fonts.PushBody();
+
+        var safe = Glyphs.Safe(text);
+        var size = ImGui.CalcTextSize(safe);
+
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (ImGui.GetContentRegionAvail().X - size.X) * 0.5f);
+        ImGui.TextColored(color, safe);
+    }
+
+    /// <summary>Bandeau d'information ou d'avertissement, barre d'accent à gauche.</summary>
+    public static void Alert(Vector4 color, FontAwesomeIcon icon, string text)
+    {
+        var origin = ImGui.GetCursorScreenPos();
+        var width  = ImGui.GetContentRegionAvail().X;
+        var dl     = ImGui.GetWindowDrawList();
+
+        var padX = Theme.S(Theme.CardPadX);
+        var padY = Theme.S(Theme.GapM);
+
+        // La hauteur se mesure avant de peindre : le texte est replié, donc son
+        // encombrement dépend de la largeur disponible.
+        var textWidth = width - padX * 2f - Theme.S(20f);
+        var height    = ImGui.CalcTextSize(Glyphs.Safe(text), false, textWidth).Y + padY * 2f;
+        var max       = new Vector2(origin.X + width, origin.Y + height);
+
+        Surface.Panel(dl, origin, max, Theme.Mix(Theme.BgSurface, color, 0.10f),
+                      Theme.Alpha(color, 0.45f), shadow: false);
+
+        Surface.AccentBar(dl, origin, max, color);
+
+        ImGui.Dummy(new Vector2(0f, padY));
+        ImGui.Indent(padX);
+
+        Text.WithIcon(icon, text, color, Theme.Text, wrap: true);
+
+        ImGui.Unindent(padX);
+        ImGui.Dummy(new Vector2(0f, padY - Theme.S(Theme.GapXs)));
+    }
+}

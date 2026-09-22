@@ -17,6 +17,14 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
 
+  <!-- Inter, sous-ensemblé, embarqué. Sous licence SIL OFL, dont le texte
+       accompagne les fichiers. Les noms logiques sont ceux que Fonts.cs
+       demande à l'assembly. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Fonts\Inter-Regular.ttf"  LogicalName="Fonts.Inter-Regular.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\Inter-SemiBold.ttf" LogicalName="Fonts.Inter-SemiBold.ttf" />
+  </ItemGroup>
+
   <Import Project="..\build\Core.Deps.props" />
 
 </Project>
