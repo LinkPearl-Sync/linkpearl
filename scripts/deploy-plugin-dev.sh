@@ -39,14 +39,18 @@ if [ ! -f "$BUILD_DIR/Linkpearl.dll" ]; then
   exit 1
 fi
 
+# On copie tout le répertoire de sortie, et surtout pas une liste écrite en
+# dur : le SDK Dalamud en a déjà retiré les assemblies qu'il fournit lui-même,
+# donc ce qui reste est exactement ce dont le plugin a besoin. Une liste en dur
+# oublie les dépendances transitives, et le plugin échoue au chargement sur un
+# « Could not load file or assembly » (c'est arrivé avec Luna.dll, dépendance
+# de Penumbra.Api).
+#
+# --delete pour qu'une DLL d'une compilation précédente ne survive pas à la
+# suppression de sa dépendance.
 echo "==> Copie vers $DEST"
 mkdir -p "$DEST"
-for f in Linkpearl.dll Linkpearl.json Linkpearl.deps.json Linkpearl.pdb \
-         Penumbra.Api.dll Glamourer.Api.dll LiteNetLib.dll; do
-  if [ -f "$BUILD_DIR/$f" ]; then
-    cp -f "$BUILD_DIR/$f" "$DEST/"
-  fi
-done
+rsync -a --delete "$BUILD_DIR/" "$DEST/"
 
 echo "==> Déployé :"
 ls -la "$DEST"
