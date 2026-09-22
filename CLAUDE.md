@@ -7,6 +7,15 @@ La conception complète est dans `docs/superpowers/specs/2026-09-22-linkpearl-de
 La lire avant toute décision d'architecture : elle documente les mesures et les
 contre-exemples qui ont écarté les solutions évidentes.
 
+## À lire avant toute chose
+
+`docs/reprise.md` dit où en est le projet, ce qui reste, et surtout les
+contraintes venant de l'utilisateur qu'aucun code n'exprime. Plusieurs
+itérations ont été invalidées pour les avoir ignorées.
+
+`docs/pairage.md` explique pourquoi le pairage ne ressemble pas à ce que la
+spec prévoyait.
+
 ## Les trois règles dont la violation coûte le plus cher
 
 1. **`Linkpearl/Core/` ne référence jamais Dalamud.** C'est ce qui permet à
