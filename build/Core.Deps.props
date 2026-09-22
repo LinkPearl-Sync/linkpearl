@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Dépendances du noyau, source unique de vérité.
+       Importé par le plugin, les tests, le harnais et le rendez-vous : sans cela
+       les versions dérivent silencieusement entre les quatre projets.
+
+       La crypto n'apparaît pas ici, et c'est voulu : tout passe par
+       System.Security.Cryptography (ECDSA P-256, ECDH P-256, HKDF, AES-GCM,
+       SHA-256), donc zéro dépendance, accéléré matériellement, et compatible
+       Windows 10. ChaCha20Poly1305 exigerait Windows 10 build 20142, et les
+       implémentations managées d'Ed25519 sont lentes.
+       Voir docs/superpowers/specs/2026-09-22-linkpearl-design.md. -->
+  <ItemGroup>
+    <PackageReference Include="LiteNetLib" Version="2.1.4" />
+  </ItemGroup>
+
+</Project>

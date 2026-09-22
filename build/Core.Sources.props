@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- Compilation du noyau par inclusion de sources, et non par référence de
+       projet : le plugin cible net10.0-windows et exige les assemblies Dalamud,
+       ce qui rendrait les tests incompilables sous Linux.
+
+       $(MSBuildThisFileDirectory) pointe sur build/, d'où le ..\ pour remonter
+       à la racine du dépôt. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)..\Linkpearl\Core\**\*.cs" LinkBase="Core" />
+  </ItemGroup>
+
+</Project>
