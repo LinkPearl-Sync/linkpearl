@@ -22,4 +22,25 @@ public sealed record Quotas
 
     /// <summary>Profondeur d'un chemin de jeu, en segments.</summary>
     public int MaxGamePathDepth { get; init; } = 16;
+
+    /// <summary>Taille d'un blob transféré.</summary>
+    public long MaxBlobBytes { get; init; } = 128L * 1024 * 1024;
+
+    /// <summary>Taille d'un manifeste tel qu'il arrive sur le réseau.</summary>
+    public int MaxManifestCompressedBytes { get; init; } = 1024 * 1024;
+
+    /// <summary>
+    /// Taille d'un manifeste une fois détendu.
+    /// </summary>
+    /// <remarks>
+    /// Un pair peut envoyer un mégaoctet qui se détend en plusieurs gigaoctets.
+    /// La lecture s'arrête ici plutôt que de remplir la mémoire du processus du jeu.
+    /// </remarks>
+    public int MaxManifestDecompressedBytes { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>Chaîne de manipulations méta de Penumbra, opaque pour nous.</summary>
+    public int MaxMetaManipulationChars { get; init; } = 512 * 1024;
+
+    /// <summary>Chaîne d'état de Glamourer, opaque pour nous.</summary>
+    public int MaxGlamourerStateChars { get; init; } = 64 * 1024;
 }

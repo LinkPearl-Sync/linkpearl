@@ -10,4 +10,12 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\Linkpearl\Core\**\*.cs" LinkBase="Core" />
   </ItemGroup>
 
+  <!-- Les mêmes sources, embarquées, pour qu'ArchitectureTests puisse les lire
+       à l'exécution. Un test qui chercherait les fichiers sur le disque
+       dépendrait du répertoire de travail et passerait au vert en n'inspectant
+       rien du tout. -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\Linkpearl\Core\**\*.cs" LinkBase="CoreSources" />
+  </ItemGroup>
+
 </Project>
