@@ -65,6 +65,10 @@ public sealed class Plugin : IDalamudPlugin
 
         _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        // Un réglage d'avant la fédération devient une liste d'une entrée. Rien
+        // n'est demandé à l'utilisateur, et rien n'est écrasé s'il a déjà choisi.
+        _configuration.MigrateIfNeeded();
+
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Linkpearl");
 

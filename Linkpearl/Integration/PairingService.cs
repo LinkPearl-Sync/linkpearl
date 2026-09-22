@@ -42,13 +42,22 @@ public sealed class PairingService : IDisposable
         _pending = _invitationStore.Load();
     }
 
-    /// <summary>Notre propre lieu de rendez-vous, en une liste d'un élément.</summary>
+    /// <summary>Nos propres lieux de rendez-vous, ceux qui sont activés.</summary>
     /// <remarks>
-    /// Provisoire : la fédération donnera ici le lieu d'où vient l'invitation
-    /// suivi du nôtre, de sorte qu'un pairage survive à la perte de l'un d'eux.
+    /// Vide quand l'utilisateur les a tous retirés : les appelants doivent le
+    /// dire plutôt que de tomber sur un index hors bornes.
     /// </remarks>
     private IReadOnlyList<RendezvousAddress> Here() =>
-        [new RendezvousAddress(_configuration.RendezvousHost, _configuration.RendezvousPort)];
+        [.. _configuration.ActiveRendezvous.Select(entry => entry.Address)];
+
+    /// <summary>Ce qu'on répond quand l'utilisateur n'a plus aucun service actif.</summary>
+    /// <remarks>
+    /// Le cas est atteignable en deux clics dans les réglages, et sans message
+    /// il se manifesterait par un index hors bornes que personne ne saurait
+    /// relier à la case qu'il vient de décocher.
+    /// </remarks>
+    private const string NoService =
+        "aucun service de rendez-vous actif : ajoutez-en un dans les réglages.";
 
     public PeerId Id => _identity.Id;
 
@@ -89,8 +98,13 @@ public sealed class PairingService : IDisposable
         CryptoPrimitives.Compress(_identity.PublicKey).CopyTo(payload.AsSpan());
         nonce.CopyTo(payload.AsSpan(CryptoPrimitives.CompressedPointLength));
 
+        // Le lieu d'abord : c'est là que le ticket se dépose, et c'est lui que
+        // le texte portera pour que l'autre sache où le retirer.
+        if (Here() is not [var here, ..])
+            return (null, NoService);
+
         await using var client = new RendezvousClient();
-        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+        await client.ConnectAsync(here.Host, here.Port, ct).ConfigureAwait(false);
 
         var rejection = await client.RegisterInvitationAsync(ticket.ToBytes(), payload, ct).ConfigureAwait(false);
 
@@ -98,10 +112,6 @@ public sealed class PairingService : IDisposable
             return (null, rejection);
 
         _pending.Add(new PendingInvitation(ticket.Encode(), nonce, DateTimeOffset.UtcNow));
-
-        // Le texte porte le lieu du dépôt : celui qui colle doit pouvoir
-        // retirer le ticket là où il est, et non là où il a réglé le sien.
-        var here = Here()[0];
         _invitationStore.Save(_pending);
 
         return (InvitationTicketText.Encode(ticket, here), null);
@@ -115,6 +125,11 @@ public sealed class PairingService : IDisposable
 
         // Sans suffixe, le ticket vient d'avant la fédération : on retombe sur
         // notre propre service, qui est ce qu'il désignait implicitement.
+        // Sans suffixe, le ticket vient d'avant la fédération : on retombe sur
+        // notre premier service, qui est ce qu'il désignait implicitement.
+        if (at is null && Here() is not [_, ..])
+            return NoService;
+
         var where = at ?? Here()[0];
 
         await using var client = new RendezvousClient();
