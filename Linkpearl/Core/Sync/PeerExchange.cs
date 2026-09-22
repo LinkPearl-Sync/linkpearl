@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Threading.Channels;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
 using Linkpearl.Core.Manifest;
@@ -36,6 +37,8 @@ public sealed class PeerExchange : IAsyncDisposable
     private readonly ILogSink _log;
     private readonly Quotas _quotas;
     private readonly int _blockSize;
+
+    private readonly Channel<byte[]> _wanted = Channel.CreateUnbounded<byte[]>();
 
     private BlobReceiver? _receiver;
     private TransferPlan? _plan;
@@ -92,7 +95,8 @@ public sealed class PeerExchange : IAsyncDisposable
                 break;
 
             case MessageKind.BlobWant:
-                await OnBlobWantAsync(message.Payload, ct).ConfigureAwait(false);
+                // Mis en file, et servi ailleurs : voir ServeAsync.
+                _wanted.Writer.TryWrite(message.Payload);
                 break;
 
             case MessageKind.BlobStart:
@@ -193,6 +197,30 @@ public sealed class PeerExchange : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Sert les blobs demandés, sur sa propre tâche.
+    /// </summary>
+    /// <remarks>
+    /// Séparé de la réception, et c'est une condition de fonctionnement et non
+    /// un confort : servir une apparence prend des minutes, et tant que cela
+    /// dure les trames que le pair nous envoie ne seraient pas lues. Elles
+    /// s'accumuleraient en mémoire dans le processus du jeu, à hauteur de ce
+    /// qu'il nous transfère en même temps, soit plusieurs centaines de
+    /// mégaoctets. Deux joueurs qui se découvrent se servent l'un l'autre en
+    /// même temps : c'est le cas courant, pas le cas rare.
+    /// </remarks>
+    public async Task ServeAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var wanted in _wanted.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+                await OnBlobWantAsync(wanted, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     private async Task OnBlobWantAsync(byte[] payload, CancellationToken ct)
     {
         if (payload.Length < 2)
@@ -224,9 +252,14 @@ public sealed class PeerExchange : IAsyncDisposable
             {
                 await foreach (var frame in sender.FramesFor(hash, ct).ConfigureAwait(false))
                 {
+                    // Le limiteur est nourri par le moteur, qui observe la perte
+                    // et le temps d'aller-retour du lien à chaque tic. Ici on ne
+                    // fait qu'attendre son tour.
                     while (_limiter.TryConsume(frame.Payload.Length) is false)
                     {
-                        _limiter.Observe(_session.State is PeerSessionState.Disconnected ? 0 : 0, 0);
+                        if (_session.State is PeerSessionState.Disconnected)
+                            return;
+
                         await Task.Delay(5, ct).ConfigureAwait(false);
                     }
 
@@ -271,6 +304,8 @@ public sealed class PeerExchange : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _wanted.Writer.TryComplete();
+
         if (_receiver is not null)
             await _receiver.DisposeAsync().ConfigureAwait(false);
     }

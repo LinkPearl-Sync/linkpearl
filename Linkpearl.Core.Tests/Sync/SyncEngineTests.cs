@@ -1,0 +1,544 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Cache;
+using Linkpearl.Core.Crypto;
+using Linkpearl.Core.Identity;
+using Linkpearl.Core.Manifest;
+using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport;
+using Xunit;
+
+namespace Linkpearl.Core.Tests.Sync;
+
+/// <summary>Un lien en mémoire, pour faire dialoguer deux moteurs sans réseau.</summary>
+/// <remarks>
+/// La livraison est immédiate et dans l'ordre, ce qui est plus favorable que le
+/// transport réel. Ces tests portent sur les décisions du moteur, pas sur le
+/// transport : la fragmentation, la fenêtre et la perte sont éprouvées par le
+/// harnais, qui fait passer les trames par LiteNetLib pour de bon.
+/// </remarks>
+internal sealed class MemoryLink : IPeerLink
+{
+    private MemoryLink? _other;
+
+    public static (MemoryLink A, MemoryLink B) Pair()
+    {
+        var a = new MemoryLink();
+        var b = new MemoryLink();
+
+        a._other = b;
+        b._other = a;
+
+        return (a, b);
+    }
+
+    public bool IsOpen { get; private set; } = true;
+
+    public int RoundTripMs => 12;
+
+    public float PacketLossPercent => 0;
+
+    public int PendingOn(byte channel) => 0;
+
+    public EndPoint? Remote => new IPEndPoint(IPAddress.Loopback, 7777);
+
+    public event Action<byte, byte[]>? Received;
+
+    public event Action<string>? Closed;
+
+    public ValueTask SendAsync(byte channel, ReadOnlyMemory<byte> payload, CancellationToken ct)
+    {
+        if (IsOpen is false)
+            throw new InvalidOperationException("lien fermé");
+
+        _other?.Deliver(channel, payload.ToArray());
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (IsOpen)
+        {
+            IsOpen = false;
+            _other?.Drop();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void Deliver(byte channel, byte[] payload) => Received?.Invoke(channel, payload);
+
+    private void Drop()
+    {
+        if (IsOpen is false)
+            return;
+
+        IsOpen = false;
+        Closed?.Invoke("le pair a raccroché");
+    }
+}
+
+/// <summary>Le point de rencontre : deux appels forment un lien.</summary>
+internal sealed class MeetingPoint
+{
+    private readonly object _gate = new();
+
+    private TaskCompletionSource<IPeerLink>? _waiting;
+
+    public Task<IPeerLink> JoinAsync()
+    {
+        lock (_gate)
+        {
+            if (_waiting is { } waiting)
+            {
+                _waiting = null;
+
+                var (a, b) = MemoryLink.Pair();
+                waiting.SetResult(a);
+
+                return Task.FromResult<IPeerLink>(b);
+            }
+
+            _waiting = new TaskCompletionSource<IPeerLink>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _waiting.Task;
+        }
+    }
+}
+
+internal sealed class MeetingDialer(MeetingPoint point) : IPeerDialer
+{
+    public async Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
+        => new(await point.JoinAsync().WaitAsync(ct), false, null);
+}
+
+internal sealed class FailingDialer(bool peerWasAbsent) : IPeerDialer
+{
+    public int Attempts { get; private set; }
+
+    public Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
+    {
+        Attempts++;
+
+        return Task.FromResult(new ConnectionAttempt(
+            null, peerWasAbsent, peerWasAbsent ? null : "rendez-vous injoignable"));
+    }
+}
+
+internal sealed class FixedAppearance(CharacterManifest? manifest, PlayerFingerprint? fingerprint) : ILocalAppearance
+{
+    public CharacterManifest? Manifest { get; set; } = manifest;
+
+    public PlayerFingerprint? Fingerprint { get; set; } = fingerprint;
+
+    public Task<CharacterManifest?> CurrentAsync(CancellationToken ct) => Task.FromResult(Manifest);
+}
+
+internal sealed class RecordingApplicator : IRemoteApplicator
+{
+    public List<(PeerId Peer, GameObjectRef Target, CharacterManifest Manifest)> Applied { get; } = [];
+
+    public List<PeerId> Removed { get; } = [];
+
+    public bool Ready { get; set; } = true;
+
+    public Task ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
+    {
+        Applied.Add((peer, target, manifest));
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveAsync(PeerId peer, CancellationToken ct)
+    {
+        Removed.Add(peer);
+        return Task.CompletedTask;
+    }
+
+    public bool CanApply(out string reason)
+    {
+        reason = Ready ? string.Empty : "chargement d'écran";
+        return Ready;
+    }
+}
+
+internal sealed class SilentLog : ILogSink
+{
+    public List<string> Warnings { get; } = [];
+
+    public void Debug(string message)
+    {
+    }
+
+    public void Info(string message)
+    {
+    }
+
+    public void Warning(string message, Exception? exception = null) => Warnings.Add(message);
+}
+
+/// <summary>
+/// Le moteur, éprouvé de bout en bout contre un autre moteur.
+/// </summary>
+/// <remarks>
+/// Deux instances qui se parlent par un lien en mémoire, chacune avec son
+/// carnet, son identité et son cache. Le handshake, le manifeste et le
+/// transfert sont les vrais : seul le transport est remplacé. C'est le seul
+/// montage qui prouve que les pièces s'emboîtent, et c'est aussi la base du
+/// mode « faux pair » du harnais.
+/// </remarks>
+public sealed class SyncEngineTests : IDisposable
+{
+    private static readonly PlayerFingerprint AlicePrint = PlayerFingerprint.Of("alice", 21);
+    private static readonly PlayerFingerprint BobPrint = PlayerFingerprint.Of("bob", 21);
+
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "linkpearl-moteur-" + Guid.NewGuid().ToString("N"));
+
+    private readonly MovableClock _clock = new();
+    private readonly List<IDisposable> _disposables = [];
+
+    public void Dispose()
+    {
+        foreach (var disposable in _disposables)
+            disposable.Dispose();
+
+        if (Directory.Exists(_root))
+            Directory.Delete(_root, recursive: true);
+    }
+
+    [Fact]
+    public async Task Un_pair_visible_recoit_l_apparence_de_l_autre()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        var settled = await world.SettleAsync(
+            () => world.BobApplicator.Applied.Count > 0,
+            [],
+            [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)]);
+
+        Assert.True(settled, "l'apparence n'a jamais été posée : " + world.Describe());
+
+        var applied = Assert.Single(world.BobApplicator.Applied);
+
+        Assert.Equal(world.AliceId, applied.Peer);
+        Assert.Equal(4, applied.Target.ObjectIndex);
+
+        // Le blob a bien traversé : c'est la chaîne entière, du manifeste au cache.
+        Assert.True(world.BobStore.TryGetSize(world.Blob, out var size));
+        Assert.Equal(world.BlobSize, size);
+    }
+
+    [Fact]
+    public async Task L_empreinte_du_pair_est_epinglee_a_la_premiere_rencontre()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        await world.SettleAsync(
+            () => world.BobApplicator.Applied.Count > 0,
+            [],
+            [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)]);
+
+        Assert.Equal(AlicePrint, world.BobBook.Find(world.AliceId)!.PinnedFingerprint);
+    }
+
+    [Fact]
+    public async Task Un_pair_qui_sort_du_champ_voit_son_apparence_retiree()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        var applied = await world.SettleAsync(
+            () => world.BobApplicator.Applied.Count > 0,
+            [],
+            [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)]);
+
+        Assert.True(applied, "l'apparence n'a jamais été posée");
+
+        var removed = await world.SettleAsync(
+            () => world.BobApplicator.Removed.Count > 0, [], []);
+
+        Assert.True(removed, "l'apparence n'a jamais été retirée");
+        Assert.Equal(world.AliceId, Assert.Single(world.BobApplicator.Removed));
+
+        // La session reste ouverte : le pair va revenir, et tout refaire
+        // coûterait un transfert complet.
+        Assert.Equal(PeerSessionState.Connected, world.BobStatus().State);
+    }
+
+    [Fact]
+    public async Task Une_apparence_deja_posee_n_est_pas_reposee_a_chaque_tic()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+
+        for (var i = 0; i < 10; i++)
+            await world.TickAsync([], sees);
+
+        // Un redessin coûte un clignotement à l'écran : le refaire sans raison
+        // se verrait immédiatement.
+        Assert.Single(world.BobApplicator.Applied);
+    }
+
+    [Fact]
+    public async Task Un_pair_mis_en_pause_est_debranche_et_son_apparence_effacee()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+
+        world.BobBook.SetPaused(world.AliceId, true);
+        await world.TickAsync([], sees);
+
+        // Sans cela, la mise en pause serait un bouton sans effet visible.
+        Assert.Equal(world.AliceId, Assert.Single(world.BobApplicator.Removed));
+        Assert.Empty(world.Bob.Statuses);
+    }
+
+    [Fact]
+    public async Task Une_empreinte_autre_que_celle_epinglee_n_applique_rien()
+    {
+        // Un pair pourrait revendiquer le personnage d'un tiers et nous faire
+        // poser ses fichiers dessus, visible chez nous seuls.
+        await using var world = await TwoEnginesAsync(pinOnBob: PlayerFingerprint.Of("quelqu-un-d-autre", 21));
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        var disputed = await world.SettleAsync(() => world.BobStatus().FingerprintDisputed, [], sees);
+
+        Assert.True(disputed, "l'empreinte inattendue n'a pas été signalée");
+        Assert.Empty(world.BobApplicator.Applied);
+    }
+
+    [Fact]
+    public async Task L_extinction_du_moteur_efface_ce_qui_etait_pose()
+    {
+        var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+
+        await world.DisposeAsync();
+
+        // Désactiver le plugin ne doit rien changer à l'apparence du joueur.
+        Assert.Equal(world.AliceId, Assert.Single(world.BobApplicator.Removed));
+    }
+
+    [Fact]
+    public async Task Les_tentatives_s_espacent_apres_un_echec()
+    {
+        var dialer = new FailingDialer(peerWasAbsent: false);
+        await using var engine = Solitary(dialer);
+
+        await engine.TickAsync([], default);
+        Assert.Equal(1, dialer.Attempts);
+
+        // Le tic suivant ramasse l'échec et pose l'attente.
+        await engine.TickAsync([], default);
+        await engine.TickAsync([], default);
+        Assert.Equal(1, dialer.Attempts);
+
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await engine.TickAsync([], default);
+        Assert.Equal(2, dialer.Attempts);
+
+        // Doublement : cinq secondes ne suffisent plus.
+        await engine.TickAsync([], default);
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await engine.TickAsync([], default);
+        Assert.Equal(2, dialer.Attempts);
+
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await engine.TickAsync([], default);
+        Assert.Equal(3, dialer.Attempts);
+    }
+
+    [Fact]
+    public async Task Un_pair_hors_ligne_ne_fait_pas_monter_l_attente()
+    {
+        // L'absence n'est pas une panne : un ami hors ligne toute la journée
+        // serait sinon réessayé une fois par heure au moment où il se connecte.
+        var dialer = new FailingDialer(peerWasAbsent: true);
+        await using var engine = Solitary(dialer);
+
+        for (var round = 1; round <= 3; round++)
+        {
+            await engine.TickAsync([], default);
+            await engine.TickAsync([], default);
+
+            Assert.Equal(round, dialer.Attempts);
+
+            _clock.Advance(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    [Fact]
+    public async Task Rien_n_est_pose_tant_que_le_jeu_n_est_pas_pret()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        world.BobApplicator.Ready = false;
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        var ready = await world.SettleAsync(() => world.BobStatus().View.Ready, [], sees);
+
+        Assert.True(ready, "les blobs ne sont jamais arrivés");
+        Assert.Empty(world.BobApplicator.Applied);
+
+        world.BobApplicator.Ready = true;
+
+        var applied = await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees);
+
+        Assert.True(applied, "l'application n'a pas repris une fois le jeu prêt");
+    }
+
+    /// <summary>Un moteur seul, qui n'a personne à joindre. Pour les tentatives.</summary>
+    private SyncEngine Solitary(IPeerDialer dialer)
+    {
+        var identity = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(identity);
+
+        var theirKey = NewPublicKey();
+        var book = new PairBook(_clock);
+
+        book.Load([Accepted(PeerId.Of(theirKey), theirKey)]);
+
+        return new SyncEngine(
+            book, dialer, new FixedAppearance(null, BobPrint), new RecordingApplicator(),
+            Store("solitaire"), PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), identity,
+            _clock, new SilentLog());
+    }
+
+    private byte[] NewPublicKey()
+    {
+        var key = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(key);
+
+        return CryptoPrimitives.ExportPublicPoint(key);
+    }
+
+    private static PairRecord Accepted(PeerId id, byte[] publicKey, PlayerFingerprint? pinned = null)
+        => new()
+        {
+            Id = id,
+            PublicKey = publicKey,
+            PairSecret = new byte[32],
+            DisplayName = "Pair",
+            RendezvousHost = "rdv.exemple.ch",
+            Trust = PairTrust.Accepted,
+            PairedAt = new DateTimeOffset(2026, 9, 22, 12, 0, 0, TimeSpan.Zero),
+            PinnedFingerprint = pinned,
+        };
+
+    private FileSystemBlobStore Store(string name)
+        => new(Path.Combine(_root, name), new CacheSettings(), _clock, _ => long.MaxValue);
+
+    private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null)
+    {
+        var alice = CryptoPrimitives.GenerateIdentity();
+        var bob = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(alice);
+        _disposables.Add(bob);
+
+        var aliceKey = CryptoPrimitives.ExportPublicPoint(alice);
+        var bobKey = CryptoPrimitives.ExportPublicPoint(bob);
+        var aliceId = PeerId.Of(aliceKey);
+        var bobId = PeerId.Of(bobKey);
+
+        var aliceStore = Store("alice");
+        var bobStore = Store("bob");
+
+        var content = Encoding.UTF8.GetBytes("un modèle de tenue, en tout petit");
+        var hash = BlobHash.OfContent(content);
+
+        await using (var writer = await aliceStore.BeginWriteAsync(hash, content.Length, default))
+        {
+            await writer.WriteAsync(content, default);
+            await writer.CommitAsync(default);
+        }
+
+        var manifest = new CharacterManifest(
+            CharacterManifest.CurrentVersion,
+            [new FileReplacement(["chara/equipment/e0001/model/c0101e0001_top.mdl"], hash, content.Length)],
+            string.Empty,
+            null);
+
+        var aliceBook = new PairBook(_clock);
+        aliceBook.Load([Accepted(bobId, bobKey)]);
+
+        var bobBook = new PairBook(_clock);
+        bobBook.Load([Accepted(aliceId, aliceKey, pinOnBob)]);
+
+        var point = new MeetingPoint();
+        var bobApplicator = new RecordingApplicator();
+        var aliceLog = new SilentLog();
+        var bobLog = new SilentLog();
+
+        var aliceEngine = new SyncEngine(
+            aliceBook, new MeetingDialer(point), new FixedAppearance(manifest, AlicePrint),
+            new RecordingApplicator(), aliceStore, aliceId, alice, _clock, aliceLog);
+
+        var bobEngine = new SyncEngine(
+            bobBook, new MeetingDialer(point), new FixedAppearance(null, BobPrint), bobApplicator,
+            bobStore, bobId, bob, _clock, bobLog);
+
+        return new TwoEngines(
+            aliceEngine, bobEngine, bobBook, bobApplicator, bobStore, aliceId, hash, content.Length,
+            aliceLog, bobLog, _clock);
+    }
+
+    private sealed record TwoEngines(
+        SyncEngine Alice, SyncEngine Bob, PairBook BobBook, RecordingApplicator BobApplicator,
+        FileSystemBlobStore BobStore, PeerId AliceId, BlobHash Blob, long BlobSize,
+        SilentLog AliceLog, SilentLog BobLog, MovableClock Clock)
+        : IAsyncDisposable
+    {
+        public PeerStatus BobStatus() => Bob.Statuses.Single();
+
+        /// <summary>De quoi diagnostiquer un test qui n'aboutit pas.</summary>
+        public string Describe()
+            => $"chez Bob {string.Join(" | ", Bob.Statuses)}, chez Alice {string.Join(" | ", Alice.Statuses)}, "
+             + $"avertissements Bob [{string.Join(" ; ", BobLog.Warnings)}], "
+             + $"avertissements Alice [{string.Join(" ; ", AliceLog.Warnings)}]";
+
+        public async Task TickAsync(IReadOnlyList<VisiblePlayer> aliceSees, IReadOnlyList<VisiblePlayer> bobSees)
+        {
+            // Le temps avance, sinon rien ne se transfère : le limiteur de débit
+            // remplit son seau à jetons depuis l'horloge injectée, et une horloge
+            // figée ne lui accorde jamais un octet.
+            Clock.Advance(TimeSpan.FromMilliseconds(50));
+
+            await Alice.TickAsync(aliceSees, default);
+            await Bob.TickAsync(bobSees, default);
+        }
+
+        /// <summary>Fait tourner les deux moteurs jusqu'à ce que la condition tienne.</summary>
+        public async Task<bool> SettleAsync(
+            Func<bool> done, IReadOnlyList<VisiblePlayer> aliceSees, IReadOnlyList<VisiblePlayer> bobSees)
+        {
+            for (var i = 0; i < 400; i++)
+            {
+                await TickAsync(aliceSees, bobSees);
+
+                if (done())
+                    return true;
+
+                await Task.Delay(10);
+            }
+
+            return false;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Alice.DisposeAsync();
+            await Bob.DisposeAsync();
+        }
+    }
+}

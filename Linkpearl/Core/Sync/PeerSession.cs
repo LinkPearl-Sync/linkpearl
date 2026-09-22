@@ -55,6 +55,9 @@ public sealed class PeerSession : IAsyncDisposable
 
     public PairRecord Pair { get; }
 
+    /// <summary>Le lien qui porte la session, pour qui doit en observer la santé.</summary>
+    public IPeerLink Link => _link;
+
     public PeerSessionState State { get; private set; } = PeerSessionState.Connecting;
 
     public byte[]? SessionId { get; private set; }

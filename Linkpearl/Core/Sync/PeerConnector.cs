@@ -24,7 +24,7 @@ public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, stri
 /// domestique, seulement les adresses publiques qu'il voit de toute façon.
 /// </remarks>
 public sealed class PeerConnector(
-    PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log)
+    PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log) : IPeerDialer
 {
     private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v1"u8;
     private static ReadOnlySpan<byte> TokenInfo => "linkpearl:token:v1"u8;
