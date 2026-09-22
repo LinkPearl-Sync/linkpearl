@@ -42,7 +42,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
-            HelpMessage = "capture | apply | revert",
+            HelpMessage = "capture | capture force | apply | revert",
         });
 
         Report($"chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
@@ -64,7 +64,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         switch (arguments.Trim().ToLowerInvariant())
         {
-            case "capture":   RunSafely(CaptureAsync);                      break;
+            case "capture":       RunSafely(() => CaptureAsync(force: false)); break;
+            case "capture force": RunSafely(() => CaptureAsync(force: true));  break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
             default:
@@ -73,9 +74,9 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    private async Task CaptureAsync()
+    private async Task CaptureAsync(bool force)
     {
-        var report = await _selfLoop.CaptureAsync(_shutdown.Token).ConfigureAwait(false);
+        var report = await _selfLoop.CaptureAsync(force, _shutdown.Token).ConfigureAwait(false);
 
         Report($"capture : {report.FileCount} fichiers, {Megabytes(report.TotalBytes)}, "
              + $"{report.GamePathCount} chemins de jeu.");

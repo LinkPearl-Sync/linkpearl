@@ -10,6 +10,12 @@ if (args.Length > 0 && args[0] == "vectors")
     return;
 }
 
+if (args.Length > 0 && args[0] == "hostile")
+{
+    Environment.ExitCode = await HostileRun.ExecuteAsync(CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "endtoend")
 {
     var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");

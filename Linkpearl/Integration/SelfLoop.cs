@@ -63,7 +63,9 @@ public sealed class SelfLoop : IDisposable
     private string CollectionMarkerPath => Path.Combine(_root, "collection.id");
     private string BlobDir => Path.Combine(_root, "cache", "blobs");
 
-    public async Task<CaptureReport> CaptureAsync(CancellationToken ct)
+    public async Task<CaptureReport> CaptureAsync(CancellationToken ct) => await CaptureAsync(force: false, ct).ConfigureAwait(false);
+
+    public async Task<CaptureReport> CaptureAsync(bool force, CancellationToken ct)
     {
         // Les appels IPC prennent des index de l'ObjectTable : ils partent du
         // thread du framework, et rien d'autre ne s'y fait.
@@ -124,6 +126,20 @@ public sealed class SelfLoop : IDisposable
         var encoded = ManifestCodec.Encode(build.Manifest);
         var compressed = ManifestCodec.Compress(build.Manifest);
 
+        // Une capture vide écrase silencieusement la précédente, et revient à
+        // annoncer à ses pairs qu'on n'a plus aucun mod. Le cas arrive pour de
+        // bon : il suffit d'avoir désactivé sa collection Penumbra le temps d'un
+        // essai. On refuse, plutôt que de laisser l'utilisateur le découvrir
+        // en voyant son personnage nu chez les autres.
+        var wouldErasePrevious = build.Manifest.Replacements.Count == 0
+                              && File.Exists(ManifestPath)
+                              && HasPreviousContent();
+
+        if (wouldErasePrevious && force is false)
+            throw new InvalidOperationException(
+                "aucune ressource moddée trouvée, alors qu'une capture précédente en contenait. "
+              + "Vos mods sont-ils activés dans Penumbra ? Utilisez « capture force » pour écraser quand même.");
+
         Directory.CreateDirectory(_root);
         await File.WriteAllBytesAsync(ManifestPath, compressed, ct).ConfigureAwait(false);
 
@@ -138,6 +154,21 @@ public sealed class SelfLoop : IDisposable
             HashMilliseconds: hashWatch.ElapsedMilliseconds,
             CopyMilliseconds: copyWatch.ElapsedMilliseconds,
             Skipped: classified.Skipped.Concat(build.Skipped).ToList());
+    }
+
+    /// <summary>Vrai si le manifeste déjà enregistré contient quelque chose.</summary>
+    private bool HasPreviousContent()
+    {
+        try
+        {
+            var previous = File.ReadAllBytes(ManifestPath);
+            return ManifestCodec.TryDecompress(previous, Quotas.Default, out var manifest, out _)
+                && manifest!.Replacements.Count > 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private async Task CopyIntoCacheAsync(string source, BlobHash hash, CancellationToken ct)
