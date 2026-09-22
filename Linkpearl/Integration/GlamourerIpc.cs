@@ -7,7 +7,7 @@ namespace Linkpearl.Integration;
 /// <summary>
 /// Adaptateur mince vers Glamourer.
 /// </summary>
-public sealed class GlamourerIpc
+public sealed class GlamourerIpc : IDisposable
 {
     /// <summary>
     /// Notre clé, constante et non nulle.
@@ -32,6 +32,7 @@ public sealed class GlamourerIpc
     private readonly RevertState _revertState;
     private readonly UnlockState _unlockState;
     private readonly UnlockAll _unlockAll;
+    private readonly IDisposable _finalized;
 
     public GlamourerIpc(IDalamudPluginInterface pi)
     {
@@ -41,7 +42,18 @@ public sealed class GlamourerIpc
         _revertState = new RevertState(pi);
         _unlockState = new UnlockState(pi);
         _unlockAll   = new UnlockAll(pi);
+
+        // StateFinalized plutôt que StateChanged : il se déclenche une fois à
+        // la fin d'une application, là où l'autre se déclenche à chaque
+        // retouche et noierait l'anti-rebond.
+        _finalized = StateFinalized.Subscriber(pi, (address, _) => Finalized?.Invoke(address));
     }
+
+    /// <summary>Une application d'état vient de s'achever, avec l'adresse de l'objet.</summary>
+    /// <remarks>Levé depuis le thread du jeu : ne rien faire de long ici.</remarks>
+    public event Action<nint>? Finalized;
+
+    public void Dispose() => _finalized.Dispose();
 
     public (int Major, int Minor)? TryGetVersion()
     {

@@ -44,6 +44,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
+    private readonly PenumbraIpc _penumbra;
+    private readonly GlamourerIpc _glamourer;
     private readonly SelfLoop _selfLoop;
     private readonly FileSystemBlobStore _cache;
     private readonly PeerLinkFactory _links;
@@ -55,6 +57,17 @@ public sealed class Plugin : IDalamudPlugin
     private readonly DalamudObjectSource _objectSource;
     private readonly PluginState _state = new();
     private readonly DiscoveryState _discovery = new();
+
+    /// <summary>
+    /// Regroupe les signaux de changement d'apparence en une reconstruction.
+    /// </summary>
+    /// <remarks>
+    /// Un changement de tenue produit une dizaine de redessins en quelques
+    /// centaines de millisecondes. Le plafond existe pour que quelqu'un qui
+    /// bricole son apparence dix minutes finisse quand même par être annoncé.
+    /// </remarks>
+    private readonly Debouncer _appearanceChanged =
+        new(new SystemClock(), TimeSpan.FromMilliseconds(750), TimeSpan.FromSeconds(5));
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
     private readonly Configuration _configuration;
@@ -70,8 +83,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
-        var penumbra  = new PenumbraIpc(PluginInterface);
-        var glamourer = new GlamourerIpc(PluginInterface);
+        var penumbra  = _penumbra  = new PenumbraIpc(PluginInterface);
+        var glamourer = _glamourer = new GlamourerIpc(PluginInterface);
         _selfLoop = new SelfLoop(penumbra, glamourer, Framework, Log);
 
         _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -107,6 +120,22 @@ public sealed class Plugin : IDalamudPlugin
 
         _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
         _appearance = new LocalAppearance(penumbra, glamourer, Framework, _cache, Log);
+
+        // Tout changement de mod affectant le personnage produit un redessin, et
+        // Glamourer signale la fin d'une application d'état. Les deux sont levés
+        // depuis le thread du jeu : on ne fait que signaler, la reconstruction
+        // part de la boucle de synchronisation.
+        penumbra.Redrawn += index =>
+        {
+            if (index == 0)
+                _appearanceChanged.Signal();
+        };
+
+        glamourer.Finalized += address =>
+        {
+            if (address == Objects.LocalPlayer?.Address)
+                _appearanceChanged.Signal();
+        };
 
         _applicator = new RemoteApplicator(
             penumbra, glamourer, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
@@ -367,6 +396,12 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 _appearance.Follow(_state.Self?.Fingerprint);
+
+                // L'anti-rebond n'est consommé qu'une fois le calme revenu, ou
+                // au plafond : c'est ce qui évite de rehacher pendant qu'on
+                // essaie dix tenues d'affilée.
+                if (_appearanceChanged.TryConsume())
+                    _appearance.Rebuild();
 
                 var visible = _state.Nearby
                     .Select(player => new VisiblePlayer(player.Object, player.Fingerprint))
@@ -653,6 +688,8 @@ public sealed class Plugin : IDalamudPlugin
         _engine.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         _applicator.Dispose();
         _appearance.Dispose();
+        _penumbra.Dispose();
+        _glamourer.Dispose();
         _links.Dispose();
         Fonts.Dispose();
 

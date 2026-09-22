@@ -13,7 +13,7 @@ namespace Linkpearl.Integration;
 /// l'appelant de savoir sur quel thread il est, sinon on masquerait une faute
 /// de thread derrière une couche d'indirection.
 /// </remarks>
-public sealed class PenumbraIpc
+public sealed class PenumbraIpc : IDisposable
 {
     /// <summary>Marque nos modifications temporaires, pour pouvoir les retirer.</summary>
     public const string Tag = "Linkpearl";
@@ -27,6 +27,7 @@ public sealed class PenumbraIpc
     private readonly DeleteTemporaryCollection _deleteCollection;
     private readonly RedrawObject _redraw;
     private readonly GetCollectionForObject _collectionForObject;
+    private readonly IDisposable _redrawn;
 
     public PenumbraIpc(IDalamudPluginInterface pi)
     {
@@ -39,7 +40,22 @@ public sealed class PenumbraIpc
         _deleteCollection  = new DeleteTemporaryCollection(pi);
         _redraw            = new RedrawObject(pi);
         _collectionForObject = new GetCollectionForObject(pi);
+
+        // Le redessin est le signal qui compte : tout changement de mod
+        // affectant le personnage en produit un. S'abonner aux changements de
+        // réglage à la place attraperait aussi les collections qui ne nous
+        // concernent pas.
+        _redrawn = GameObjectRedrawn.Subscriber(pi, (_, index) => Redrawn?.Invoke(index));
     }
+
+    /// <summary>Un objet du jeu vient d'être redessiné, avec son index.</summary>
+    /// <remarks>
+    /// Levé depuis le thread du jeu. Ce qui en découle ne doit donc rien faire
+    /// de long ici : on se contente de signaler.
+    /// </remarks>
+    public event Action<int>? Redrawn;
+
+    public void Dispose() => _redrawn.Dispose();
 
     /// <summary>
     /// Version de l'API, ou null si Penumbra n'est pas chargé.

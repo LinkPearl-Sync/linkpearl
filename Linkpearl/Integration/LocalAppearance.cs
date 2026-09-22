@@ -32,6 +32,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly IPluginLog _log;
     private readonly CancellationTokenSource _life = new();
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
+    private readonly FileHashCache _hashes = new();
 
     private volatile CharacterManifest? _current;
     private PlayerFingerprint? _fingerprint;
@@ -137,6 +138,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         // passent ici, et une seule image bloquée se voit.
         var resolved = new List<ResolvedFile>();
         var known = new Dictionary<string, (BlobHash Hash, long Size)>(StringComparer.OrdinalIgnoreCase);
+        var hashed = 0;
 
         foreach (var file in classified.Files)
         {
@@ -152,8 +154,25 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
             if (known.TryGetValue(file.LocalPath, out var entry) is false)
             {
-                await using (var stream = File.OpenRead(file.LocalPath))
-                    entry = (await BlobHash.OfStreamAsync(stream, ct).ConfigureAwait(false), stream.Length);
+                var info = new FileInfo(file.LocalPath);
+                var stamp = new FileStamp(info.Length, info.LastWriteTimeUtc);
+
+                // Le cache est ce qui rend une reconstruction abordable : un
+                // redessin arrive à chaque changement de zone, et sans lui
+                // chacun rehacherait huit cents mégaoctets pour aboutir au même
+                // manifeste.
+                if (_hashes.TryGet(file.LocalPath, stamp, out var cached))
+                {
+                    entry = (cached, stamp.Size);
+                }
+                else
+                {
+                    await using (var stream = File.OpenRead(file.LocalPath))
+                        entry = (await BlobHash.OfStreamAsync(stream, ct).ConfigureAwait(false), stream.Length);
+
+                    _hashes.Remember(file.LocalPath, stamp, entry.Hash);
+                    hashed++;
+                }
 
                 known[file.LocalPath] = entry;
                 await StoreAsync(file.LocalPath, entry.Hash, entry.Size, ct).ConfigureAwait(false);
@@ -177,11 +196,21 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
             return;
         }
 
+        // Le moteur compare par référence pour décider s'il doit réannoncer.
+        // Rendre une instance neuve à chaque reconstruction ferait réannoncer à
+        // tous les pairs à chaque changement de zone, et chacun redemanderait
+        // le manifeste : une tempête pour une apparence identique.
+        if (_current is { } previous && ManifestCodec.HashOf(previous) == ManifestCodec.HashOf(build.Manifest))
+        {
+            Description = $"inchangée, {hashed} fichier(s) rehaché(s)";
+            return;
+        }
+
         _current = build.Manifest;
 
         Description = $"{build.Manifest.Replacements.Count} fichiers, "
                     + $"{build.Manifest.Replacements.Sum(r => r.GamePaths.Count)} chemins de jeu, "
-                    + $"{known.Values.Sum(e => e.Size) / 1024 / 1024} Mo"
+                    + $"{known.Values.Sum(e => e.Size) / 1024 / 1024} Mo, {hashed} haché(s)"
                     + $"{(build.Skipped.Count > 0 ? $", {build.Skipped.Count} écartés" : "")}";
 
         _log.Information($"Apparence locale construite : {Description}");
