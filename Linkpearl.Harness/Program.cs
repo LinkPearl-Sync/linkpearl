@@ -43,6 +43,24 @@ if (args.Length > 0 && args[0] == "hostile")
     return;
 }
 
+if (args.Length > 0 && args[0] == "fakepeer")
+{
+    var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");
+    var manifest = ArgString("--manifest", Path.Combine(Path.GetDirectoryName(cache)!, "capture.json.br"));
+
+    Environment.ExitCode = await FakePeerRun.ExecuteAsync(
+        new FakePeerSettings(
+            SourceCacheRoot: cache,
+            ManifestPath: manifest,
+            SynthesizeFromCache: Array.IndexOf(args, "--from-cache") >= 0,
+            DataChannels: Arg("--channels", 24),
+            BlockSize: Arg("--block", 16) * 1024,
+            RateLimited: Array.IndexOf(args, "--no-limit") < 0,
+            TimeoutSeconds: Arg("--timeout", 180)),
+        CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "endtoend")
 {
     var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");

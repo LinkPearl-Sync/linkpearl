@@ -139,7 +139,8 @@ public static class EndToEndRun
     /// d'éprouver le transfert sur un volume réaliste sans dépendre d'une
     /// capture fraîche.
     /// </remarks>
-    private static CharacterManifest SynthesizeFromCache(string root)
+    /// <summary>Un manifeste bâti sur les blobs déjà en cache, quand aucune capture n'existe.</summary>
+    internal static CharacterManifest SynthesizeFromCache(string root)
     {
         var replacements = Directory
             .EnumerateFiles(Path.Combine(root, "blobs"), "*", SearchOption.AllDirectories)
