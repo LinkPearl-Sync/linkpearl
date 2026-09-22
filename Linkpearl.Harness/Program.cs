@@ -10,6 +10,31 @@ if (args.Length > 0 && args[0] == "vectors")
     return;
 }
 
+if (args.Length > 0 && args[0] == "endtoend")
+{
+    var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");
+    var manifest = ArgString("--manifest", Path.Combine(Path.GetDirectoryName(cache)!, "capture.json.br"));
+
+    await EndToEndRun.ExecuteAsync(
+        new EndToEndSettings(
+            SourceCacheRoot: cache,
+            ManifestPath: manifest,
+            DataChannels: Arg("--channels", 24),
+            LatencyMs: Arg("--latency", 0),
+            LossPercent: Arg("--loss", 0),
+            RateLimited: Array.IndexOf(args, "--no-limit") < 0,
+            BlockSize: Arg("--block", 16) * 1024,
+            SynthesizeFromCache: Array.IndexOf(args, "--from-cache") >= 0),
+        CancellationToken.None);
+    return;
+}
+
+string ArgString(string name, string fallback)
+{
+    var index = Array.IndexOf(args, name);
+    return index >= 0 && index + 1 < args.Length ? args[index + 1] : fallback;
+}
+
 var totalBytes  = Arg("--size", 298) * 1024L * 1024L;
 var latencies   = ArgList("--latency", [20, 60, 150]);
 var channelSets = ArgList("--channels", [1, 8, 24]);
