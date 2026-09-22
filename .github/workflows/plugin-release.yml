@@ -60,11 +60,18 @@ jobs:
         run: dotnet test Linkpearl.Core.Tests/Linkpearl.Core.Tests.csproj --nologo
 
       - name: Compiler
+        shell: bash
+        # La version vient du nom du tag, que quelqu'un choisit. Passée par
+        # l'environnement plutôt qu'interpolée dans le script, elle ne peut pas
+        # être lue comme du shell : un tag « v1.0$(commande) » s'exécuterait
+        # sinon avec les droits du workflow, qui écrit sur le dépôt.
+        env:
+          VERSION: ${{ steps.tag.outputs.VERSION }}
         run: >
           dotnet build Linkpearl/Linkpearl.csproj
           -c Release
           -warnaserror
-          /p:Version=${{ steps.tag.outputs.VERSION }}
+          "/p:Version=$VERSION"
 
       - name: Empaqueter
         shell: bash
@@ -84,10 +91,17 @@ jobs:
 
       - name: Mettre à jour le manifeste du dépôt
         shell: pwsh
+        # Même raison qu'à la compilation : rien de ce qui vient du tag n'est
+        # interpolé dans le script.
+        env:
+          VERSION: ${{ steps.tag.outputs.VERSION }}
+          IS_TEST: ${{ steps.tag.outputs.IS_TEST }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
-          $v      = "${{ steps.tag.outputs.VERSION }}"
-          $isTest = "${{ steps.tag.outputs.IS_TEST }}" -eq "true"
-          $base   = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          $v      = $env:VERSION
+          $isTest = $env:IS_TEST -eq "true"
+          $base   = "https://github.com/$env:REPOSITORY/releases/download/$env:TAG"
 
           $entry = (Get-Content repo.json -Raw | ConvertFrom-Json)[0]
 
@@ -119,6 +133,8 @@ jobs:
 
       - name: Enregistrer le manifeste sur main
         shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           # Le tag est détaché : on reporte le manifeste sur main, sinon la
           # prochaine publication repartirait de l'ancien.
@@ -131,5 +147,5 @@ jobs:
           git stash pop
 
           git add repo.json
-          git diff --staged --quiet || git commit -m "chore: manifeste du dépôt pour ${{ github.ref_name }}"
+          git diff --staged --quiet || git commit -m "chore: manifeste du dépôt pour $TAG"
           git push origin main
