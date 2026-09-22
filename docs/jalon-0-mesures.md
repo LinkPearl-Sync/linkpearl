@@ -85,16 +85,15 @@ Pour chacun :
 
 | Personne | Accès | IPv6 global | Type de NAT | CGNAT | Montant | Relevé |
 |---|---|---|---|---|---|---|
-| Yann | fixe, Swisscom | **non** | mapping indépendant de la destination, **port préservé** | non | à relever | 2026-09-22 |
+| Yann | fixe, Swisscom | **non** (confirmé) | mapping indépendant de la destination, **port préservé** | non | à relever | 2026-09-22 |
 | _autres à compléter_ | | | | | | |
 
 Relevé avec `lpprobe classify` contre le VPS. Le port public observé est
 identique sur les deux ports du serveur **et** identique au port local : c'est le
 cas IPv4 le plus favorable qui existe, la traversée directe devrait fonctionner.
 
-Mesure faite depuis WSL, donc à travers un NAT supplémentaire. Que le port soit
-préservé de bout en bout montre que les deux NAT sont permissifs. À reconfirmer
-depuis Windows.
+Confirmé depuis Windows, sans la couche de NAT supplémentaire de WSL : port
+public identique au port local dans les deux cas. Les deux relevés concordent.
 
 **L'absence d'IPv6 est la mauvaise nouvelle** : c'était l'atténuation gratuite,
 celle qui supprime le NAT entièrement. Elle reste utile pour qui en dispose, mais
