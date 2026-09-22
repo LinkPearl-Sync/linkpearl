@@ -100,7 +100,8 @@ public sealed class Plugin : IDalamudPlugin
                     break;
                 }
 
-                Report("rdv <hôte> | code | id | pair <nom> <code> | unpair <nom> | pairs | announce");
+                Report("rdv <hôte> | code | id | pair <nom> | unpair <nom> | pairs | announce");
+                Report("« pair » prend le code dans le presse-papiers.");
                 Report("capture | capture force | apply | revert");
                 break;
         }
@@ -163,17 +164,59 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    /// <summary>
+    /// Ajoute un pair, en prenant son code dans le presse-papiers.
+    /// </summary>
+    /// <remarks>
+    /// Taper cent vingt caractères dans la ligne de chat du jeu n'est pas
+    /// praticable, et une commande aussi longue se fait tronquer. La personne
+    /// copie le code qu'on lui a envoyé, puis ne tape qu'un nom.
+    /// </remarks>
     private void AddPair(string arguments)
     {
-        var space = arguments.IndexOf(' ');
+        var name = arguments.Trim();
 
-        if (space <= 0)
+        if (string.IsNullOrWhiteSpace(name))
         {
-            Report("usage : /lpearl pair <nom> <code>");
+            Report("usage : copiez le code de la personne, puis /lpearl pair <nom>");
             return;
         }
 
-        Report(_pairing.AddFromCode(arguments[(space + 1)..].Trim(), arguments[..space].Trim()));
+        // Un code donné à la suite du nom reste accepté, pour qui préfère.
+        var space = name.IndexOf(' ');
+
+        if (space > 0)
+        {
+            Report(_pairing.AddFromCode(name[(space + 1)..].Trim(), name[..space].Trim()));
+            return;
+        }
+
+        if (TryReadClipboard(out var code) is false || string.IsNullOrWhiteSpace(code))
+        {
+            Report("presse-papiers vide. Copiez d'abord le code que la personne vous a envoyé.");
+            return;
+        }
+
+        Report(_pairing.AddFromCode(code.Trim(), name));
+    }
+
+    private static bool TryReadClipboard(out string text)
+    {
+        var read = string.Empty;
+
+        try
+        {
+            Framework.RunOnFrameworkThread(() => read = ImGui.GetClipboardText()).Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Lecture du presse-papiers impossible.");
+            text = string.Empty;
+            return false;
+        }
+
+        text = read;
+        return true;
     }
 
     private void ShowPairs()
