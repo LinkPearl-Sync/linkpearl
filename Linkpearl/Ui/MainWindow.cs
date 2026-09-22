@@ -40,7 +40,7 @@ public sealed class MainWindow : ThemedWindow
         _state    = state;
         _statuses = statuses;
 
-        var nearby = new NearbyPage(state, presence, requestPair);
+        var nearby = new NearbyPage(state, presence, pairing, requestPair);
         var pairs  = new PairsPage(pairing, statuses);
         var settings = new SettingsPage(configuration);
 

@@ -5,54 +5,83 @@ using Linkpearl.Ui.Components;
 namespace Linkpearl.Ui.Pages;
 
 /// <summary>
-/// Les joueurs visibles autour de soi, et ceux d'entre eux qui utilisent
-/// Linkpearl.
+/// Les joueurs autour de soi qui utilisent Linkpearl.
 /// </summary>
 /// <remarks>
 /// C'est la page du pairage, et elle est volontairement la première : on se
 /// paire avec quelqu'un qu'on a devant soi, pas avec une clé reçue par message.
+///
+/// Seuls ceux qui utilisent le plugin sont listés. Une place bondée compte
+/// couramment quarante joueurs, dont deux ou trois sont concernés : les lister
+/// tous obligerait à chercher, pour une information dont on ne fait rien. Le
+/// décompte des autres reste affiché, parce qu'une liste vide alors qu'il y a
+/// foule ressemblerait à une panne de détection.
 /// </remarks>
-internal sealed class NearbyPage(PluginState state, PresenceService presence, Action<NearbyPlayer> requestPair)
+internal sealed class NearbyPage(
+    PluginState state, PresenceService presence, PairingService pairing, Action<NearbyPlayer> requestPair)
 {
     public void Draw()
     {
+        var users  = state.Nearby.Where(player => presence.Detected.ContainsKey(player.Fingerprint)).ToList();
+        var others = state.Nearby.Count - users.Count;
+
         Text.Title("Autour de vous");
-        Text.Small("Une pastille pleine signale un joueur qui utilise Linkpearl et se laisse trouver.");
+        Text.Small("Les joueurs à portée qui utilisent Linkpearl et se laissent trouver.");
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
-        if (state.Nearby.Count == 0)
+        if (users.Count == 0)
         {
             Feedback.EmptyState(
                 Icons.Nearby,
-                "Personne en vue",
-                "Rapprochez-vous de quelqu'un : la liste suit ce que votre personnage voit.");
+                "Personne qui utilise Linkpearl",
+                others > 0
+                    ? $"{others} joueur{(others > 1 ? "s" : "")} à portée, aucun ne se signale."
+                    : "Rapprochez-vous de quelqu'un : la liste suit ce que votre personnage voit.");
 
             return;
         }
 
-        foreach (var player in state.Nearby)
+        // Épinglée à la première rencontre, l'empreinte est ce qui relie un
+        // joueur visible à une entrée du carnet. Un pair jamais rencontré n'en a
+        // pas encore : on proposera le pairage, et le carnet refusera le doublon.
+        var known = pairing.Book.All
+            .Where(pair => pair.PinnedFingerprint is not null)
+            .Select(pair => pair.PinnedFingerprint!.Value)
+            .ToHashSet();
+
+        foreach (var player in users)
         {
-            var uses = presence.Detected.ContainsKey(player.Fingerprint);
+            var paired = known.Contains(player.Fingerprint);
 
             using var card = Card.Begin(
                 $"nearby_{player.Object.ObjectIndex}",
                 CardTone.Interactive,
-                accent: uses ? Theme.Accent : null);
+                accent: paired ? Theme.Online : Theme.Accent);
 
-            Feedback.StatusDot(uses ? Theme.Online : Theme.TextFaint);
+            Feedback.StatusDot(paired ? Theme.Online : Theme.Accent);
             ImGui.SameLine(0f, Theme.S(Theme.GapM));
             Text.H2(player.Name);
 
-            Text.Small(uses ? "utilise Linkpearl" : "ne l'utilise pas, ou ne se signale pas");
+            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
 
-            if (uses is false)
+            if (paired)
+            {
+                // Proposer de se pairer avec quelqu'un qui l'est déjà enverrait
+                // une demande que le carnet rejetterait, sans que rien ne le dise.
+                Chip.Draw("déjà pairé", Theme.Online, Icons.Applied);
                 continue;
-
-            ImGui.Dummy(Theme.S(0f, Theme.GapS));
+            }
 
             if (Btn.Draw("Demander le pairage", BtnTone.Primary, BtnSize.Small, Icons.Invite,
                          id: $"pair_{player.Object.ObjectIndex}"))
                 requestPair(player);
         }
+
+        if (others == 0)
+            return;
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        Text.Small($"{others} autre{(others > 1 ? "s" : "")} joueur{(others > 1 ? "s" : "")} à portée.",
+                   Theme.TextFaint);
     }
 }
