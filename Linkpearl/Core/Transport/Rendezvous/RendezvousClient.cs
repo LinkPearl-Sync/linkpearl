@@ -49,6 +49,75 @@ public sealed class RendezvousClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Ouvre ses boîtes et reste connecté pour recevoir les demandes.
+    /// </summary>
+    /// <remarks>
+    /// La connexion tient lieu de présence : la fermer vaut déclaration
+    /// d'absence, sans battement de cœur ni délai d'expiration à régler.
+    /// </remarks>
+    public Task OpenMailboxesAsync(IReadOnlyList<byte[]> addresses, CancellationToken ct)
+        => SendAsync(RendezvousWire.MailboxOpen(addresses), ct);
+
+    /// <summary>Demande lesquelles de ces adresses sont présentes.</summary>
+    public async Task<bool[]?> QueryPresenceAsync(IReadOnlyList<byte[]> addresses, CancellationToken ct)
+    {
+        await SendAsync(RendezvousWire.MailboxQuery(addresses), ct).ConfigureAwait(false);
+
+        while (true)
+        {
+            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+            if (frame is null)
+                return null;
+
+            switch (frame[0])
+            {
+                case RendezvousKind.MailboxPresence:
+                    return RendezvousWire.TryReadPresence(frame, out var present) ? present : null;
+
+                case RendezvousKind.MailboxDelivery:
+                    // Une demande arrivée pendant l'attente : on la met de côté
+                    // plutôt que de la perdre, elle n'a aucune raison d'attendre
+                    // qu'on ait fini d'interroger.
+                    Delivered?.Invoke(frame[1..]);
+                    break;
+
+                case RendezvousKind.Error:
+                    return null;
+            }
+        }
+    }
+
+    /// <summary>Dépose une demande dans la boîte de quelqu'un.</summary>
+    public Task DepositAsync(ReadOnlyMemory<byte> address, ReadOnlyMemory<byte> payload, CancellationToken ct)
+        => SendAsync(RendezvousWire.MailboxDeposit(address.Span, payload.Span), ct);
+
+    /// <summary>Appelé quand une demande nous est poussée.</summary>
+    public event Action<byte[]>? Delivered;
+
+    /// <summary>
+    /// Boucle de réception des remises.
+    /// </summary>
+    /// <remarks>
+    /// À ne lancer que sur une connexion dédiée à la présence : deux lecteurs
+    /// concurrents sur un même flux se volent les trames, ce qui s'est déjà vu
+    /// sur le relais.
+    /// </remarks>
+    public async Task ListenAsync(CancellationToken ct)
+    {
+        while (ct.IsCancellationRequested is false)
+        {
+            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+            if (frame is null)
+                return;
+
+            if (frame[0] == RendezvousKind.MailboxDelivery)
+                Delivered?.Invoke(frame[1..]);
+        }
+    }
+
     /// <summary>Dépose une invitation, que le rendez-vous rendra une seule fois.</summary>
     public async Task<string?> RegisterInvitationAsync(
         ReadOnlyMemory<byte> ticket, ReadOnlyMemory<byte> payload, CancellationToken ct)

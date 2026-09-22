@@ -12,7 +12,13 @@ public sealed class PeerSession(TcpClient client) : IDisposable
     private readonly SemaphoreSlim _sending = new(1);
     private readonly List<string> _keys = [];
 
+    private readonly List<string> _mailboxes = [];
+
     public IReadOnlyList<string> Keys => _keys;
+
+    public IReadOnlyList<string> Mailboxes => _mailboxes;
+
+    public void RememberMailbox(string key) => _mailboxes.Add(key);
 
     private readonly TaskCompletionSource _relayFinished =
         new(TaskCreationOptions.RunContinuationsAsynchronously);

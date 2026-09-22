@@ -57,6 +57,18 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
 
     private static readonly TimeSpan InvitationLifetime = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Les boîtes ouvertes, et la session qui les tient.
+    /// </summary>
+    /// <remarks>
+    /// Une adresse de boîte dérive du nom de personnage, donc ce registre dit de
+    /// fait qui est en ligne. C'est le prix assumé de la découvrabilité : un
+    /// inconnu ne peut pas reconnaître quelqu'un sans que le serveur le puisse
+    /// aussi. Rien n'est persisté, et l'adresse tourne toutes les trente
+    /// minutes, ce qui empêche de relier deux périodes.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, PeerSession> _mailboxes = new(StringComparer.Ordinal);
+
     public long Matched { get; private set; }
     public long Relayed { get; private set; }
 
@@ -139,6 +151,9 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
                     RendezvousKind.RelayOpen => await HandleRelayAsync(session, frame, ct).ConfigureAwait(false),
                     RendezvousKind.TicketRegister => await HandleRegisterTicketAsync(session, frame, ct).ConfigureAwait(false),
                     RendezvousKind.TicketRedeem => await HandleRedeemTicketAsync(session, frame, ct).ConfigureAwait(false),
+                    RendezvousKind.MailboxOpen => HandleMailboxOpen(session, frame),
+                    RendezvousKind.MailboxQuery => await HandleMailboxQueryAsync(session, frame, ct).ConfigureAwait(false),
+                    RendezvousKind.MailboxDeposit => await HandleMailboxDepositAsync(session, frame, ct).ConfigureAwait(false),
                     _ => false,
                 };
 
@@ -302,6 +317,86 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
         return true;
     }
 
+    /// <summary>Ouvre les boîtes d'un client, qui recevra les dépôts sur cette connexion.</summary>
+    private bool HandleMailboxOpen(PeerSession session, byte[] frame)
+    {
+        if (RendezvousWire.TryReadAddresses(frame, out var addresses, out _) is false)
+            return false;
+
+        foreach (var address in addresses)
+        {
+            var key = Convert.ToHexStringLower(address);
+            _mailboxes[key] = session;
+            session.RememberMailbox(key);
+        }
+
+        Console.WriteLine($"[boîtes] {addresses.Count} ouverte(s) par {session.Address}");
+        return true;
+    }
+
+    private async Task<bool> HandleMailboxQueryAsync(PeerSession session, byte[] frame, CancellationToken ct)
+    {
+        if (RendezvousWire.TryReadAddresses(frame, out var addresses, out var why) is false)
+        {
+            await session.SendAsync(RendezvousWire.Error(why!), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        if (RateExceeded(session.Address))
+        {
+            await session.SendAsync(RendezvousWire.Error("trop d'interrogations"), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        var present = addresses
+            .Select(address => _mailboxes.ContainsKey(Convert.ToHexStringLower(address)))
+            .ToList();
+
+        await session.SendAsync(RendezvousWire.MailboxPresence(present), ct).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Pousse une demande au destinataire, sans la lire.
+    /// </summary>
+    /// <remarks>
+    /// Poussée et non mise en attente : le plugin garde une connexion ouverte,
+    /// ce qui évite de transformer le rendez-vous en service de sondage
+    /// interrogé par tous les clients toutes les secondes.
+    ///
+    /// Une demande à une boîte fermée est perdue, et c'est voulu : la garder
+    /// ferait du serveur un dépôt de messages, donc un objet de rétention.
+    /// </remarks>
+    private async Task<bool> HandleMailboxDepositAsync(PeerSession session, byte[] frame, CancellationToken ct)
+    {
+        var payloadLength = frame.Length - 1 - RendezvousWire.MailboxAddressSize;
+
+        if (payloadLength is <= 0 or > RendezvousWire.MaxDepositLength)
+            return false;
+
+        if (RateExceeded(session.Address))
+        {
+            await session.SendAsync(RendezvousWire.Error("trop de dépôts"), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        var key = Convert.ToHexStringLower(frame.AsSpan(1, RendezvousWire.MailboxAddressSize));
+
+        if (_mailboxes.TryGetValue(key, out var recipient) is false)
+        {
+            await session.SendAsync(RendezvousWire.Error("destinataire absent"), ct).ConfigureAwait(false);
+            return true;
+        }
+
+        Console.WriteLine($"[boîte {key[..8]}] demande remise, de {session.Address}");
+
+        await recipient.SendAsync(
+            RendezvousWire.MailboxDelivery(frame.AsSpan(1 + RendezvousWire.MailboxAddressSize)), ct)
+            .ConfigureAwait(false);
+
+        return true;
+    }
+
     private bool RateExceeded(string address)
     {
         var now = DateTime.UtcNow;
@@ -322,6 +417,11 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
             _waiting.TryRemove(new KeyValuePair<string, Waiting>(key, _waiting.GetValueOrDefault(key)!));
             _relayWaiting.TryRemove(new KeyValuePair<string, PeerSession>(key, session));
         }
+
+        // Une boîte n'existe que tant que sa connexion tient : une déconnexion
+        // vaut déclaration d'absence, sans délai ni battement de cœur à gérer.
+        foreach (var key in session.Mailboxes)
+            _mailboxes.TryRemove(new KeyValuePair<string, PeerSession>(key, session));
     }
 
     /// <summary>
