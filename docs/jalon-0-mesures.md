@@ -107,3 +107,31 @@ on ne peut pas bâtir dessus.
   passeront par le relais.
 - **Si deux personnes sur huit sont dans ce cas**, le relais n'est plus un secours, c'est une
   fonction principale, et son dimensionnement doit être revu à la hausse dès le jalon 5.
+
+---
+
+## Révision du risque de traversée, 22 septembre 2026
+
+La revue chiffrait le risque de CGNAT sur une population générale : plus de 90 %
+des réseaux mobiles, plus de 17 % des réseaux résidentiels.
+
+**Le premier chiffre ne nous concerne pas.** FFXIV se joue sur un PC, à la
+maison, sur une ligne fixe. Un utilisateur en 4G n'est pas notre population, sauf
+pour les box mobiles, encore minoritaires. Le chiffre pertinent est celui du
+CGNAT résidentiel, plus bas, et plus bas encore sur les lignes fixes suisses.
+
+Le risque de traversée est donc plus faible que la revue ne le laissait
+entendre. Cela ne remet pas en cause le relais, qui reste nécessaire pour la
+minorité concernée et sert aussi le mode « relais seulement » de la vie privée,
+mais cela change son dimensionnement : un secours, et non un chemin principal.
+
+### Conséquence sur le test en 4G
+
+Il était présenté comme le test le plus instructif parce que le plus
+défavorable. En réalité son résultat est prévisible : le mobile est en CGNAT,
+la traversée échouera. Il ne mesure donc pas la faisabilité mais **le délai de
+détection de l'échec et de bascule sur le relais**, qui est une question
+d'expérience utilisateur.
+
+Le test représentatif est **ligne fixe contre ligne fixe**, et il demande une
+seconde personne.
