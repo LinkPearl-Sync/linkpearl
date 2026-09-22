@@ -85,7 +85,7 @@ Pour chacun :
 
 | Personne | Accès | IPv6 global | Type de NAT | CGNAT | Montant | Relevé |
 |---|---|---|---|---|---|---|
-| Yann | fixe, Swisscom | **non** (confirmé) | mapping indépendant de la destination, **port préservé** | non | à relever | 2026-09-22 |
+| Yann | fixe, Sunrise | **non** (confirmé) | mapping indépendant de la destination, **port préservé** | non | à relever | 2026-09-22 |
 | _autres à compléter_ | | | | | | |
 
 Relevé avec `lpprobe classify` contre le VPS. Le port public observé est
