@@ -10,12 +10,15 @@ namespace Linkpearl.Integration;
 public sealed class GlamourerIpc
 {
     /// <summary>
-    /// Clé de verrou, constante et non nulle.
+    /// Notre clé, constante et non nulle.
     /// </summary>
     /// <remarks>
-    /// Sans clé, l'automation de Glamourer chez le receveur écrase l'état qu'on
-    /// vient d'appliquer. Avec elle, l'état est verrouillé et nous seuls pouvons
-    /// le relâcher, ce qui rend aussi le nettoyage fiable.
+    /// C'est le drapeau <c>Lock</c> qui verrouille un état, pas la clé : passée
+    /// seule, elle sert à déverrouiller si besoin. On ne verrouille pas en
+    /// jalon 1, où l'on s'applique à soi-même et où un verrou empêcherait
+    /// l'utilisateur de reprendre la main depuis l'interface de Glamourer.
+    /// Le verrou deviendra nécessaire quand on appliquera l'apparence d'un
+    /// pair, pour que l'automation du receveur ne l'écrase pas.
     /// </remarks>
     public const uint LockKey = 0x4C4B5031;   // « LKP1 »
 

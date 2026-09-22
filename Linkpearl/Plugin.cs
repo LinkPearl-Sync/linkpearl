@@ -46,6 +46,15 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         Report($"chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
+
+        // Rattrapage d'une session précédente : un rechargement ou un plantage a
+        // pu laisser une collection affectée au personnage, que plus rien en
+        // mémoire ne sait retirer.
+        if (_selfLoop.HasLeftovers())
+        {
+            Framework.RunOnFrameworkThread(_selfLoop.Revert);
+            Report("une collection d'une session précédente a été retirée.");
+        }
     }
 
     private static string Describe((int Major, int Minor)? version)

@@ -50,6 +50,17 @@ public sealed class SelfLoop : IDisposable
     }
 
     private string ManifestPath => Path.Combine(_root, "capture.json.br");
+
+    /// <summary>
+    /// Identifiant de la collection temporaire en cours, sur le disque.
+    /// </summary>
+    /// <remarks>
+    /// Un rechargement du plugin perd l'état en mémoire, mais pas la collection
+    /// posée dans Penumbra : sans cette trace, elle resterait affectée au
+    /// personnage et plus rien ne saurait la retirer. C'est ce qui laisse un
+    /// personnage bloqué jusqu'au redémarrage du jeu.
+    /// </remarks>
+    private string CollectionMarkerPath => Path.Combine(_root, "collection.id");
     private string BlobDir => Path.Combine(_root, "cache", "blobs");
 
     public async Task<CaptureReport> CaptureAsync(CancellationToken ct)
@@ -180,7 +191,12 @@ public sealed class SelfLoop : IDisposable
 
         await _framework.RunOnFrameworkThread(() =>
         {
-            _collection ??= _penumbra.CreateCollection("Linkpearl self-test");
+            if (_collection is null)
+            {
+                _collection = _penumbra.CreateCollection("Linkpearl self-test");
+                RememberCollection(_collection.Value);
+            }
+
             _penumbra.AssignCollection(_collection.Value, PlayerIndex);
             _penumbra.SetTemporaryMod(_collection.Value, pathMap, manifest.MetaManipulations);
             _penumbra.Redraw(PlayerIndex);
@@ -197,32 +213,94 @@ public sealed class SelfLoop : IDisposable
         return pathMap.Count;
     }
 
-    /// <summary>Rend le personnage à son état normal.</summary>
+    /// <summary>
+    /// Rend le personnage à son état normal, y compris après un rechargement du
+    /// plugin qui aurait perdu l'état en mémoire.
+    /// </summary>
     public void Revert()
     {
         try
         {
             _glamourer.Release(PlayerIndex);
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Relâchement de l'état Glamourer en échec.");
+        }
 
-            if (_collection is { } collection)
+        // La collection en mémoire, ou celle qu'une session précédente a laissée.
+        foreach (var collection in new[] { _collection, ReadRememberedCollection() }.OfType<Guid>().Distinct())
+        {
+            try
             {
                 _penumbra.DeleteCollection(collection);
-                _collection = null;
             }
+            catch (Exception e)
+            {
+                _log.Warning(e, $"Suppression de la collection {collection} en échec.");
+            }
+        }
 
+        _collection = null;
+        ForgetCollection();
+
+        try
+        {
             _penumbra.Redraw(PlayerIndex);
         }
         catch (Exception e)
         {
-            _log.Error(e, "Nettoyage incomplet.");
+            _log.Warning(e, "Redessin en échec.");
+        }
+    }
+
+    /// <summary>Vrai s'il reste quelque chose à nettoyer d'une session précédente.</summary>
+    public bool HasLeftovers() => ReadRememberedCollection() is not null;
+
+    private void RememberCollection(Guid collection)
+    {
+        try
+        {
+            Directory.CreateDirectory(_root);
+            File.WriteAllText(CollectionMarkerPath, collection.ToString("D"));
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Trace de collection non écrite : un rechargement laisserait la collection en place.");
+        }
+    }
+
+    private Guid? ReadRememberedCollection()
+    {
+        try
+        {
+            return File.Exists(CollectionMarkerPath) && Guid.TryParse(File.ReadAllText(CollectionMarkerPath), out var id)
+                ? id
+                : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void ForgetCollection()
+    {
+        try
+        {
+            File.Delete(CollectionMarkerPath);
+        }
+        catch (Exception)
+        {
+            // Sans conséquence : la suppression de collection est idempotente.
         }
     }
 
     public void Dispose()
     {
-        // Une collection temporaire laissée derrière nous, c'est un personnage
-        // cassé jusqu'au redémarrage du jeu.
-        if (_collection is not null)
-            Revert();
+        // Sans condition : une collection temporaire laissée derrière nous, c'est
+        // un personnage cassé jusqu'au redémarrage du jeu. Le coût d'un nettoyage
+        // inutile est nul, celui d'un nettoyage oublié ne l'est pas.
+        Revert();
     }
 }
