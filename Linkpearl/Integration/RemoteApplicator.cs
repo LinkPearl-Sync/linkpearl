@@ -39,6 +39,8 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
     private readonly Lock _gate = new();
 
     private volatile string? _blockedBecause = "le jeu n'est pas encore prêt";
+    private bool _penumbraAnswered;
+    private int _sinceProbe;
 
     public RemoteApplicator(
         PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
@@ -194,7 +196,19 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
     }
 
     private void Refresh(IFramework framework)
-        => _blockedBecause = Blocked();
+    {
+        // Une image sur soixante pour l'appel IPC, soit environ une seconde.
+        // Interroger Penumbra à chaque image coûterait un appel inter-plugins
+        // soixante fois par seconde pour une réponse qui ne change qu'au
+        // chargement ou au déchargement d'un plugin.
+        if (_sinceProbe-- <= 0)
+        {
+            _sinceProbe = 60;
+            _penumbraAnswered = _penumbra.TryGetVersion() is not null;
+        }
+
+        _blockedBecause = Blocked();
+    }
 
     private string? Blocked()
     {
@@ -207,7 +221,7 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
         if (_condition[ConditionFlag.LoggingOut])
             return "déconnexion en cours";
 
-        if (_penumbra.TryGetVersion() is null)
+        if (_penumbraAnswered is false)
             return "Penumbra n'est pas chargé";
 
         return null;

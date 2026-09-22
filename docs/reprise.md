@@ -43,7 +43,7 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 | 3, crypto et protocole | **Clos**. Relecture externe toujours due, voir plus bas. |
 | 4, cache et transfert | **Clos**, chaîne vérifiée de bout en bout sur des données réelles. |
 | 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit désormais dans son propre dépôt. |
-| 6, moteur de synchronisation | **Écrit**, reste le câblage dans le plugin. Voir ci-dessous. |
+| 6, moteur de synchronisation | **Clos côté code**. Jamais éprouvé en jeu, voir ci-dessous. |
 | 7, interface | Partiellement fait, en avance sur le plan. |
 
 ## Ce qui reste au jalon 6
@@ -56,11 +56,27 @@ Les trois pièces qui manquaient sont écrites : le moteur (`Core/Sync/SyncEngin
 l'applicateur distant (`Integration/RemoteApplicator.cs`, avec la décision dans
 `Core/Sync/AppearancePlan.cs`) et le mode « faux pair » du harnais.
 
-**Reste le câblage dans `Plugin.cs`** : construire le moteur, lui donner un
-`ILocalAppearance` qui lit Penumbra (la capture de `SelfLoop` en tient lieu),
-battre la socket depuis `Framework.Update`, et faire tourner le tic. Rien de
-tout cela n'existe encore : le moteur ne tourne aujourd'hui que dans les tests
-et dans le harnais.
+Le câblage dans `Plugin.cs` est fait : le moteur est construit avec le carnet, le
+cache partagé, la socket unique et l'applicateur ; `LocalAppearance` construit
+notre manifeste en tâche de fond depuis Penumbra ; `Framework.Update` bat la
+socket ; un tic par seconde fait avancer le moteur en réutilisant l'instantané
+de l'ObjectTable que la boucle d'interface prend déjà.
+
+**Rien de tout cela n'a encore tourné en jeu.** C'est la seule chose qui
+compte maintenant, et c'est aussi la seule que ni les tests ni le harnais ne
+peuvent dire. Deux commandes ont été ajoutées pour cela : `/lpearl sync` dit où
+en est chaque pair, `/lpearl rebuild` reconstruit l'apparence annoncée.
+
+Ce qui reste à faire de mémoire d'ici là :
+
+- **Rien ne détecte un changement de mods.** L'apparence se reconstruit au
+  changement de personnage et sur `/lpearl rebuild`, pas quand l'utilisateur
+  change de tenue. Il faut s'abonner aux événements de Penumbra, et faire passer
+  la rafale par le `Debouncer` qui attend déjà dans `Core/Sync`.
+- **L'éviction du cache ne connaît pas ce qui est à l'écran.** `EvictToAsync`
+  prend un ensemble d'épinglés que personne ne lui donne : le moteur devrait lui
+  passer les blobs des apparences posées, sinon le cache peut retirer sous les
+  pieds ce qu'un pair porte.
 
 ### Ce que le faux pair a mesuré
 

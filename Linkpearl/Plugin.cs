@@ -4,6 +4,11 @@ using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Cache;
+using Linkpearl.Core.Safety;
+using Linkpearl.Core.Sync;
+using Linkpearl.Core.Transport;
 using Linkpearl.Integration;
 using Linkpearl.Ui;
 
@@ -34,9 +39,15 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IChatGui                Chat            { get; private set; } = null!;
     [PluginService] internal static IObjectTable            Objects         { get; private set; } = null!;
     [PluginService] internal static IClientState            ClientState     { get; private set; } = null!;
+    [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly SelfLoop _selfLoop;
+    private readonly FileSystemBlobStore _cache;
+    private readonly PeerLinkFactory _links;
+    private readonly LocalAppearance _appearance;
+    private readonly RemoteApplicator _applicator;
+    private readonly SyncEngine _engine;
     private readonly PairingService _pairing;
     private readonly PresenceService _presence;
     private readonly DalamudObjectSource _objectSource;
@@ -62,6 +73,44 @@ public sealed class Plugin : IDalamudPlugin
         _presence = new PresenceService(_configuration, _pairing.Identity, clock, Log);
         _objectSource = new DalamudObjectSource(Objects, ClientState, Framework);
 
+        // Le moteur et ce qu'il lui faut. Une seule socket pour tous les pairs :
+        // c'est son adresse publique que le rendez-vous rend, donc elle seule
+        // qui aura percé le NAT.
+        var engineSettings = new SyncEngineSettings
+        {
+            Limiter = new RateLimiterSettings
+            {
+                CeilingBytesPerSecond = _configuration.UploadCeilingBytesPerSecond,
+            },
+        };
+
+        _cache = new FileSystemBlobStore(
+            _configuration.CacheDirectory is "" ? Path.Combine(root, "cache") : _configuration.CacheDirectory,
+            new CacheSettings { QuotaBytes = _configuration.CacheQuotaBytes },
+            clock,
+            path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace);
+
+        _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
+        _appearance = new LocalAppearance(penumbra, glamourer, Framework, _cache, Log);
+
+        _applicator = new RemoteApplicator(
+            penumbra, glamourer, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
+
+        _engine = new SyncEngine(
+            _pairing.Book,
+            new PeerConnector(
+                _links,
+                new RendezvousEndpoint(_configuration.RendezvousHost, _configuration.RendezvousPort),
+                clock,
+                new PluginLogSink(Log, "moteur")),
+            _appearance, _applicator, _cache, _pairing.Id, _pairing.Identity.Key, clock,
+            new PluginLogSink(Log, "moteur"), engineSettings);
+
+        // PollEvents depuis le thread du jeu, jamais avec UnsyncedEvents : les
+        // trames reçues remontent ainsi sur le fil qui a le droit de toucher au
+        // jeu, et la cadence est celle d'une image.
+        Framework.Update += PollLinks;
+
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
             player => RunSafely(() => RequestPairAsync(player)),
@@ -74,6 +123,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += Open;
 
         _ = Task.Run(() => RefreshLoopAsync(_shutdown.Token), _shutdown.Token);
+        _ = Task.Run(() => SyncLoopAsync(_shutdown.Token), _shutdown.Token);
 
         Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
@@ -90,6 +140,14 @@ public sealed class Plugin : IDalamudPlugin
             Framework.RunOnFrameworkThread(_selfLoop.Revert);
             Report("une collection d'une session précédente a été retirée.");
         }
+
+        Framework.RunOnFrameworkThread(() =>
+        {
+            var left = _applicator.CleanLeftovers();
+
+            if (left > 0)
+                Report($"{left} collection(s) de pair d'une session précédente ont été retirées.");
+        });
     }
 
     private static string Describe((int Major, int Minor)? version)
@@ -109,6 +167,8 @@ public sealed class Plugin : IDalamudPlugin
             case "diag":          RunSafely(DiagnoseAsync);                    break;
             case "unlock":        RunSafely(UnlockAsync);                      break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
+            case "sync":          ShowSync();                                  break;
+            case "rebuild":       _appearance.Rebuild(); Report("apparence en cours de reconstruction."); break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
             default:
@@ -140,7 +200,7 @@ public sealed class Plugin : IDalamudPlugin
                 }
 
                 Report("invite | pair <nom> | check | pairs | rename <a> <b> | unpair <nom>");
-                Report("rdv <hôte> | id | announce | capture | apply | revert | diag | unlock");
+                Report("rdv <hôte> | id | announce | sync | rebuild | capture | apply | revert | diag | unlock");
                 Report("capture | capture force | apply | revert");
                 break;
         }
@@ -206,6 +266,74 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+        }
+    }
+
+    private void PollLinks(IFramework framework) => _links.Poll();
+
+    /// <summary>
+    /// Fait avancer le moteur.
+    /// </summary>
+    /// <remarks>
+    /// Une seconde, et non une image : le tic ne transfère rien lui-même, les
+    /// sessions vivent sur leurs propres tâches. Il décide seulement de joindre,
+    /// de poser et de retirer, et une seconde de retard sur ces trois-là ne se
+    /// voit pas. Le faire à chaque image ferait tourner pour rien une boucle qui
+    /// parcourt tous les pairs.
+    ///
+    /// Il ne prend pas d'instantané de l'ObjectTable : il réutilise celui que la
+    /// boucle d'interface a déjà pris, car chaque instantané part sur le thread
+    /// du jeu.
+    /// </remarks>
+    private async Task SyncLoopAsync(CancellationToken ct)
+    {
+        while (ct.IsCancellationRequested is false)
+        {
+            try
+            {
+                _appearance.Follow(_state.Self?.Fingerprint);
+
+                var visible = _state.Nearby
+                    .Select(player => new VisiblePlayer(player.Object, player.Fingerprint))
+                    .ToList();
+
+                await _engine.TickAsync(visible, ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (ct.IsCancellationRequested is false)
+            {
+                Log.Warning(e, "Tic du moteur en échec.");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Ce que le moteur fait, pair par pair.</summary>
+    private void ShowSync()
+    {
+        Report($"apparence annoncée : {_appearance.Description}{(_appearance.Building ? " (en construction)" : "")}");
+
+        var statuses = _engine.Statuses;
+
+        if (statuses.Count == 0)
+        {
+            Report("aucun pair actif.");
+            return;
+        }
+
+        foreach (var status in statuses)
+        {
+            var view = status.View;
+
+            var avancement = status.Applied ? "posée"
+                           : view.Ready ? "prête"
+                           : view.MissingBytes > 0
+                                ? $"{view.ReceivedBytes / 1024 / 1024} / {view.MissingBytes / 1024 / 1024} Mo"
+                                : "rien à recevoir";
+
+            Report($"{status.DisplayName} : {status.State}, {avancement}"
+                 + $"{(status.FingerprintDisputed ? ", empreinte inattendue" : "")}"
+                 + $"{(status.LastFailure is { } failure ? $", {failure}" : "")}");
         }
     }
 
@@ -443,6 +571,15 @@ public sealed class Plugin : IDalamudPlugin
         _windows.RemoveAllWindows();
 
         Commands.RemoveHandler(Command);
+        Framework.Update -= PollLinks;
+
+        // Le moteur d'abord : il retire des pairs ce qu'il leur a posé, et cela
+        // passe par des appels au jeu que la suite ne pourrait plus faire.
+        _engine.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        _applicator.Dispose();
+        _appearance.Dispose();
+        _links.Dispose();
+
         _selfLoop.Dispose();
         _presence.Dispose();
         _pairing.Dispose();
