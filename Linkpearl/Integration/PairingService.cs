@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Dalamud.Plugin.Services;
+using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Transport.Rendezvous;
 
@@ -21,6 +23,8 @@ public sealed class PairingService : IDisposable
     private readonly PairBook _book;
     private readonly PairBookStore _bookStore;
     private readonly RendezvousTicket _tickets;
+    private readonly PendingInvitationStore _invitationStore;
+    private readonly List<PendingInvitation> _pending;
     private readonly Configuration _configuration;
     private readonly IPluginLog _log;
 
@@ -34,32 +38,170 @@ public sealed class PairingService : IDisposable
         _bookStore = new PairBookStore(Path.Combine(root, "pairs.json"));
         _bookStore.Load(_book);
         _tickets = new RendezvousTicket(clock);
+        _invitationStore = new PendingInvitationStore(Path.Combine(root, "invitations.json"));
+        _pending = _invitationStore.Load();
     }
 
     public PeerId Id => _identity.Id;
 
     public PairBook Book => _book;
 
-    public string Invitation()
-        => _identity.NewInvitation(_configuration.RendezvousHost).Encode();
+    public int PendingInvitations => _pending.Count;
 
-    /// <summary>Ajoute un pair depuis un code collé par l'utilisateur.</summary>
-    public string AddFromCode(string text, string displayName)
+    /// <summary>
+    /// Dépose une invitation au rendez-vous et rend le ticket de douze caractères.
+    /// </summary>
+    /// <remarks>
+    /// La charge déposée contient notre clé publique compressée et l'aléa de
+    /// pairage. <b>Le serveur peut la lire et la remplacer</b> : c'est la
+    /// contrepartie d'un ticket court, et c'est la comparaison des six mots qui
+    /// la rattrape.
+    /// </remarks>
+    public async Task<(string? Ticket, string? Rejection)> CreateInvitationAsync(CancellationToken ct)
     {
-        if (PairingCode.TryParse(text, out var code, out var why) is false)
-            return $"code refusé : {why}";
+        var ticket = InvitationTicket.Create();
+        var nonce = RandomNumberGenerator.GetBytes(PairingCode.NonceLength);
 
-        if (code!.Id == _identity.Id)
-            return "ce code est le vôtre.";
+        var payload = new byte[CryptoPrimitives.CompressedPointLength + PairingCode.NonceLength];
+        CryptoPrimitives.Compress(_identity.PublicKey).CopyTo(payload.AsSpan());
+        nonce.CopyTo(payload.AsSpan(CryptoPrimitives.CompressedPointLength));
 
-        if (_book.Find(code.Id) is { } existing)
+        await using var client = new RendezvousClient();
+        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+
+        var rejection = await client.RegisterInvitationAsync(ticket.ToBytes(), payload, ct).ConfigureAwait(false);
+
+        if (rejection is not null)
+            return (null, rejection);
+
+        _pending.Add(new PendingInvitation(ticket.Encode(), nonce, DateTimeOffset.UtcNow));
+        _invitationStore.Save(_pending);
+
+        return (ticket.Encode(), null);
+    }
+
+    /// <summary>Retire une invitation et ajoute son auteur au carnet.</summary>
+    public async Task<string> RedeemAsync(string text, string displayName, CancellationToken ct)
+    {
+        if (InvitationTicket.TryParse(text, out var ticket, out var why) is false)
+            return $"ticket refusé : {why}";
+
+        await using var client = new RendezvousClient();
+        await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct).ConfigureAwait(false);
+
+        var (payload, rejection) = await client.RedeemInvitationAsync(ticket.ToBytes(), ct).ConfigureAwait(false);
+
+        if (payload is null)
+            return $"retrait impossible : {rejection}";
+
+        if (payload.Length != CryptoPrimitives.CompressedPointLength + PairingCode.NonceLength)
+            return "invitation malformée.";
+
+        byte[] theirKey;
+        try
+        {
+            theirKey = CryptoPrimitives.Decompress(payload.AsSpan(0, CryptoPrimitives.CompressedPointLength));
+        }
+        catch (CryptographicException e)
+        {
+            return $"clé publique invalide dans l'invitation : {e.Message}";
+        }
+
+        var nonce = payload.AsSpan(CryptoPrimitives.CompressedPointLength).ToArray();
+        var theirId = PeerId.Of(theirKey);
+
+        if (theirId == _identity.Id)
+            return "cette invitation est la vôtre.";
+
+        if (_book.Find(theirId) is { } existing)
             return $"déjà dans le carnet sous le nom « {existing.DisplayName} ».";
 
-        var record = _book.Invite(code, displayName, _identity.Id);
-        _book.Accept(record.Id);   // l'utilisateur a collé le code : c'est son consentement
+        _book.Add(theirId, theirKey, nonce, _identity.Id, displayName, _configuration.RendezvousHost);
         _bookStore.Save(_book);
 
-        return $"« {displayName} » ajouté, rendez-vous {code.RendezvousHost}.";
+        // On dépose notre propre identité dans la case de réponse : sans elle,
+        // celui qui a invité ne peut pas dériver le même secret de paire, ne
+        // sachant pas d'avance qui viendrait.
+        var reply = new byte[CryptoPrimitives.CompressedPointLength];
+        CryptoPrimitives.Compress(_identity.PublicKey).CopyTo(reply.AsSpan());
+
+        var replyRejection = await client.RegisterInvitationAsync(
+            InvitationTicket.ReplySlot(nonce), reply, ct).ConfigureAwait(false);
+
+        return replyRejection is null
+            ? $"« {displayName} » ajouté. Comparez vos six mots avant de lui faire confiance."
+            : $"« {displayName} » ajouté, mais la réponse n'a pas pu être déposée : {replyRejection}";
+    }
+
+    /// <summary>Relève les réponses à nos invitations en attente.</summary>
+    public async Task<string> CollectRepliesAsync(CancellationToken ct)
+    {
+        if (_pending.Count == 0)
+            return "aucune invitation en attente.";
+
+        var added = new List<string>();
+        var remaining = new List<PendingInvitation>();
+
+        foreach (var invitation in _pending)
+        {
+            // Une invitation dépassée n'aboutira plus : le rendez-vous l'a déjà
+            // oubliée au bout de vingt-quatre heures.
+            if (DateTimeOffset.UtcNow - invitation.CreatedAt > TimeSpan.FromHours(24))
+                continue;
+
+            try
+            {
+                await using var client = new RendezvousClient();
+                await client.ConnectAsync(_configuration.RendezvousHost, _configuration.RendezvousPort, ct)
+                            .ConfigureAwait(false);
+
+                var (payload, _) = await client.RedeemInvitationAsync(
+                    InvitationTicket.ReplySlot(invitation.Nonce), ct).ConfigureAwait(false);
+
+                if (payload is null || payload.Length != CryptoPrimitives.CompressedPointLength)
+                {
+                    remaining.Add(invitation);
+                    continue;
+                }
+
+                var theirKey = CryptoPrimitives.Decompress(payload);
+                var theirId = PeerId.Of(theirKey);
+
+                if (_book.Find(theirId) is null)
+                {
+                    _book.Add(theirId, theirKey, invitation.Nonce, _identity.Id,
+                              $"pair-{theirId.ToHex()[..6]}", _configuration.RendezvousHost);
+                    added.Add(theirId.ToHex()[..6]);
+                }
+            }
+            catch (Exception e)
+            {
+                _log.Warning(e, "Relève d'une réponse en échec.");
+                remaining.Add(invitation);
+            }
+        }
+
+        _pending.Clear();
+        _pending.AddRange(remaining);
+        _invitationStore.Save(_pending);
+        _bookStore.Save(_book);
+
+        return added.Count == 0
+            ? $"aucune réponse. {remaining.Count} invitation(s) encore en attente."
+            : $"{added.Count} pair(s) ajouté(s) : {string.Join(", ", added)}. Renommez-les avec « rename ».";
+    }
+
+    public string Rename(string from, string to)
+    {
+        var record = _book.All.FirstOrDefault(
+            p => string.Equals(p.DisplayName, from, StringComparison.OrdinalIgnoreCase));
+
+        if (record is null)
+            return $"aucun pair nommé « {from} ».";
+
+        _book.Load(_book.All.Select(p => p.Id == record.Id ? p with { DisplayName = to } : p).ToList());
+        _bookStore.Save(_book);
+        return $"« {from} » renommé en « {to} ».";
     }
 
     public string Remove(string displayName)

@@ -68,6 +68,47 @@ public static class Base32Crockford
         return true;
     }
 
+    /// <summary>
+    /// Encode un entier en un nombre fixe de caractères, cinq bits chacun.
+    /// </summary>
+    /// <remarks>
+    /// Nécessaire parce que soixante bits ne tombent pas sur un nombre entier
+    /// d'octets : passer par l'encodeur orienté octets en perdrait quatre, et
+    /// l'aller-retour ne rendrait pas la même valeur.
+    /// </remarks>
+    public static string EncodeBits(ulong value, int characters)
+    {
+        var chars = new char[characters];
+
+        for (var i = characters - 1; i >= 0; i--)
+        {
+            chars[i] = Alphabet[(int)(value & 0x1F)];
+            value >>= 5;
+        }
+
+        return new string(chars);
+    }
+
+    public static bool TryDecodeBits(string text, int characters, out ulong value)
+    {
+        value = 0;
+
+        if (text.Length != characters || characters * 5 > 64)
+            return false;
+
+        foreach (var raw in text)
+        {
+            var digit = ValueOf(char.ToUpperInvariant(raw));
+
+            if (digit < 0)
+                return false;
+
+            value = (value << 5) | (uint)digit;
+        }
+
+        return true;
+    }
+
     private static int ValueOf(char c)
         => c switch
         {

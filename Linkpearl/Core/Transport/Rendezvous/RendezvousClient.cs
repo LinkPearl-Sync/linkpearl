@@ -49,6 +49,40 @@ public sealed class RendezvousClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Dépose une invitation, que le rendez-vous rendra une seule fois.</summary>
+    public async Task<string?> RegisterInvitationAsync(
+        ReadOnlyMemory<byte> ticket, ReadOnlyMemory<byte> payload, CancellationToken ct)
+    {
+        await SendAsync(RendezvousWire.TicketRegister(ticket.Span, payload.Span), ct).ConfigureAwait(false);
+
+        var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+        return frame switch
+        {
+            null => "le rendez-vous n'a pas répondu",
+            [RendezvousKind.TicketAccepted, ..] => null,
+            [RendezvousKind.Error, .. var reason] => System.Text.Encoding.UTF8.GetString(reason),
+            _ => "réponse inattendue du rendez-vous",
+        };
+    }
+
+    /// <summary>Retire une invitation. Elle disparaît du serveur au premier retrait.</summary>
+    public async Task<(byte[]? Payload, string? Rejection)> RedeemInvitationAsync(
+        ReadOnlyMemory<byte> ticket, CancellationToken ct)
+    {
+        await SendAsync(RendezvousWire.TicketRedeem(ticket.Span), ct).ConfigureAwait(false);
+
+        var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+        return frame switch
+        {
+            null => (null, "le rendez-vous n'a pas répondu"),
+            [RendezvousKind.TicketPayload, .. var payload] => (payload, null),
+            [RendezvousKind.Error, .. var reason] => (null, System.Text.Encoding.UTF8.GetString(reason)),
+            _ => (null, "réponse inattendue du rendez-vous"),
+        };
+    }
+
     /// <summary>Demande un relais et attend que le pair en fasse autant.</summary>
     public async Task<bool> OpenRelayAsync(ReadOnlyMemory<byte> ticket, CancellationToken ct)
     {

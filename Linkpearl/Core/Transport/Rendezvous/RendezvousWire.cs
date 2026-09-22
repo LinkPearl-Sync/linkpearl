@@ -13,6 +13,10 @@ public static class RendezvousKind
     public const byte Error = 0x06;
     public const byte Reflect = 0x07;
     public const byte Reflected = 0x08;
+    public const byte TicketRegister = 0x09;
+    public const byte TicketAccepted = 0x0A;
+    public const byte TicketRedeem = 0x0B;
+    public const byte TicketPayload = 0x0C;
 }
 
 /// <summary>Ce qu'un client annonce au rendez-vous.</summary>
@@ -128,6 +132,46 @@ public static class RendezvousWire
         text.CopyTo(frame.AsSpan(1));
         return frame;
     }
+
+    /// <summary>
+    /// Ce qu'un ticket d'invitation fait déposer au rendez-vous.
+    /// </summary>
+    /// <remarks>
+    /// <b>Le serveur peut lire cette charge, et donc la remplacer.</b> C'est la
+    /// contrepartie assumée d'un ticket de douze caractères : celui qui le
+    /// retire n'a encore aucune clé pour ouvrir quoi que ce soit. La
+    /// substitution se détecte après coup, en comparant les six mots que le
+    /// handshake produit des deux côtés.
+    /// </remarks>
+    public const int MaxTicketPayloadLength = 256;
+
+    public static byte[] TicketRegister(ReadOnlySpan<byte> ticket, ReadOnlySpan<byte> payload)
+    {
+        var frame = new byte[1 + InvitationTicketSize + payload.Length];
+        frame[0] = RendezvousKind.TicketRegister;
+        ticket[..InvitationTicketSize].CopyTo(frame.AsSpan(1));
+        payload.CopyTo(frame.AsSpan(1 + InvitationTicketSize));
+        return frame;
+    }
+
+    public static byte[] TicketRedeem(ReadOnlySpan<byte> ticket)
+    {
+        var frame = new byte[1 + InvitationTicketSize];
+        frame[0] = RendezvousKind.TicketRedeem;
+        ticket[..InvitationTicketSize].CopyTo(frame.AsSpan(1));
+        return frame;
+    }
+
+    public static byte[] TicketPayload(ReadOnlySpan<byte> payload)
+    {
+        var frame = new byte[1 + payload.Length];
+        frame[0] = RendezvousKind.TicketPayload;
+        payload.CopyTo(frame.AsSpan(1));
+        return frame;
+    }
+
+    /// <summary>Taille d'un ticket sur le fil.</summary>
+    public const int InvitationTicketSize = 6;
 
     /// <summary>Préfixe de longueur, pour délimiter les trames sur un flux.</summary>
     public static byte[] Frame(ReadOnlySpan<byte> body)

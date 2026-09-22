@@ -42,6 +42,21 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
     private readonly ConcurrentDictionary<string, PeerSession> _relayWaiting = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (int Count, DateTime Window)> _rate = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Les invitations déposées, à usage unique.
+    /// </summary>
+    /// <remarks>
+    /// Le serveur lit cette charge, et pourrait donc la remplacer. C'est le prix
+    /// d'un ticket de douze caractères, qui ne peut pas porter une empreinte de
+    /// clé. La substitution se détecte après coup par la comparaison des six
+    /// mots du handshake ; une fois la clé épinglée, le serveur n'a plus aucun
+    /// pouvoir sur cette paire.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, (byte[] Payload, DateTime Expiry)> _invitations =
+        new(StringComparer.Ordinal);
+
+    private static readonly TimeSpan InvitationLifetime = TimeSpan.FromHours(24);
+
     public long Matched { get; private set; }
     public long Relayed { get; private set; }
 
@@ -122,6 +137,8 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
                 {
                     RendezvousKind.Announce => await HandleAnnounceAsync(session, frame, ct).ConfigureAwait(false),
                     RendezvousKind.RelayOpen => await HandleRelayAsync(session, frame, ct).ConfigureAwait(false),
+                    RendezvousKind.TicketRegister => await HandleRegisterTicketAsync(session, frame, ct).ConfigureAwait(false),
+                    RendezvousKind.TicketRedeem => await HandleRedeemTicketAsync(session, frame, ct).ConfigureAwait(false),
                     _ => false,
                 };
 
@@ -231,6 +248,60 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
         return true;
     }
 
+    private async Task<bool> HandleRegisterTicketAsync(PeerSession session, byte[] frame, CancellationToken ct)
+    {
+        var payloadLength = frame.Length - 1 - RendezvousWire.InvitationTicketSize;
+
+        if (payloadLength is <= 0 or > RendezvousWire.MaxTicketPayloadLength)
+            return false;
+
+        if (RateExceeded(session.Address))
+        {
+            await session.SendAsync(RendezvousWire.Error("trop de dépôts"), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        var key = Convert.ToHexStringLower(frame.AsSpan(1, RendezvousWire.InvitationTicketSize));
+
+        _invitations[key] = (
+            frame.AsSpan(1 + RendezvousWire.InvitationTicketSize).ToArray(),
+            DateTime.UtcNow + InvitationLifetime);
+
+        Console.WriteLine($"[{key}] invitation déposée par {session.Address}");
+
+        await session.SendAsync(RendezvousWire.Simple(RendezvousKind.TicketAccepted), ct).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> HandleRedeemTicketAsync(PeerSession session, byte[] frame, CancellationToken ct)
+    {
+        if (frame.Length != 1 + RendezvousWire.InvitationTicketSize)
+            return false;
+
+        // Le plafond d'essais est ce qui rend les quarante-huit bits du ticket
+        // suffisants : sans lui, on pourrait les parcourir.
+        if (RateExceeded(session.Address))
+        {
+            await session.SendAsync(RendezvousWire.Error("trop d'essais"), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        var key = Convert.ToHexStringLower(frame.AsSpan(1, RendezvousWire.InvitationTicketSize));
+
+        // Usage unique : retiré à la première lecture, y compris s'il a expiré.
+        if (_invitations.TryRemove(key, out var invitation) is false || invitation.Expiry < DateTime.UtcNow)
+        {
+            await session.SendAsync(RendezvousWire.Error("invitation inconnue, déjà utilisée ou expirée"), ct)
+                         .ConfigureAwait(false);
+            return true;
+        }
+
+        Console.WriteLine($"[{key}] invitation retirée par {session.Address}");
+
+        await session.SendAsync(RendezvousWire.TicketPayload(invitation.Payload), ct).ConfigureAwait(false);
+        return true;
+    }
+
     private bool RateExceeded(string address)
     {
         var now = DateTime.UtcNow;
@@ -273,6 +344,12 @@ public sealed class RendezvousServer(int port, int maxAnnouncementsPerMinute)
             {
                 if (waiting.Since < deadline)
                     _waiting.TryRemove(key, out _);
+            }
+
+            foreach (var (key, invitation) in _invitations)
+            {
+                if (invitation.Expiry < DateTime.UtcNow)
+                    _invitations.TryRemove(key, out _);
             }
         }
     }

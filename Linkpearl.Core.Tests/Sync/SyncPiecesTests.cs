@@ -162,28 +162,28 @@ public class PairBookTests
     }
 
     [Fact]
-    public void Un_pair_invite_est_en_attente_et_non_accepte()
+    public void Un_pair_ajoute_n_est_pas_encore_verifie_de_vive_voix()
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
 
-        var record = book.Invite(code, "Amie", ours);
+        var record = book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
 
-        Assert.Equal(PairTrust.Pending, record.Trust);
-        Assert.Empty(book.Active);
+        Assert.Equal(PairTrust.Accepted, record.Trust);
+        Assert.False(record.KeyVerified);
     }
 
     [Fact]
-    public void Un_pair_en_attente_passe_le_handshake_mais_n_est_pas_actif()
+    public void Un_pair_ajoute_passe_le_handshake_et_devient_actif()
     {
         // Sans cela, la première connexion échouerait et l'utilisateur ne verrait
         // jamais la demande à confirmer. Rien ne lui est appliqué pour autant.
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
 
         Assert.True(book.IsAuthorized(theirKey));
-        Assert.Empty(book.Active);
+        Assert.Single(book.Active);
     }
 
     [Fact]
@@ -191,8 +191,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
-        book.Accept(code.Id);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
 
         Assert.Single(book.Active);
     }
@@ -202,7 +201,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Gêneur", ours);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Gêneur", "rdv.exemple.ch");
         book.Block(code.Id);
 
         Assert.False(book.IsAuthorized(theirKey));
@@ -214,8 +213,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
-        book.Accept(code.Id);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
         book.SetPaused(code.Id, true);
 
         Assert.True(book.IsAuthorized(theirKey));
@@ -242,7 +240,9 @@ public class PairBookTests
         var codeFromAlice = PairingCode.Create(aliceId, "rdv.exemple.ch");
 
         var bobBook = new PairBook(new MovableClock());
-        var chezBob = bobBook.Invite(codeFromAlice, "Alice", bobId);
+        var chezBob = bobBook.Add(
+            aliceId, CryptoPrimitives.ExportPublicPoint(alice), codeFromAlice.PairingNonce,
+            bobId, "Alice", "rdv.exemple.ch");
 
         var chezAlice = PairSecret.Derive(codeFromAlice.PairingNonce, aliceId, bobId);
 
@@ -254,7 +254,13 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
+
+        // Un pair peut exister sans clé connue, par exemple après une migration.
+        book.Load([new PairRecord
+        {
+            Id = code.Id, PairSecret = new byte[32], DisplayName = "Amie",
+            RendezvousHost = "rdv.exemple.ch", Trust = PairTrust.Accepted, PairedAt = default,
+        }]);
 
         Assert.Null(book.Find(code.Id)!.PublicKey);
         Assert.True(book.IsAuthorized(theirKey));
@@ -266,8 +272,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
-        book.IsAuthorized(theirKey);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
 
         // Deux clés différentes de même empreinte seraient une contradiction.
         var falsifiee = theirKey.ToArray();
@@ -281,7 +286,7 @@ public class PairBookTests
     {
         var book = New();
         var (code, ours, theirKey) = Invitation();
-        book.Invite(code, "Amie", ours);
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", "rdv.exemple.ch");
 
         book.PinFingerprint(code.Id, PlayerFingerprint.Of("amie", 21));
 

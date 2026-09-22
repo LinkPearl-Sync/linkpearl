@@ -11,12 +11,14 @@ public sealed class Configuration : IPluginConfiguration
     /// Hôte du service de rendez-vous.
     /// </summary>
     /// <remarks>
+    /// Pré-rempli, parce qu'un ticket de douze caractères ne peut pas porter le
+    /// serveur : les deux personnes doivent donc avoir réglé le même. Un défaut
+    /// évite d'avoir à le dire à chaque nouvel arrivant.
+    ///
     /// Réglable, et c'est la raison d'être du projet : si ce service tombe ou
-    /// reçoit une lettre d'avocat, on en change sans rien reconstruire. Le code
-    /// d'invitation porte de toute façon le serveur, celui-ci n'est que le
-    /// défaut pour nos propres invitations.
+    /// reçoit une lettre d'avocat, on en change sans rien reconstruire.
     /// </remarks>
-    public string RendezvousHost { get; set; } = "";
+    public string RendezvousHost { get; set; } = "83.228.242.221";
 
     public int RendezvousPort { get; set; } = 47900;
 

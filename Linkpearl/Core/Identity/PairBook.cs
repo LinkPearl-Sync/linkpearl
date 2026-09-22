@@ -69,6 +69,16 @@ public sealed record PairRecord
     public ConnectionPolicy Policy { get; init; } = ConnectionPolicy.Direct;
     public bool Paused { get; init; }
 
+    /// <summary>
+    /// Vrai quand les six mots ont été comparés de vive voix.
+    /// </summary>
+    /// <remarks>
+    /// Le ticket de douze caractères ne porte aucune identité : c'est le
+    /// rendez-vous qui a dit à qui l'on parle, et il pouvait mentir. Tant que
+    /// cette comparaison n'a pas eu lieu, le pairage n'est pas prouvé.
+    /// </remarks>
+    public bool KeyVerified { get; init; }
+
     public required DateTimeOffset PairedAt { get; init; }
     public DateTimeOffset? LastSeenAt { get; init; }
 
@@ -104,15 +114,19 @@ public sealed class PairBook(IClock clock)
     /// <summary>
     /// Ajoute un pair depuis un code d'invitation, en attente de confirmation.
     /// </summary>
-    public PairRecord Invite(PairingCode code, string displayName, PeerId ourId)
+    /// <summary>Ajoute un pair dont on vient d'apprendre la clé.</summary>
+    public PairRecord Add(
+        PeerId theirId, byte[] theirPublicKey, ReadOnlySpan<byte> pairingNonce,
+        PeerId ourId, string displayName, string rendezvousHost)
     {
         var record = new PairRecord
         {
-            Id = code.Id,
-            PairSecret = PairSecret.Derive(code.PairingNonce, ourId, code.Id),
+            Id = theirId,
+            PublicKey = theirPublicKey,
+            PairSecret = PairSecret.Derive(pairingNonce, ourId, theirId),
             DisplayName = displayName,
-            RendezvousHost = code.RendezvousHost,
-            Trust = PairTrust.Pending,
+            RendezvousHost = rendezvousHost,
+            Trust = PairTrust.Accepted,
             PairedAt = clock.UtcNow,
         };
 
@@ -130,6 +144,8 @@ public sealed class PairBook(IClock clock)
 
     public void SetPermissions(PeerId id, PairPermissions permissions)
         => Update(id, record => record with { Permissions = permissions });
+
+    public void MarkVerified(PeerId id) => Update(id, record => record with { KeyVerified = true });
 
     public void PinFingerprint(PeerId id, PlayerFingerprint fingerprint)
         => Update(id, record => record with { PinnedFingerprint = fingerprint });

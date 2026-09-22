@@ -75,7 +75,8 @@ public sealed class Plugin : IDalamudPlugin
         {
             case "capture":       RunSafely(() => CaptureAsync(force: false)); break;
             case "capture force": RunSafely(() => CaptureAsync(force: true));  break;
-            case "code":          ShowInvitation();                            break;
+            case "invite":        RunSafely(InviteAsync);                      break;
+            case "check":         RunSafely(CheckAsync);                       break;
             case "pairs":         ShowPairs();                                 break;
             case "id":            Report($"votre identifiant : {_pairing.Id}"); break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
@@ -100,8 +101,17 @@ public sealed class Plugin : IDalamudPlugin
                     break;
                 }
 
-                Report("rdv <hôte> | code | id | pair <nom> | unpair <nom> | pairs | announce");
-                Report("« pair » prend le code dans le presse-papiers.");
+                if (arguments.StartsWith("rename ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = arguments[7..].Trim().Split(' ', 2);
+                    Report(parts.Length == 2
+                        ? _pairing.Rename(parts[0], parts[1])
+                        : "usage : /lpearl rename <ancien> <nouveau>");
+                    break;
+                }
+
+                Report("invite | pair <nom> | check | pairs | rename <a> <b> | unpair <nom>");
+                Report("rdv <hôte> | id | announce | capture | apply | revert");
                 Report("capture | capture force | apply | revert");
                 break;
         }
@@ -120,28 +130,29 @@ public sealed class Plugin : IDalamudPlugin
         Report($"rendez-vous réglé sur {host}. C'est lui qui figurera dans vos invitations.");
     }
 
-    private void ShowInvitation()
+    /// <summary>Dépose une invitation et met le ticket dans le presse-papiers.</summary>
+    private async Task InviteAsync()
     {
-        if (_configuration.RendezvousHost is "")
+        var (ticket, rejection) = await _pairing.CreateInvitationAsync(_shutdown.Token).ConfigureAwait(false);
+
+        if (ticket is null)
         {
-            Report("réglez d'abord un rendez-vous : /lpearl rdv <hôte>");
+            Report($"invitation impossible : {rejection}");
             return;
         }
 
-        var code = _pairing.Invitation();
+        Report($"ticket d'invitation : {ticket}");
 
-        Report($"votre identifiant : {_pairing.Id}");
+        if (TryCopyToClipboard(ticket))
+            Report("copié dans le presse-papiers. Valable 24 heures, pour une seule personne.");
 
-        // Le chat de FFXIV ne se copie pas : sans le presse-papiers, un code de
-        // cent vingt caractères serait à recopier à la main, ce que personne ne
-        // fera. C'est la seule façon de transmettre une invitation.
-        if (TryCopyToClipboard(code))
-            Report("code d'invitation copié dans le presse-papiers. Collez-le à la personne concernée.");
-        else
-            Report("presse-papiers indisponible : le code complet est dans /xllog.");
-
-        Log.Information($"Code d'invitation Linkpearl : {code}");
+        Report("quand la personne l'aura utilisé, faites /lpearl check.");
+        Log.Information($"Ticket d'invitation Linkpearl : {ticket}");
     }
+
+    /// <summary>Relève les réponses aux invitations déposées.</summary>
+    private async Task CheckAsync()
+        => Report(await _pairing.CollectRepliesAsync(_shutdown.Token).ConfigureAwait(false));
 
     /// <summary>
     /// Met un texte dans le presse-papiers de Windows.
@@ -165,41 +176,39 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// Ajoute un pair, en prenant son code dans le presse-papiers.
+    /// Ajoute un pair en retirant son ticket, pris dans le presse-papiers.
     /// </summary>
-    /// <remarks>
-    /// Taper cent vingt caractères dans la ligne de chat du jeu n'est pas
-    /// praticable, et une commande aussi longue se fait tronquer. La personne
-    /// copie le code qu'on lui a envoyé, puis ne tape qu'un nom.
-    /// </remarks>
     private void AddPair(string arguments)
     {
         var name = arguments.Trim();
 
         if (string.IsNullOrWhiteSpace(name))
         {
-            Report("usage : copiez le code de la personne, puis /lpearl pair <nom>");
+            Report("usage : copiez le ticket reçu, puis /lpearl pair <nom>");
             return;
         }
 
-        // Un code donné à la suite du nom reste accepté, pour qui préfère.
         var space = name.IndexOf(' ');
 
         if (space > 0)
         {
-            Report(_pairing.AddFromCode(name[(space + 1)..].Trim(), name[..space].Trim()));
+            var given = name[(space + 1)..].Trim();
+            var who = name[..space].Trim();
+            RunSafely(async () => Report(await _pairing.RedeemAsync(given, who, _shutdown.Token).ConfigureAwait(false)));
             return;
         }
 
-        if (TryReadClipboard(out var code) is false || string.IsNullOrWhiteSpace(code))
+        if (TryReadClipboard(out var ticket) is false || string.IsNullOrWhiteSpace(ticket))
         {
-            Report("presse-papiers vide. Copiez d'abord le code que la personne vous a envoyé.");
+            Report("presse-papiers vide. Copiez d'abord le ticket qu'on vous a envoyé.");
             return;
         }
 
-        Report(_pairing.AddFromCode(code.Trim(), name));
+        RunSafely(async () =>
+            Report(await _pairing.RedeemAsync(ticket.Trim(), name, _shutdown.Token).ConfigureAwait(false)));
     }
 
+    /// <summary>Lit le presse-papiers, depuis le thread du framework.</summary>
     private static bool TryReadClipboard(out string text)
     {
         var read = string.Empty;
@@ -225,12 +234,18 @@ public sealed class Plugin : IDalamudPlugin
 
         if (pairs.Count == 0)
         {
-            Report("carnet vide. /lpearl pair <nom> <code> pour ajouter quelqu'un.");
+            Report("carnet vide. Demandez un ticket à quelqu'un, puis /lpearl pair <nom>.");
             return;
         }
 
         foreach (var pair in pairs)
-            Report($"{pair.DisplayName} : {pair.Trust}, rendez-vous {pair.RendezvousHost}, {pair.Id}");
+        {
+            Report($"{pair.DisplayName} : {pair.Trust}"
+                 + $"{(pair.KeyVerified ? ", vérifié" : ", NON VÉRIFIÉ")}"
+                 + $", {pair.Id.ToHex()[..8]}");
+        }
+
+        Report($"{_pairing.PendingInvitations} invitation(s) en attente de réponse.");
     }
 
     private async Task AnnounceAsync()
