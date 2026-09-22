@@ -13,12 +13,16 @@ public sealed class GlamourerIpc
     /// Notre clé, constante et non nulle.
     /// </summary>
     /// <remarks>
-    /// C'est le drapeau <c>Lock</c> qui verrouille un état, pas la clé : passée
-    /// seule, elle sert à déverrouiller si besoin. On ne verrouille pas en
-    /// jalon 1, où l'on s'applique à soi-même et où un verrou empêcherait
-    /// l'utilisateur de reprendre la main depuis l'interface de Glamourer.
-    /// Le verrou deviendra nécessaire quand on appliquera l'apparence d'un
-    /// pair, pour que l'automation du receveur ne l'écrase pas.
+    /// <b>Passer une clé non nulle à ApplyState verrouille l'état</b>, même sans
+    /// le drapeau <c>Lock</c>. Constaté en jeu : un « unlock » a relâché deux
+    /// verrous alors que le code affirmait en commentaire n'en poser aucun. La
+    /// documentation de l'API dit « a key to unlock or lock the state if
+    /// necessary », ce que j'avais lu comme « pour déverrouiller » seulement.
+    ///
+    /// Conséquence : on applique sans clé quand on s'applique à soi-même, sinon
+    /// l'utilisateur ne peut plus reprendre la main depuis l'interface de
+    /// Glamourer. La clé ne servira que pour l'apparence d'un pair, où le
+    /// verrou est souhaitable pour que l'automation du receveur ne l'écrase pas.
     /// </remarks>
     public const uint LockKey = 0x4C4B5031;   // « LKP1 »
 
@@ -58,9 +62,27 @@ public sealed class GlamourerIpc
         return ec is GlamourerApiEc.Success ? state : null;
     }
 
-    public void ApplyState(string base64, int objectIndex)
+    /// <summary>Applique un état sans le verrouiller.</summary>
+    /// <remarks>
+    /// Clé nulle : l'utilisateur doit pouvoir reprendre la main sur son propre
+    /// personnage depuis l'interface de Glamourer.
+    /// </remarks>
+    public void ApplyStateUnlocked(string base64, int objectIndex)
+        => Apply(base64, objectIndex, key: 0);
+
+    /// <summary>Applique l'état d'un pair, verrouillé sous notre clé.</summary>
+    /// <remarks>
+    /// Verrouillé pour que l'automation de Glamourer chez le receveur n'écrase
+    /// pas l'apparence du pair une seconde après l'avoir posée.
+    /// </remarks>
+    public void ApplyStateLocked(string base64, int objectIndex)
+        => Apply(base64, objectIndex, LockKey);
+
+    private void Apply(string base64, int objectIndex, uint key)
     {
-        var ec = _applyState.Invoke(base64, objectIndex, LockKey, ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization);
+        var ec = _applyState.Invoke(
+            base64, objectIndex, key, ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization);
+
         if (ec is not GlamourerApiEc.Success)
             throw new InvalidOperationException($"application d'état refusée par Glamourer : {ec}");
     }

@@ -247,7 +247,9 @@ public sealed class SelfLoop : IDisposable
         {
             // Glamourer après le redessin, jamais avant : l'inverse donne un état
             // écrasé par l'automation du receveur.
-            await _framework.RunOnFrameworkThread(() => _glamourer.ApplyState(state, PlayerIndex))
+            // Sans clé : c'est notre propre personnage, et l'utilisateur doit
+            // pouvoir reprendre la main depuis l'interface de Glamourer.
+            await _framework.RunOnFrameworkThread(() => _glamourer.ApplyStateUnlocked(state, PlayerIndex))
                             .ConfigureAwait(false);
 
             RememberGlamourerApplied();
