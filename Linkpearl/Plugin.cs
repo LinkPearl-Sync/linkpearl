@@ -9,8 +9,10 @@ using Linkpearl.Core.Cache;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport;
+using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
 using Linkpearl.Ui;
+using Linkpearl.Ui.Pages;
 
 namespace Linkpearl;
 
@@ -52,6 +54,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PresenceService _presence;
     private readonly DalamudObjectSource _objectSource;
     private readonly PluginState _state = new();
+    private readonly DiscoveryState _discovery = new();
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
     private readonly Configuration _configuration;
@@ -131,6 +134,8 @@ public sealed class Plugin : IDalamudPlugin
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
             () => _engine.Statuses,
+            _discovery,
+            at => RunSafely(() => DiscoverAsync(at)),
             player => RunSafely(() => RequestPairAsync(player)),
             request => RunSafely(() => AcceptAsync(request)),
             Decline);
@@ -297,6 +302,45 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Demande à un service la liste de ceux qu'il connaît.
+    /// </summary>
+    /// <remarks>
+    /// Le résultat n'est qu'une proposition : rien n'entre dans la liste de
+    /// l'utilisateur sans qu'il coche une case. C'est ce qui empêche un annuaire
+    /// de devenir une autorité.
+    /// </remarks>
+    private async Task DiscoverAsync(RendezvousAddress at)
+    {
+        _discovery.Reset();
+        _discovery.From = at;
+        _discovery.Running = true;
+
+        try
+        {
+            await using var client = new RendezvousClient();
+            await client.ConnectAsync(at.Host, at.Port, _shutdown.Token).ConfigureAwait(false);
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+            var offered = await client.QueryDirectoryAsync(deadline.Token).ConfigureAwait(false);
+
+            _discovery.Offered = offered ?? [];
+
+            if (offered is null)
+                _discovery.Failure = "ce service ne publie pas d'annuaire.";
+        }
+        catch (Exception e)
+        {
+            _discovery.Failure = $"interrogation impossible : {e.Message}";
+        }
+        finally
+        {
+            _discovery.Running = false;
         }
     }
 
