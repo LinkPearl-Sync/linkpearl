@@ -1,0 +1,135 @@
+name: Publier le plugin
+
+# Une version se publie en poussant un tag :
+#
+#   git tag v0.2.0 && git push origin v0.2.0          version stable
+#   git tag v0.2.0-test && git push origin v0.2.0-test   canal de test
+#
+# Le canal de test sert aux versions qu'on donne à quelques personnes sans
+# les imposer à tout le monde : Dalamud ne les propose qu'à ceux qui ont
+# coché « Get plugin testing builds ».
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Lire le tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          IS_TEST=false
+          [[ "$VERSION" == *-test ]] && IS_TEST=true
+          VERSION="${VERSION%-test}"
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "IS_TEST=$IS_TEST" >> $GITHUB_OUTPUT
+
+      - name: Installer .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Récupérer Dalamud
+        shell: pwsh
+        run: |
+          # Le SDK Dalamud compile contre les assemblies du jeu, qu'il cherche
+          # dans le dossier de XIVLauncher. Un runner n'en a pas.
+          $info = Invoke-RestMethod -Uri "https://aonyx.ffxiv.wang/Dalamud/Release/VersionInfo?track=staging"
+          Invoke-WebRequest -Uri $info.downloadUrl -OutFile dalamud.7z
+          New-Item -ItemType Directory -Force -Path "$env:AppData\XIVLauncher\addon\Hooks\dev" | Out-Null
+          7z x dalamud.7z -o"$env:AppData\XIVLauncher\addon\Hooks\dev" -y
+
+      - name: Vérifier le noyau
+        # Le noyau se teste sans le jeu : un échec ici doit empêcher la
+        # publication, pas être découvert par les joueurs.
+        run: dotnet test Linkpearl.Core.Tests/Linkpearl.Core.Tests.csproj --nologo
+
+      - name: Compiler
+        run: >
+          dotnet build Linkpearl/Linkpearl.csproj
+          -c Release
+          -warnaserror
+          /p:Version=${{ steps.tag.outputs.VERSION }}
+
+      - name: Empaqueter
+        shell: bash
+        run: |
+          # Le SDK Dalamud produit déjà l'archive au bon format.
+          cp Linkpearl/bin/Release/Linkpearl/latest.zip Linkpearl.zip
+          unzip -l Linkpearl.zip
+
+      - name: Publier la version
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ steps.tag.outputs.VERSION }}${{ steps.tag.outputs.IS_TEST == 'true' && ' (test)' || '' }}
+          prerelease: ${{ steps.tag.outputs.IS_TEST == 'true' }}
+          files: Linkpearl.zip
+          generate_release_notes: true
+
+      - name: Mettre à jour le manifeste du dépôt
+        shell: pwsh
+        run: |
+          $v      = "${{ steps.tag.outputs.VERSION }}"
+          $isTest = "${{ steps.tag.outputs.IS_TEST }}" -eq "true"
+          $base   = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+
+          $entry = (Get-Content repo.json -Raw | ConvertFrom-Json)[0]
+
+          # Le niveau d'API vient du manifeste que le SDK vient de générer :
+          # le coder en dur ici le ferait mentir au prochain changement.
+          $manifest = Get-Content Linkpearl/bin/Release/Linkpearl/Linkpearl.json -Raw | ConvertFrom-Json
+          $entry.DalamudApiLevel = $manifest.DalamudApiLevel
+          $entry | Add-Member -MemberType NoteProperty -Name TestingDalamudApiLevel `
+                              -Value $manifest.DalamudApiLevel -Force
+
+          # Sans LastUpdate, Dalamud date l'entrée de 1970 et la relègue en bas
+          # de son onglet des nouveautés.
+          $entry.LastUpdate = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+          if ($isTest) {
+            # Le canal stable n'est pas touché : une version de test ne doit
+            # atteindre que ceux qui les ont demandées.
+            $entry.TestingAssemblyVersion = "$v.0"
+            $entry.DownloadLinkTesting    = "$base/Linkpearl.zip"
+          } else {
+            $entry.AssemblyVersion        = "$v.0"
+            $entry.TestingAssemblyVersion = "$v.0"
+            $entry.DownloadLinkInstall    = "$base/Linkpearl.zip"
+            $entry.DownloadLinkUpdate     = "$base/Linkpearl.zip"
+            $entry.DownloadLinkTesting    = "$base/Linkpearl.zip"
+          }
+
+          ConvertTo-Json @($entry) -Depth 10 | Set-Content repo.json
+
+      - name: Enregistrer le manifeste sur main
+        shell: bash
+        run: |
+          # Le tag est détaché : on reporte le manifeste sur main, sinon la
+          # prochaine publication repartirait de l'ancien.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git stash push repo.json
+          git checkout main
+          git stash pop
+
+          git add repo.json
+          git diff --staged --quiet || git commit -m "chore: manifeste du dépôt pour ${{ github.ref_name }}"
+          git push origin main

@@ -17,9 +17,42 @@ fichiers du format de fil y sont copiés littéralement, et `Linkpearl.Core.Test
 est le même fichier des deux côtés : le premier qui touche à un octet du format casse son
 propre test.
 
-## État
+## État, à lire avant d'installer
 
-En cours de conception et de construction. Rien n'est utilisable pour l'instant.
+**Ce plugin n'a jamais été éprouvé entre deux joueurs.** L'application de
+l'apparence d'un pair, la connexion et le transfert n'ont tourné qu'au banc
+d'essai. Ce qui a été vu en jeu se limite à la capture de sa propre apparence.
+
+**Le handshake n'a pas été relu par quelqu'un d'autre.** C'est une construction
+SIGMA-I écrite à la main sur P-256 et AES-256-GCM, documentée dans
+[`docs/protocol.md`](docs/protocol.md) précisément pour pouvoir être relue sans
+lire le code. Les vecteurs figés du dépôt ne valident que sa cohérence avec
+lui-même : ils ont été produits par l'implémentation qu'ils testent, donc ils
+attrapent une dérive de format, pas une erreur de conception. **Si vous savez
+lire ce genre de chose, c'est la contribution la plus utile que vous puissiez
+apporter à ce projet.**
+
+**Si la connexion directe échoue, il n'y a pas de secours.** Le relais existe
+côté service mais le plugin ne s'en sert pas encore. Deux joueurs derrière des
+NAT peu coopératifs peuvent ne jamais se joindre.
+
+Autrement dit : installez-le pour participer à un essai ou pour lire le code,
+pas en attendant qu'il marche.
+
+## Installation
+
+Dans Dalamud, `/xlsettings` > Experimental > Custom Plugin Repositories, ajouter :
+
+```
+https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl/main/repo.json
+```
+
+Puis installer Linkpearl depuis la liste des plugins. **Penumbra et Glamourer
+sont requis.**
+
+Vous et vos pairs devez être réglés sur un même service de rendez-vous, ce qui
+est le cas par défaut. Vous pouvez en héberger un vous-même, voir
+[linkpearl-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-rendezvous).
 
 La conception complète, les mesures qui la justifient et les jalons sont dans
 [`docs/superpowers/specs/2026-09-22-linkpearl-design.md`](docs/superpowers/specs/2026-09-22-linkpearl-design.md).
