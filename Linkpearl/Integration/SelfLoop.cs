@@ -61,6 +61,16 @@ public sealed class SelfLoop : IDisposable
     /// personnage bloqué jusqu'au redémarrage du jeu.
     /// </remarks>
     private string CollectionMarkerPath => Path.Combine(_root, "collection.id");
+
+    /// <summary>
+    /// Trace de ce que nous avons appliqué à Glamourer.
+    /// </summary>
+    /// <remarks>
+    /// Sans elle, le nettoyage appellerait RevertState sur un personnage auquel
+    /// nous n'avons jamais touché, ce qui efface le design que l'utilisateur
+    /// avait posé lui-même. On ne défait que ce que l'on a fait.
+    /// </remarks>
+    private string GlamourerMarkerPath => Path.Combine(_root, "glamourer.applied");
     private string BlobDir => Path.Combine(_root, "cache", "blobs");
 
     public async Task<CaptureReport> CaptureAsync(CancellationToken ct) => await CaptureAsync(force: false, ct).ConfigureAwait(false);
@@ -239,6 +249,8 @@ public sealed class SelfLoop : IDisposable
             // écrasé par l'automation du receveur.
             await _framework.RunOnFrameworkThread(() => _glamourer.ApplyState(state, PlayerIndex))
                             .ConfigureAwait(false);
+
+            RememberGlamourerApplied();
         }
 
         return pathMap.Count;
@@ -250,17 +262,30 @@ public sealed class SelfLoop : IDisposable
     /// </summary>
     public void Revert()
     {
-        try
+        var collections = new[] { _collection, ReadRememberedCollection() }.OfType<Guid>().Distinct().ToList();
+        var touchedGlamourer = File.Exists(GlamourerMarkerPath);
+
+        // Rien posé, rien à défaire. C'est le cas de loin le plus fréquent, et
+        // toucher au personnage dans ce cas effacerait le travail de
+        // l'utilisateur.
+        if (collections.Count == 0 && touchedGlamourer is false)
+            return;
+
+        if (touchedGlamourer)
         {
-            _glamourer.Release(PlayerIndex);
-        }
-        catch (Exception e)
-        {
-            _log.Warning(e, "Relâchement de l'état Glamourer en échec.");
+            try
+            {
+                _glamourer.Release(PlayerIndex);
+            }
+            catch (Exception e)
+            {
+                _log.Warning(e, "Relâchement de l'état Glamourer en échec.");
+            }
+
+            ForgetGlamourer();
         }
 
-        // La collection en mémoire, ou celle qu'une session précédente a laissée.
-        foreach (var collection in new[] { _collection, ReadRememberedCollection() }.OfType<Guid>().Distinct())
+        foreach (var collection in collections)
         {
             try
             {
@@ -286,7 +311,32 @@ public sealed class SelfLoop : IDisposable
     }
 
     /// <summary>Vrai s'il reste quelque chose à nettoyer d'une session précédente.</summary>
-    public bool HasLeftovers() => ReadRememberedCollection() is not null;
+    public bool HasLeftovers() => ReadRememberedCollection() is not null || File.Exists(GlamourerMarkerPath);
+
+    private void RememberGlamourerApplied()
+    {
+        try
+        {
+            Directory.CreateDirectory(_root);
+            File.WriteAllText(GlamourerMarkerPath, "1");
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Trace Glamourer non écrite.");
+        }
+    }
+
+    private void ForgetGlamourer()
+    {
+        try
+        {
+            File.Delete(GlamourerMarkerPath);
+        }
+        catch (Exception)
+        {
+            // Sans conséquence : relâcher un verrou absent ne fait rien.
+        }
+    }
 
     private void RememberCollection(Guid collection)
     {
@@ -329,9 +379,10 @@ public sealed class SelfLoop : IDisposable
 
     public void Dispose()
     {
-        // Sans condition : une collection temporaire laissée derrière nous, c'est
-        // un personnage cassé jusqu'au redémarrage du jeu. Le coût d'un nettoyage
-        // inutile est nul, celui d'un nettoyage oublié ne l'est pas.
+        // Revert ne touche au personnage que si nous y avons posé quelque chose.
+        // Une collection temporaire oubliée casse un personnage jusqu'au
+        // redémarrage du jeu ; un RevertState sur un personnage auquel on n'a
+        // pas touché efface le design de l'utilisateur. Les deux sont à éviter.
         Revert();
     }
 }
