@@ -46,7 +46,17 @@ public enum ConnectionPolicy
 public sealed record PairRecord
 {
     public required PeerId Id { get; init; }
-    public required byte[] PublicKey { get; init; }
+
+    /// <summary>
+    /// La clé publique complète, apprise au premier handshake.
+    /// </summary>
+    /// <remarks>
+    /// Le code d'invitation ne porte que l'empreinte : la clé arrive du pair
+    /// lui-même et se vérifie contre cette empreinte, ce qui suffit à interdire
+    /// toute substitution et raccourcit le code de moitié.
+    /// </remarks>
+    public byte[]? PublicKey { get; init; }
+
     public required byte[] PairSecret { get; init; }
 
     /// <summary>Nom donné localement. Jamais transmis.</summary>
@@ -94,13 +104,12 @@ public sealed class PairBook(IClock clock)
     /// <summary>
     /// Ajoute un pair depuis un code d'invitation, en attente de confirmation.
     /// </summary>
-    public PairRecord Invite(PairingCode code, string displayName, ReadOnlySpan<byte> ourPublicKey)
+    public PairRecord Invite(PairingCode code, string displayName, PeerId ourId)
     {
         var record = new PairRecord
         {
             Id = code.Id,
-            PublicKey = code.PublicKey,
-            PairSecret = PairSecret.Derive(code.PairingNonce, ourPublicKey.ToArray(), code.PublicKey),
+            PairSecret = PairSecret.Derive(code.PairingNonce, ourId, code.Id),
             DisplayName = displayName,
             RendezvousHost = code.RendezvousHost,
             Trust = PairTrust.Pending,
@@ -138,8 +147,33 @@ public sealed class PairBook(IClock clock)
     /// demande à confirmer. Rien ne lui sera appliqué tant qu'il n'est pas
     /// accepté pour de bon.
     /// </remarks>
+    /// <summary>
+    /// Décide si une clé publique reçue dans un handshake est acceptable, et
+    /// l'apprend au passage.
+    /// </summary>
+    /// <remarks>
+    /// L'empreinte de la clé reçue sert de clé de recherche dans le carnet :
+    /// une clé substituée donne une autre empreinte, donc aucune entrée, donc un
+    /// refus. La liaison est ainsi assurée par construction, sans comparaison
+    /// explicite à oublier un jour.
+    ///
+    /// Une clé déjà apprise et qui changerait serait une contradiction, et est
+    /// refusée : elle signifierait que deux clés différentes ont la même
+    /// empreinte.
+    /// </remarks>
     public bool IsAuthorized(byte[] publicKey)
-        => Find(publicKey) is { Trust: PairTrust.Pending or PairTrust.Accepted };
+    {
+        var id = PeerId.Of(publicKey);
+
+        if (Find(id) is not { Trust: PairTrust.Pending or PairTrust.Accepted } record)
+            return false;
+
+        if (record.PublicKey is { } known)
+            return known.AsSpan().SequenceEqual(publicKey);
+
+        _pairs[id] = record with { PublicKey = publicKey };
+        return true;
+    }
 
     public void Load(IEnumerable<PairRecord> records)
     {

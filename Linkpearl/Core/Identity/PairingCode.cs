@@ -1,63 +1,61 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
-using Linkpearl.Core.Crypto;
 
 namespace Linkpearl.Core.Identity;
 
 /// <summary>
-/// Une invitation : la clé publique d'un pair, un aléa, et où le trouver.
+/// Une invitation : à qui l'on parle, avec quel aléa, et où le trouver.
 /// </summary>
 /// <remarks>
-/// <b>Le code porte la clé publique complète.</b> C'est la propriété centrale du
-/// système : le service de rendez-vous ne peut pas substituer une identité,
-/// puisqu'il n'en fournit aucune. Au pire il refuse son service, ce qui produit
-/// un échec de connexion et jamais une usurpation.
+/// Le code porte l'<b>empreinte</b> de la clé publique, pas la clé elle-même.
+/// Seize octets suffisent : substituer une identité demanderait de trouver une
+/// autre clé ayant la même empreinte, soit deux puissance cent vingt-huit
+/// essais. La clé complète arrive au handshake et s'y vérifie contre cette
+/// empreinte. Le service de rendez-vous ne peut donc toujours pas usurper quoi
+/// que ce soit, et le code passe de cent vingt caractères à moins de soixante-dix.
 ///
 /// Le serveur est dans le code parce que sans lui, deux pairs configurés sur
 /// deux rendez-vous différents ne se trouveraient jamais et que personne ne
 /// comprendrait pourquoi.
 ///
 /// L'aléa ne sert pas à l'authentification mais à dériver le secret de pairage,
-/// dont sont tirés les tickets tournants du rendez-vous.
+/// dont sont tirés les jetons tournants du rendez-vous.
 /// </remarks>
-public sealed record PairingCode(byte[] PublicKey, byte[] PairingNonce, string RendezvousHost)
+public sealed record PairingCode(PeerId Id, byte[] PairingNonce, string RendezvousHost)
 {
     public const byte Version = 1;
-    public const int NonceLength = 16;
+
+    /// <summary>
+    /// Quatre-vingt-seize bits d'aléa.
+    /// </summary>
+    /// <remarks>
+    /// Il faut assez d'entropie pour qu'un observateur connaissant les deux
+    /// empreintes ne puisse pas retrouver le secret de paire par recherche
+    /// exhaustive, et donc suivre les présences sur le rendez-vous.
+    /// </remarks>
+    public const int NonceLength = 12;
 
     private const string Prefix = "LP";
-    private const int GroupSize = 6;
-    private const int FlagsLength = 1;
-    private const int ChecksumLength = 4;
+    private const int ChecksumLength = 2;
+    private const int BodyLength = PeerId.SizeInBytes + NonceLength + ChecksumLength;
 
-    private static int BodyLength =>
-        1 + CryptoPrimitives.CompressedPointLength + NonceLength + FlagsLength + ChecksumLength;
-
-    public PeerId Id => PeerId.Of(PublicKey);
-
-    public static PairingCode Create(byte[] publicKey, string rendezvousHost)
-        => new(publicKey, RandomNumberGenerator.GetBytes(NonceLength), rendezvousHost);
+    public static PairingCode Create(PeerId id, string rendezvousHost)
+        => new(id, RandomNumberGenerator.GetBytes(NonceLength), rendezvousHost);
 
     public string Encode()
     {
         var body = new byte[BodyLength];
-        var offset = 0;
+        Id.ToBytes().CopyTo(body.AsSpan());
+        PairingNonce.CopyTo(body.AsSpan(PeerId.SizeInBytes));
 
-        body[offset++] = Version;
-        CryptoPrimitives.Compress(PublicKey).CopyTo(body.AsSpan(offset));
-        offset += CryptoPrimitives.CompressedPointLength;
-        PairingNonce.CopyTo(body.AsSpan(offset));
-        offset += NonceLength;
-        body[offset++] = 0;   // drapeaux, réservés
+        // Somme de contrôle sur deux octets : elle ne sert qu'à détecter une
+        // faute de recopie avant toute opération réseau, pas une altération
+        // volontaire. L'authenticité vient de la signature du handshake.
+        var payload = PeerId.SizeInBytes + NonceLength;
+        BinaryPrimitives.WriteUInt16BigEndian(
+            body.AsSpan(payload), (ushort)(Crc32C.Of(body.AsSpan(0, payload)) & 0xFFFF));
 
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset), Crc32C.Of(body.AsSpan(0, offset)));
-
-        var encoded = Base32Crockford.Encode(body);
-        var grouped = string.Join('-', Enumerable
-            .Range(0, (encoded.Length + GroupSize - 1) / GroupSize)
-            .Select(i => encoded.Substring(i * GroupSize, Math.Min(GroupSize, encoded.Length - (i * GroupSize)))));
-
-        return $"{Prefix}{Version}-{grouped}@{RendezvousHost}";
+        return $"{Prefix}{Version}-{Base32Crockford.Encode(body)}@{RendezvousHost}";
     }
 
     public static bool TryParse(string? text, out PairingCode? code, out string? rejection)
@@ -110,35 +108,20 @@ public sealed record PairingCode(byte[] PublicKey, byte[] PairingNonce, string R
         // que le format annonce.
         body = body[..BodyLength];
 
-        var payloadLength = BodyLength - ChecksumLength;
-        var expected = BinaryPrimitives.ReadUInt32BigEndian(body.AsSpan(payloadLength));
+        var payloadLength = PeerId.SizeInBytes + NonceLength;
+        var expected = BinaryPrimitives.ReadUInt16BigEndian(body.AsSpan(payloadLength));
 
-        if (Crc32C.Of(body.AsSpan(0, payloadLength)) != expected)
+        if ((ushort)(Crc32C.Of(body.AsSpan(0, payloadLength)) & 0xFFFF) != expected)
         {
             rejection = "somme de contrôle incorrecte : le code a probablement été mal recopié";
             return false;
         }
 
-        if (body[0] != Version)
-        {
-            rejection = $"version de code inconnue : ce plugin lit la version {Version}";
-            return false;
-        }
+        code = new PairingCode(
+            PeerId.FromBytes(body.AsSpan(0, PeerId.SizeInBytes)),
+            body.AsSpan(PeerId.SizeInBytes, NonceLength).ToArray(),
+            host);
 
-        byte[] publicKey;
-        try
-        {
-            publicKey = CryptoPrimitives.Decompress(body.AsSpan(1, CryptoPrimitives.CompressedPointLength));
-        }
-        catch (CryptographicException e)
-        {
-            rejection = $"clé publique invalide : {e.Message}";
-            return false;
-        }
-
-        var nonce = body.AsSpan(1 + CryptoPrimitives.CompressedPointLength, NonceLength).ToArray();
-
-        code = new PairingCode(publicKey, nonce, host);
         rejection = null;
         return true;
     }

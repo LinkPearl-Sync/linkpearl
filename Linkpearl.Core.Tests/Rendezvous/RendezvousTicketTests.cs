@@ -20,13 +20,13 @@ public class RendezvousTicketTests
 
     private static readonly DateTimeOffset T0 = new(2026, 9, 22, 12, 0, 0, TimeSpan.Zero);
 
-    private static (byte[] Alice, byte[] Bob, byte[] Nonce) Keys()
+    private static (PeerId Alice, PeerId Bob, byte[] Nonce) Keys()
     {
         using var alice = CryptoPrimitives.GenerateIdentity();
         using var bob = CryptoPrimitives.GenerateIdentity();
 
-        return (CryptoPrimitives.ExportPublicPoint(alice),
-                CryptoPrimitives.ExportPublicPoint(bob),
+        return (PeerId.Of(CryptoPrimitives.ExportPublicPoint(alice)),
+                PeerId.Of(CryptoPrimitives.ExportPublicPoint(bob)),
                 System.Security.Cryptography.RandomNumberGenerator.GetBytes(PairingCode.NonceLength));
     }
 
@@ -60,7 +60,7 @@ public class RendezvousTicketTests
 
         Assert.NotEqual(
             PairSecret.Derive(nonce, alice, bob),
-            PairSecret.Derive(nonce, alice, CryptoPrimitives.ExportPublicPoint(tiers)));
+            PairSecret.Derive(nonce, alice, PeerId.Of(CryptoPrimitives.ExportPublicPoint(tiers))));
     }
 
     [Fact]

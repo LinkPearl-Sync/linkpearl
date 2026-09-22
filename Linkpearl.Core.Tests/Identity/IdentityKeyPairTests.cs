@@ -67,7 +67,7 @@ public class IdentityKeyPairTests
     }
 
     [Fact]
-    public void Une_invitation_porte_la_cle_publique_de_cette_identite()
+    public void Une_invitation_porte_l_empreinte_de_cette_identite()
     {
         var store = new MemoryStore();
         using var identity = IdentityKeyPair.LoadOrCreate(store);
@@ -75,7 +75,6 @@ public class IdentityKeyPairTests
         var code = identity.NewInvitation("rdv.exemple.ch");
 
         Assert.True(PairingCode.TryParse(code.Encode(), out var parsed, out var why), why);
-        Assert.Equal(identity.PublicKey, parsed!.PublicKey);
-        Assert.Equal(identity.Id, parsed.Id);
+        Assert.Equal(identity.Id, parsed!.Id);
     }
 }

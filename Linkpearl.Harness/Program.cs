@@ -24,7 +24,8 @@ if (args.Length > 0 && args[0] == "pairing")
 {
     using var identity = Linkpearl.Core.Crypto.CryptoPrimitives.GenerateIdentity();
     var key = Linkpearl.Core.Crypto.CryptoPrimitives.ExportPublicPoint(identity);
-    var code = Linkpearl.Core.Identity.PairingCode.Create(key, args.Length > 1 ? args[1] : "rdv.exemple.ch");
+    var id = Linkpearl.Core.Identity.PeerId.Of(key);
+    var code = Linkpearl.Core.Identity.PairingCode.Create(id, args.Length > 1 ? args[1] : "rdv.exemple.ch");
     var text = code.Encode();
 
     Console.WriteLine($"Code d'invitation ({text.Length} caractères) :");
@@ -32,7 +33,7 @@ if (args.Length > 0 && args[0] == "pairing")
     Console.WriteLine($"  {text}");
     Console.WriteLine();
     Console.WriteLine($"Identifiant de pair : {code.Id}");
-    Console.WriteLine($"Relecture : {(Linkpearl.Core.Identity.PairingCode.TryParse(text, out var back, out _) && back!.PublicKey.SequenceEqual(key) ? "la clé publique est intégralement retrouvée" : "ÉCHEC")}");
+    Console.WriteLine($"Relecture : {(Linkpearl.Core.Identity.PairingCode.TryParse(text, out var back, out _) && back!.Id == id ? "l'empreinte est retrouvée" : "ÉCHEC")}");
     return;
 }
 

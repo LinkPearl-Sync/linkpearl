@@ -54,7 +54,7 @@ public sealed class IdentityKeyPair : IDisposable
         return new IdentityKeyPair(created);
     }
 
-    public PairingCode NewInvitation(string rendezvousHost) => PairingCode.Create(PublicKey, rendezvousHost);
+    public PairingCode NewInvitation(string rendezvousHost) => PairingCode.Create(Id, rendezvousHost);
 
     public void Dispose() => Key.Dispose();
 }

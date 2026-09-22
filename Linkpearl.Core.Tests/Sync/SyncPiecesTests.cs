@@ -149,20 +149,23 @@ public class PairBookTests
 {
     private static PairBook New() => new(new MovableClock());
 
-    private static (PairingCode Code, byte[] Ours) Invitation()
+    private static (PairingCode Code, PeerId Ours, byte[] TheirKey) Invitation()
     {
         using var theirs = CryptoPrimitives.GenerateIdentity();
         using var ours = CryptoPrimitives.GenerateIdentity();
 
-        return (PairingCode.Create(CryptoPrimitives.ExportPublicPoint(theirs), "rdv.exemple.ch"),
-                CryptoPrimitives.ExportPublicPoint(ours));
+        var theirKey = CryptoPrimitives.ExportPublicPoint(theirs);
+
+        return (PairingCode.Create(PeerId.Of(theirKey), "rdv.exemple.ch"),
+                PeerId.Of(CryptoPrimitives.ExportPublicPoint(ours)),
+                theirKey);
     }
 
     [Fact]
     public void Un_pair_invite_est_en_attente_et_non_accepte()
     {
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
 
         var record = book.Invite(code, "Amie", ours);
 
@@ -176,10 +179,10 @@ public class PairBookTests
         // Sans cela, la première connexion échouerait et l'utilisateur ne verrait
         // jamais la demande à confirmer. Rien ne lui est appliqué pour autant.
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
         book.Invite(code, "Amie", ours);
 
-        Assert.True(book.IsAuthorized(code.PublicKey));
+        Assert.True(book.IsAuthorized(theirKey));
         Assert.Empty(book.Active);
     }
 
@@ -187,7 +190,7 @@ public class PairBookTests
     public void Un_pair_accepte_devient_actif()
     {
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
         book.Invite(code, "Amie", ours);
         book.Accept(code.Id);
 
@@ -198,11 +201,11 @@ public class PairBookTests
     public void Un_pair_bloque_n_est_plus_autorise()
     {
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
         book.Invite(code, "Gêneur", ours);
         book.Block(code.Id);
 
-        Assert.False(book.IsAuthorized(code.PublicKey));
+        Assert.False(book.IsAuthorized(theirKey));
         Assert.Empty(book.Active);
     }
 
@@ -210,12 +213,12 @@ public class PairBookTests
     public void Un_pair_en_pause_reste_autorise_mais_sort_des_actifs()
     {
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
         book.Invite(code, "Amie", ours);
         book.Accept(code.Id);
         book.SetPaused(code.Id, true);
 
-        Assert.True(book.IsAuthorized(code.PublicKey));
+        Assert.True(book.IsAuthorized(theirKey));
         Assert.Empty(book.Active);
     }
 
@@ -233,24 +236,51 @@ public class PairBookTests
         // sans quoi leurs jetons de rendez-vous ne coïncideraient jamais.
         using var alice = CryptoPrimitives.GenerateIdentity();
         using var bob = CryptoPrimitives.GenerateIdentity();
-        var alicePublic = CryptoPrimitives.ExportPublicPoint(alice);
-        var bobPublic = CryptoPrimitives.ExportPublicPoint(bob);
+        var aliceId = PeerId.Of(CryptoPrimitives.ExportPublicPoint(alice));
+        var bobId = PeerId.Of(CryptoPrimitives.ExportPublicPoint(bob));
 
-        var codeFromAlice = PairingCode.Create(alicePublic, "rdv.exemple.ch");
+        var codeFromAlice = PairingCode.Create(aliceId, "rdv.exemple.ch");
 
         var bobBook = new PairBook(new MovableClock());
-        var chezBob = bobBook.Invite(codeFromAlice, "Alice", bobPublic);
+        var chezBob = bobBook.Invite(codeFromAlice, "Alice", bobId);
 
-        var chezAlice = PairSecret.Derive(codeFromAlice.PairingNonce, alicePublic, bobPublic);
+        var chezAlice = PairSecret.Derive(codeFromAlice.PairingNonce, aliceId, bobId);
 
         Assert.Equal(chezAlice, chezBob.PairSecret);
+    }
+
+    [Fact]
+    public void La_cle_complete_est_apprise_au_premier_handshake()
+    {
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+        book.Invite(code, "Amie", ours);
+
+        Assert.Null(book.Find(code.Id)!.PublicKey);
+        Assert.True(book.IsAuthorized(theirKey));
+        Assert.Equal(theirKey, book.Find(code.Id)!.PublicKey);
+    }
+
+    [Fact]
+    public void Une_cle_qui_changerait_apres_avoir_ete_apprise_est_refusee()
+    {
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+        book.Invite(code, "Amie", ours);
+        book.IsAuthorized(theirKey);
+
+        // Deux clés différentes de même empreinte seraient une contradiction.
+        var falsifiee = theirKey.ToArray();
+        falsifiee[10] ^= 0x01;
+
+        Assert.False(book.IsAuthorized(falsifiee));
     }
 
     [Fact]
     public void L_empreinte_du_personnage_s_epingle()
     {
         var book = New();
-        var (code, ours) = Invitation();
+        var (code, ours, theirKey) = Invitation();
         book.Invite(code, "Amie", ours);
 
         book.PinFingerprint(code.Id, PlayerFingerprint.Of("amie", 21));

@@ -22,7 +22,7 @@ public sealed class PairBookStore(string path)
     private static readonly byte[] Entropy = "linkpearl:pairs:v1"u8.ToArray();
 
     private sealed record Dto(
-        string PublicKey, string PairSecret, string DisplayName, string RendezvousHost,
+        string Id, string? PublicKey, string PairSecret, string DisplayName, string RendezvousHost,
         int Trust, int Permissions, int Policy, bool Paused,
         long PairedAt, long? LastSeenAt, string? PinnedFingerprint);
 
@@ -49,7 +49,8 @@ public sealed class PairBookStore(string path)
     public void Save(PairBook book)
     {
         var dtos = book.All.Select(record => new Dto(
-            Convert.ToHexStringLower(record.PublicKey),
+            Convert.ToHexStringLower(record.Id.ToBytes()),
+            record.PublicKey is { } key ? Convert.ToHexStringLower(key) : null,
             Convert.ToHexStringLower(record.PairSecret),
             record.DisplayName,
             record.RendezvousHost,
@@ -73,12 +74,10 @@ public sealed class PairBookStore(string path)
     {
         try
         {
-            var publicKey = Convert.FromHexString(dto.PublicKey);
-
             return new PairRecord
             {
-                Id = PeerId.Of(publicKey),
-                PublicKey = publicKey,
+                Id = PeerId.FromBytes(Convert.FromHexString(dto.Id)),
+                PublicKey = dto.PublicKey is { } key ? Convert.FromHexString(key) : null,
                 PairSecret = Convert.FromHexString(dto.PairSecret),
                 DisplayName = dto.DisplayName,
                 RendezvousHost = dto.RendezvousHost,

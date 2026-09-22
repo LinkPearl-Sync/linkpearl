@@ -55,7 +55,7 @@ public sealed class PairingService : IDisposable
         if (_book.Find(code.Id) is { } existing)
             return $"déjà dans le carnet sous le nom « {existing.DisplayName} ».";
 
-        var record = _book.Invite(code, displayName, _identity.PublicKey);
+        var record = _book.Invite(code, displayName, _identity.Id);
         _book.Accept(record.Id);   // l'utilisateur a collé le code : c'est son consentement
         _bookStore.Save(_book);
 

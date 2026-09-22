@@ -14,7 +14,7 @@ public class PairingCodeTests
     private static PairingCode Sample()
     {
         using var identity = CryptoPrimitives.GenerateIdentity();
-        return PairingCode.Create(CryptoPrimitives.ExportPublicPoint(identity), "rdv.exemple.ch");
+        return PairingCode.Create(PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), "rdv.exemple.ch");
     }
 
     [Fact]
@@ -24,7 +24,7 @@ public class PairingCodeTests
         var text = original.Encode();
 
         Assert.True(PairingCode.TryParse(text, out var parsed, out var why), why);
-        Assert.Equal(original.PublicKey, parsed!.PublicKey);
+        Assert.Equal(original.Id, parsed!.Id);
         Assert.Equal(original.PairingNonce, parsed.PairingNonce);
         Assert.Equal("rdv.exemple.ch", parsed.RendezvousHost);
     }
@@ -38,21 +38,37 @@ public class PairingCodeTests
     }
 
     [Fact]
-    public void Le_code_reste_raisonnablement_court()
+    public void Le_code_tient_sous_soixante_dix_caracteres()
     {
+        // Signalé en jeu : la version portant la clé publique complète en faisait
+        // cent vingt et un, ce qui est impraticable à transmettre.
         var text = Sample().Encode();
-        Assert.InRange(text.Length, 80, 130);
+        Assert.InRange(text.Length, 40, 70);
     }
 
     [Fact]
-    public void Deux_codes_de_la_meme_cle_different_par_leur_alea()
+    public void Deux_codes_de_la_meme_identite_different_par_leur_alea()
     {
         using var identity = CryptoPrimitives.GenerateIdentity();
-        var key = CryptoPrimitives.ExportPublicPoint(identity);
+        var id = PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity));
 
         Assert.NotEqual(
-            PairingCode.Create(key, "rdv.exemple.ch").Encode(),
-            PairingCode.Create(key, "rdv.exemple.ch").Encode());
+            PairingCode.Create(id, "rdv.exemple.ch").Encode(),
+            PairingCode.Create(id, "rdv.exemple.ch").Encode());
+    }
+
+    [Fact]
+    public void Une_cle_substituee_ne_correspond_plus_a_l_empreinte_du_code()
+    {
+        // C'est ce qui remplace la clé complète dans le code : trouver une autre
+        // clé de même empreinte demanderait deux puissance cent vingt-huit essais.
+        using var vraie = CryptoPrimitives.GenerateIdentity();
+        using var imposteur = CryptoPrimitives.GenerateIdentity();
+
+        var code = PairingCode.Create(PeerId.Of(CryptoPrimitives.ExportPublicPoint(vraie)), "rdv.exemple.ch");
+
+        Assert.Equal(code.Id, PeerId.Of(CryptoPrimitives.ExportPublicPoint(vraie)));
+        Assert.NotEqual(code.Id, PeerId.Of(CryptoPrimitives.ExportPublicPoint(imposteur)));
     }
 
     [Fact]
@@ -62,14 +78,14 @@ public class PairingCodeTests
 
         Assert.True(PairingCode.TryParse(text.ToLowerInvariant(), out var minuscules, out _));
         Assert.True(PairingCode.TryParse(text.ToUpperInvariant(), out var majuscules, out _));
-        Assert.Equal(minuscules!.PublicKey, majuscules!.PublicKey);
+        Assert.Equal(minuscules!.Id, majuscules!.Id);
     }
 
     [Theory]
     [InlineData('I', '1')]
     [InlineData('l', '1')]
     [InlineData('O', '0')]
-    public void Les_caracteres_ambigus_a_l_oreille_sont_tolERES(char ambiguous, char intended)
+    public void Les_caracteres_ambigus_a_l_oreille_sont_toleres(char ambiguous, char intended)
     {
         // Crockford écarte I, L, O et U de l'alphabet. On accepte quand même
         // celui qui les a entendus et écrits, plutôt que de lui dire « code
@@ -130,17 +146,23 @@ public class PairingCodeTests
     }
 
     [Fact]
-    public void L_identifiant_de_pair_derive_de_la_cle_publique()
+    public void Deux_invitations_de_la_meme_identite_designent_le_meme_pair()
     {
         using var identity = CryptoPrimitives.GenerateIdentity();
-        var key = CryptoPrimitives.ExportPublicPoint(identity);
+        var id = PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity));
 
-        var a = PairingCode.Create(key, "a.exemple.ch");
-        var b = PairingCode.Create(key, "b.exemple.ch");
+        Assert.Equal(
+            PairingCode.Create(id, "a.exemple.ch").Id,
+            PairingCode.Create(id, "b.exemple.ch").Id);
+    }
 
-        // Deux invitations de la même clé désignent le même pair, quel que soit
-        // le rendez-vous et quel que soit l'aléa.
-        Assert.Equal(PeerId.Of(a.PublicKey), PeerId.Of(b.PublicKey));
+    [Fact]
+    public void L_identifiant_fait_l_aller_retour_binaire()
+    {
+        using var identity = CryptoPrimitives.GenerateIdentity();
+        var id = PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity));
+
+        Assert.Equal(id, PeerId.FromBytes(id.ToBytes()));
     }
 
     [Fact]

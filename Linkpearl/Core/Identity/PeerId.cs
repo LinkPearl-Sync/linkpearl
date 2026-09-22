@@ -30,6 +30,21 @@ public readonly record struct PeerId
             BinaryPrimitives.ReadUInt64BigEndian(digest[8..]));
     }
 
+    public static PeerId FromBytes(ReadOnlySpan<byte> bytes)
+        => bytes.Length != SizeInBytes
+            ? throw new ArgumentException($"un identifiant fait {SizeInBytes} octets", nameof(bytes))
+            : new PeerId(
+                BinaryPrimitives.ReadUInt64BigEndian(bytes),
+                BinaryPrimitives.ReadUInt64BigEndian(bytes[8..]));
+
+    public byte[] ToBytes()
+    {
+        var bytes = new byte[SizeInBytes];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes, _high);
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(8), _low);
+        return bytes;
+    }
+
     public string ToHex()
     {
         Span<byte> bytes = stackalloc byte[SizeInBytes];
