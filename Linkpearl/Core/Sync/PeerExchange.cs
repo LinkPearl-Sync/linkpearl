@@ -1,0 +1,277 @@
+using System.Buffers.Binary;
+using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Cache;
+using Linkpearl.Core.Manifest;
+using Linkpearl.Core.Protocol;
+using Linkpearl.Core.Safety;
+using Linkpearl.Core.Transfer;
+using Linkpearl.Core.Transport;
+
+namespace Linkpearl.Core.Sync;
+
+/// <summary>Ce que l'on sait d'un pair à un instant donné.</summary>
+public sealed record PeerView(
+    PlayerFingerprint? Fingerprint,
+    CharacterManifest? Manifest,
+    BlobHash? AnnouncedManifest,
+    long MissingBytes,
+    long ReceivedBytes,
+    bool Ready);
+
+/// <summary>
+/// Le dialogue avec un pair : présence, manifeste, blobs.
+/// </summary>
+/// <remarks>
+/// Une instance par session. Tout ce qui arrive du réseau passe par ici et
+/// n'atteint le jeu qu'une fois le manifeste validé et tous les blobs vérifiés :
+/// le moteur ne pose jamais une apparence partielle.
+/// </remarks>
+public sealed class PeerExchange : IAsyncDisposable
+{
+    private readonly PeerSession _session;
+    private readonly IBlobStore _store;
+    private readonly ILocalAppearance _local;
+    private readonly RateLimiter _limiter;
+    private readonly ChannelPlan _channels;
+    private readonly ILogSink _log;
+    private readonly Quotas _quotas;
+    private readonly int _blockSize;
+
+    private BlobReceiver? _receiver;
+    private TransferPlan? _plan;
+    private long _received;
+
+    public PeerExchange(
+        PeerSession session, IBlobStore store, ILocalAppearance local,
+        RateLimiter limiter, int dataChannels, int blockSize, Quotas quotas, ILogSink log)
+    {
+        _session = session;
+        _store = store;
+        _local = local;
+        _limiter = limiter;
+        _channels = new ChannelPlan(dataChannels);
+        _blockSize = blockSize;
+        _quotas = quotas;
+        _log = log;
+    }
+
+    public PeerView View { get; private set; } = new(null, null, null, 0, 0, false);
+
+    /// <summary>Annonce notre présence et notre apparence courante.</summary>
+    public async Task HelloAsync(CancellationToken ct)
+    {
+        var manifest = await _local.CurrentAsync(ct).ConfigureAwait(false);
+        var fingerprint = _local.Fingerprint;
+
+        var payload = new byte[PlayerFingerprint.SizeInBytes + BlobHash.SizeInBytes];
+
+        (fingerprint ?? default).ToBytes().CopyTo(payload.AsSpan());
+
+        if (manifest is not null)
+            ManifestCodec.HashOf(manifest).TryWriteTo(payload.AsSpan(PlayerFingerprint.SizeInBytes));
+
+        await _session.SendAsync(ChannelPlan.ControlChannel, MessageKind.Hello, payload, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Traite une trame reçue du pair.</summary>
+    public async Task HandleAsync(PeerMessage message, CancellationToken ct)
+    {
+        switch (message.Kind)
+        {
+            case MessageKind.Hello:
+            case MessageKind.Presence:
+                await OnHelloAsync(message.Payload, ct).ConfigureAwait(false);
+                break;
+
+            case MessageKind.ManifestRequest:
+                await OnManifestRequestAsync(ct).ConfigureAwait(false);
+                break;
+
+            case MessageKind.ManifestData:
+                await OnManifestDataAsync(message.Payload, ct).ConfigureAwait(false);
+                break;
+
+            case MessageKind.BlobWant:
+                await OnBlobWantAsync(message.Payload, ct).ConfigureAwait(false);
+                break;
+
+            case MessageKind.BlobStart:
+            case MessageKind.BlobChunk:
+            case MessageKind.BlobEnd:
+                await OnBlobFrameAsync(message, ct).ConfigureAwait(false);
+                break;
+
+            default:
+                _log.Debug($"Trame de type inconnu ignorée ({message.Kind:X2}).");
+                break;
+        }
+    }
+
+    private async Task OnHelloAsync(byte[] payload, CancellationToken ct)
+    {
+        if (payload.Length < PlayerFingerprint.SizeInBytes + BlobHash.SizeInBytes)
+            return;
+
+        var fingerprint = PlayerFingerprint.FromBytes(payload.AsSpan(0, PlayerFingerprint.SizeInBytes));
+        var announced = BlobHash.FromBytes(payload.AsSpan(PlayerFingerprint.SizeInBytes, BlobHash.SizeInBytes));
+
+        View = View with { Fingerprint = fingerprint, AnnouncedManifest = announced };
+
+        // Rien ne change : inutile de redemander un manifeste identique, et
+        // c'est tout l'intérêt de l'adressage par contenu.
+        if (View.Manifest is not null && ManifestCodec.HashOf(View.Manifest) == announced)
+            return;
+
+        await _session.SendAsync(ChannelPlan.ControlChannel, MessageKind.ManifestRequest, ReadOnlyMemory<byte>.Empty, ct)
+                      .ConfigureAwait(false);
+    }
+
+    private async Task OnManifestRequestAsync(CancellationToken ct)
+    {
+        var manifest = await _local.CurrentAsync(ct).ConfigureAwait(false);
+
+        if (manifest is null)
+            return;
+
+        await _session.SendAsync(
+            ChannelPlan.ControlChannel, MessageKind.ManifestData, ManifestCodec.Compress(manifest), ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task OnManifestDataAsync(byte[] payload, CancellationToken ct)
+    {
+        if (ManifestCodec.TryDecompress(payload, _quotas, out var manifest, out var why) is false)
+        {
+            _log.Warning($"Manifeste illisible : {why}");
+            return;
+        }
+
+        if (ManifestValidator.TryAccept(manifest!, _quotas, out var refus) is false)
+        {
+            _log.Warning($"Manifeste refusé : {refus}");
+            return;
+        }
+
+        var plan = BlobRequestPlanner.Plan(manifest!, _store);
+        _plan = plan;
+        _received = 0;
+
+        View = View with
+        {
+            Manifest = manifest,
+            MissingBytes = plan.MissingBytes,
+            ReceivedBytes = 0,
+            Ready = plan.Missing.Count == 0,
+        };
+
+        _log.Info($"Manifeste reçu : {plan.Missing.Count} blobs manquants, "
+                + $"{plan.MissingBytes / 1024 / 1024} Mo, {plan.CachedBytes / 1024 / 1024} Mo déjà en cache.");
+
+        if (plan.Missing.Count == 0)
+            return;
+
+        await using var receiver = _receiver;
+        _receiver = new BlobReceiver(_store, _quotas, plan.Missing.Select(m => m.Hash).ToHashSet());
+
+        await RequestMissingAsync(plan, ct).ConfigureAwait(false);
+    }
+
+    private async Task RequestMissingAsync(TransferPlan plan, CancellationToken ct)
+    {
+        // Par lots : un manifeste lourd compte des centaines d'entrées, et une
+        // trame unique dépasserait la taille utile d'un message.
+        foreach (var batch in plan.Missing.Chunk(256))
+        {
+            var payload = new byte[2 + (batch.Length * BlobHash.SizeInBytes)];
+            BinaryPrimitives.WriteUInt16BigEndian(payload, (ushort)batch.Length);
+
+            for (var i = 0; i < batch.Length; i++)
+                batch[i].Hash.TryWriteTo(payload.AsSpan(2 + (i * BlobHash.SizeInBytes)));
+
+            await _session.SendAsync(ChannelPlan.ControlChannel, MessageKind.BlobWant, payload, ct)
+                          .ConfigureAwait(false);
+        }
+    }
+
+    private async Task OnBlobWantAsync(byte[] payload, CancellationToken ct)
+    {
+        if (payload.Length < 2)
+            return;
+
+        var count = BinaryPrimitives.ReadUInt16BigEndian(payload);
+
+        if (payload.Length < 2 + (count * BlobHash.SizeInBytes))
+            return;
+
+        var sender = new BlobSender(_store, _blockSize);
+
+        for (var i = 0; i < count; i++)
+        {
+            var hash = BlobHash.FromBytes(payload.AsSpan(2 + (i * BlobHash.SizeInBytes), BlobHash.SizeInBytes));
+
+            if (_store.TryGetSize(hash, out var size) is false)
+            {
+                _log.Warning($"Blob demandé mais absent de notre cache : {hash}");
+                continue;
+            }
+
+            // Un blob entier sur un seul canal : le transport ne garantit
+            // l'ordre qu'à l'intérieur d'un canal, donc une clôture envoyée
+            // ailleurs que ses blocs pourrait les précéder.
+            var channel = _channels.Next((int)size);
+
+            try
+            {
+                await foreach (var frame in sender.FramesFor(hash, ct).ConfigureAwait(false))
+                {
+                    while (_limiter.TryConsume(frame.Payload.Length) is false)
+                    {
+                        _limiter.Observe(_session.State is PeerSessionState.Disconnected ? 0 : 0, 0);
+                        await Task.Delay(5, ct).ConfigureAwait(false);
+                    }
+
+                    await _session.SendAsync(channel, frame.Kind, frame.Payload, ct).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _channels.Completed(channel, (int)size);
+            }
+        }
+    }
+
+    private async Task OnBlobFrameAsync(PeerMessage message, CancellationToken ct)
+    {
+        if (_receiver is null)
+            return;
+
+        var outcome = await _receiver.HandleAsync(message.Channel, message.Kind, message.Payload, ct)
+                                     .ConfigureAwait(false);
+
+        if (outcome.Accepted is false)
+        {
+            _log.Warning($"Réception refusée : {outcome.Rejection}");
+            return;
+        }
+
+        if (message.Kind == MessageKind.BlobChunk)
+        {
+            _received += message.Payload.Length - 4;
+            View = View with { ReceivedBytes = _received };
+        }
+
+        if (outcome.BlobCompleted is false && outcome.AlreadyPresent is false)
+            return;
+
+        // Tout n'est prêt que lorsque chaque blob du manifeste est présent et
+        // vérifié : on ne pose jamais une apparence partielle.
+        if (_plan is { } plan && plan.Missing.All(m => _store.TryGetSize(m.Hash, out _)))
+            View = View with { Ready = true };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_receiver is not null)
+            await _receiver.DisposeAsync().ConfigureAwait(false);
+    }
+}
