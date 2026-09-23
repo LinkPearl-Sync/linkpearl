@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using Linkpearl.Core.Cache;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Ui.Components;
@@ -40,7 +41,7 @@ public sealed class DiscoveryState
 /// </remarks>
 internal sealed class SettingsPage(
     Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover, BackupCard backup,
-    Action<bool> setUploadLimited)
+    Action<bool> setUploadLimited, CacheChooser cacheChooser, CacheKeeper cacheKeeper, Action showOnboarding)
 {
     private string _newAddress = "";
 
@@ -51,10 +52,12 @@ internal sealed class SettingsPage(
 
         DrawDiscoverable();
         DrawBadges();
+        DrawCache();
         DrawUpload();
         backup.Draw();
         DrawServices();
         DrawDiscovery();
+        DrawOnboarding();
     }
 
     private void DrawDiscoverable()
@@ -115,18 +118,59 @@ internal sealed class SettingsPage(
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
         Text.Wrapped("Un glyphe coloré à droite du nom des joueurs qui utilisent Linkpearl :");
 
-        Legend(NameplateMark.Online, "pairé et connecté");
-        Legend(NameplateMark.Available, "utilise Linkpearl, pas encore pairé");
-        Legend(NameplateMark.Requesting, "vous a envoyé une demande de pairage");
-        Legend(NameplateMark.Offline, "pairé, hors ligne ou en pause");
-        Legend(NameplateMark.Trouble, "pairé, mais quelque chose a échoué : voir le carnet");
+        NameplateLegend.Draw();
     }
 
-    private static void Legend(NameplateMark mark, string meaning)
+    private void DrawCache()
     {
-        Feedback.StatusDot(NameplateGlyphs.ColorOf(mark));
-        ImGui.SameLine();
-        Text.Small(meaning);
+        using var card = Card.Begin("settings_cache");
+
+        Text.WithIcon(Icons.Cache, "Cache des apparences", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        Text.Wrapped(
+            "Les apparences reçues sont gardées sur le disque pour ne pas les retélécharger. "
+          + "Au-delà du quota, les plus anciennes partent, jamais celles à l'écran.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        cacheChooser.Draw();
+
+        if (cacheKeeper.PreviousRoot is not { } previous)
+            return;
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        var size = cacheKeeper.PreviousBytes is { } bytes ? CacheChooser.Format(bytes) : "une taille inconnue";
+        Text.Small($"L'ancien cache occupe {size} dans {previous}.", Theme.TextMuted);
+
+        if (Btn.Draw("Supprimer l'ancien cache", BtnTone.Danger, BtnSize.Small, Icons.Remove, id: "cache_delete_previous",
+                     tooltip: "N'efface que les fichiers de Linkpearl. Tout autre fichier de ce dossier reste."))
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    cacheKeeper.DeletePrevious();
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.Warning(e, "Suppression de l'ancien cache en échec.");
+                }
+            });
+        }
+    }
+
+    private void DrawOnboarding()
+    {
+        using var card = Card.Begin("settings_onboarding");
+
+        Text.WithIcon(Icons.Info, "Présentation", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        Text.Wrapped("Le fonctionnement de Linkpearl en six écrans, comme au premier lancement.");
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        if (Btn.Draw("Revoir la présentation", BtnTone.Secondary, BtnSize.Small, Icons.Info, id: "settings_onboarding"))
+            showOnboarding();
     }
 
     private void DrawUpload()

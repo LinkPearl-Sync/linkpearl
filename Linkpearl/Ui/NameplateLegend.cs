@@ -1,0 +1,25 @@
+using Dalamud.Bindings.ImGui;
+using Linkpearl.Core.Sync;
+using Linkpearl.Ui.Components;
+
+namespace Linkpearl.Ui;
+
+/// <summary>Ce que veut dire chaque couleur de glyphe, dit au même endroit partout.</summary>
+internal static class NameplateLegend
+{
+    public static void Draw()
+    {
+        Line(NameplateMark.Online, "pairé et connecté");
+        Line(NameplateMark.Available, "utilise Linkpearl, pas encore pairé");
+        Line(NameplateMark.Requesting, "vous a envoyé une demande de pairage");
+        Line(NameplateMark.Offline, "pairé, hors ligne ou en pause");
+        Line(NameplateMark.Trouble, "pairé, mais quelque chose a échoué : voir le carnet");
+    }
+
+    private static void Line(NameplateMark mark, string meaning)
+    {
+        Feedback.StatusDot(NameplateGlyphs.ColorOf(mark));
+        ImGui.SameLine();
+        Text.Small(meaning);
+    }
+}

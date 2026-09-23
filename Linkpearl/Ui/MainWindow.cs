@@ -1,10 +1,12 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using Linkpearl.Core.Cache;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
+using Linkpearl.Ui.Components;
 using Linkpearl.Ui.Pages;
 using Linkpearl.Ui.Shell;
 using System.Numerics;
@@ -30,6 +32,8 @@ public sealed class MainWindow : ThemedWindow
     private readonly RequestsPage _requests;
     private readonly BackupCard _backup;
     private readonly AppShell _shell;
+    private readonly CacheKeeper _cacheKeeper;
+    private readonly CacheChooser _cacheChooser;
 
     public MainWindow(
         PairingService pairing, PresenceService presence, PluginState state, Configuration configuration,
@@ -40,7 +44,8 @@ public sealed class MainWindow : ThemedWindow
         Action<bool> setUploadLimited,
         Func<TransientCategories> globalReceive, Action<TransientCategories> setGlobalReceive,
         Action<PeerId, TransientCategories> setPairReceive,
-        BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
+        BackupState backupState, Action<string, string?> backup, Action<string, string?> restore,
+        CacheKeeper cacheKeeper, Action showOnboarding)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -49,10 +54,14 @@ public sealed class MainWindow : ThemedWindow
         _state    = state;
         _statuses = statuses;
 
+        _cacheKeeper  = cacheKeeper;
+        _cacheChooser = new CacheChooser(cacheKeeper);
+
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
         var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair, setPairReceive);
         _backup = new BackupCard(backupState, backup, restore);
-        var settings = new SettingsPage(configuration, discovery, discover, _backup, setUploadLimited);
+        var settings = new SettingsPage(
+            configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding);
 
         _requests = new RequestsPage(state, presence, accept, decline);
 
@@ -100,6 +109,13 @@ public sealed class MainWindow : ThemedWindow
         _shell.Navigate("requests");
     }
 
+    /// <summary>Ouvre la fenêtre sur la page des joueurs autour.</summary>
+    public void OpenNearby()
+    {
+        IsOpen = true;
+        _shell.Navigate("nearby");
+    }
+
     /// <summary>Le shell peint bord à bord, sans marge de fenêtre.</summary>
     protected override bool Chromeless => true;
 
@@ -115,11 +131,36 @@ public sealed class MainWindow : ThemedWindow
         if (_requests.Count > 0 && _shell.ActiveId == "nearby")
             _shell.Navigate("requests");
 
-        _shell.Draw(out var closeRequested, Status());
+        // Cache introuvable : plus rien d'autre n'a de sens tant qu'un dossier
+        // n'est pas rechoisi, et la navigation disparaît.
+        var fullScreen = _cacheKeeper.State is CacheGateState.Missing ? DrawCacheMissing : (Action?)null;
+
+        _shell.Draw(out var closeRequested, Status(), fullScreen);
+        _cacheChooser.DrawDialogs();
         _backup.DrawDialogs();
 
         if (closeRequested)
             IsOpen = false;
+    }
+
+    private void DrawCacheMissing()
+    {
+        Text.Title("Dossier du cache introuvable");
+        ImGui.Dummy(Theme.S(0f, Theme.GapL));
+
+        Feedback.Alert(Theme.Danger, Icons.Warning,
+            $"Le dossier {_cacheKeeper.LostRoot ?? _cacheKeeper.ConfiguredRoot} n'existe plus. "
+          + "La synchronisation est arrêtée, et les pairs affichés sont revenus à leur apparence par défaut.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapL));
+        Text.Wrapped(
+            "Linkpearl ne recrée jamais un dossier disparu : il a peut-être été vidé exprès, ou était sur "
+          + "un disque débranché. Choisissez où mettre le cache, et tout repart.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        using var card = Card.Begin("cache_missing");
+        _cacheChooser.Draw();
     }
 
     private ShellStatus Status()

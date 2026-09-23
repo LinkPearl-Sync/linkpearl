@@ -268,7 +268,9 @@ public sealed class Plugin : IDalamudPlugin
             SetPairReceive,
             _backupState,
             (path, password) => RunSafely(() => BackupAsync(path, password)),
-            (path, password) => RunSafely(() => RestoreAsync(path, password)));
+            (path, password) => RunSafely(() => RestoreAsync(path, password)),
+            _cacheKeeper,
+            () => { });
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs

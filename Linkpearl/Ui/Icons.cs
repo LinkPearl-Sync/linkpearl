@@ -66,6 +66,9 @@ internal static class Icons
     public const FontAwesomeIcon Warning = FontAwesomeIcon.ExclamationTriangle;
     public const FontAwesomeIcon Info    = FontAwesomeIcon.InfoCircle;
     public const FontAwesomeIcon Empty   = FontAwesomeIcon.Inbox;
+    public const FontAwesomeIcon Folder  = FontAwesomeIcon.FolderOpen;
+    public const FontAwesomeIcon Lock    = FontAwesomeIcon.Lock;
+    public const FontAwesomeIcon Check   = FontAwesomeIcon.Check;
 
     /// <summary>
     /// Toutes les icônes employées, pour que l'atlas ne charge que celles-là.
@@ -83,6 +86,7 @@ internal static class Icons
         Animations, Vfx, Sounds, Effects,
         Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore,
         Warning, Info, Empty,
+        Folder, Lock, Check,
     ];
 }
 
