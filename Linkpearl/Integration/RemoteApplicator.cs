@@ -80,7 +80,7 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
         return _blockedBecause is null;
     }
 
-    public async Task ApplyAsync(
+    public async Task<bool> ApplyAsync(
         PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
     {
         // Hors du thread de jeu : la construction du plan revalide le manifeste
@@ -125,14 +125,14 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
 
         // Les extras en dernier, sur un personnage entièrement chargé : Moodles
         // ignore en silence celui qu'il n'a pas encore vu s'afficher.
-        await ApplyExtrasAsync(peer, target, manifest.ExtrasOrNone, ExtrasChange.All, ct).ConfigureAwait(false);
+        return await ApplyExtrasAsync(peer, target, manifest.ExtrasOrNone, ExtrasChange.All, ct).ConfigureAwait(false);
     }
 
-    public async Task ApplyExtrasAsync(
+    public async Task<bool> ApplyExtrasAsync(
         PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
     {
         if (change.Any is false)
-            return;
+            return true;
 
         // Dix secondes au plus, comme pour notre propre personnage.
         for (var attempt = 0; attempt < 40; attempt++)
@@ -151,12 +151,15 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
             }).ConfigureAwait(false);
 
             if (done)
-                return;
+                return true;
 
             await Task.Delay(250, ct).ConfigureAwait(false);
         }
 
+        // Dit au moteur, qui les retentera seuls : les croire posés laisserait
+        // le pair sans ses proportions ni sa hauteur jusqu'à sa réapparition.
         _log.Debug("Extras non posés : le personnage n'a pas fini de se charger en dix secondes.");
+        return false;
     }
 
     public async Task RemoveAsync(PeerId peer, CancellationToken ct)

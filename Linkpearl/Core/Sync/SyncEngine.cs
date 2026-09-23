@@ -555,11 +555,10 @@ public sealed class SyncEngine : IAsyncDisposable
     {
         try
         {
-            await _applicator.ApplyAsync(id, target, manifest, _life.Token).ConfigureAwait(false);
+            var extrasPosed = await _applicator.ApplyAsync(id, target, manifest, _life.Token).ConfigureAwait(false);
 
             runtime.AppliedOn = target;
-            runtime.AppliedManifest = hash;
-            runtime.AppliedValue = manifest;
+            RecordApplied(runtime, manifest, hash, extrasPosed);
             runtime.Session?.MarkApplied();
             _book.Seen(id);
 
@@ -575,15 +574,31 @@ public sealed class SyncEngine : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Note ce qui est réellement à l'écran.
+    /// </summary>
+    /// <remarks>
+    /// Des extras qui n'ont pas pu être posés (personnage trop long à charger)
+    /// sont notés absents : au tic suivant, le manifeste diffère de ce qui est
+    /// posé par ses seuls extras, et ils sont retentés sans redessin. Les croire
+    /// posés laissait le pair sans ses proportions jusqu'à sa réapparition.
+    /// </remarks>
+    private static void RecordApplied(Runtime runtime, CharacterManifest manifest, BlobHash hash, bool extrasPosed)
+    {
+        var onScreen = extrasPosed ? manifest : manifest with { Extras = null };
+
+        runtime.AppliedValue = onScreen;
+        runtime.AppliedManifest = extrasPosed ? hash : ManifestCodec.HashOf(onScreen);
+    }
+
     private async Task ApplyExtrasAsync(
         PeerId id, Runtime runtime, GameObjectRef target, CharacterManifest manifest, ExtrasChange change, BlobHash hash)
     {
         try
         {
-            await _applicator.ApplyExtrasAsync(id, target, manifest.ExtrasOrNone, change, _life.Token).ConfigureAwait(false);
+            var extrasPosed = await _applicator.ApplyExtrasAsync(id, target, manifest.ExtrasOrNone, change, _life.Token).ConfigureAwait(false);
 
-            runtime.AppliedManifest = hash;
-            runtime.AppliedValue = manifest;
+            RecordApplied(runtime, manifest, hash, extrasPosed);
 
             _log.Info($"{runtime.Pair.DisplayName} : extras reposés sans redessin.");
         }

@@ -57,7 +57,7 @@ internal sealed class NarratingApplicator(IBlobStore store) : IRemoteApplicator
 
     public string? Failure { get; private set; }
 
-    public Task ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
+    public Task<bool> ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
     {
         Applications++;
 
@@ -67,7 +67,7 @@ internal sealed class NarratingApplicator(IBlobStore store) : IRemoteApplicator
         {
             Failure = why;
             Console.WriteLine($"  Plan refusé : {why}");
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         Console.WriteLine($"  Apparence posée sur l'objet {target.ObjectIndex} : "
@@ -75,13 +75,13 @@ internal sealed class NarratingApplicator(IBlobStore store) : IRemoteApplicator
                         + $"{plan.PathMap.Values.Distinct().Count()} fichiers distincts, "
                         + $"état Glamourer {(plan.GlamourerState is null ? "absent" : "présent")}.");
 
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+    public Task<bool> ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
     {
         Console.WriteLine($"  Extras posés sans redessin : {change}.");
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
     public Task RemoveAsync(PeerId peer, CancellationToken ct)

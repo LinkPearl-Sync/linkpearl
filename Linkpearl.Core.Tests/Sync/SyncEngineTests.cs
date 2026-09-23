@@ -158,18 +158,23 @@ internal sealed class RecordingApplicator : IRemoteApplicator
 
     public bool Ready { get; set; } = true;
 
-    public Task ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
+    /// <summary>Faux pour simuler un personnage qui ne finit pas de se charger à temps.</summary>
+    public bool ExtrasSucceed { get; set; } = true;
+
+    public Task<bool> ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
     {
         Applied.Add((peer, target, manifest));
-        return Task.CompletedTask;
+        return Task.FromResult(ExtrasSucceed);
     }
 
     public List<(PeerId Peer, CharacterExtras Extras, ExtrasChange Change)> ExtrasApplied { get; } = [];
 
-    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+    public Task<bool> ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
     {
-        ExtrasApplied.Add((peer, extras, change));
-        return Task.CompletedTask;
+        if (ExtrasSucceed)
+            ExtrasApplied.Add((peer, extras, change));
+
+        return Task.FromResult(ExtrasSucceed);
     }
 
     public Task RemoveAsync(PeerId peer, CancellationToken ct)
@@ -483,6 +488,33 @@ public sealed class SyncEngineTests : IDisposable
         Assert.Single(world.BobApplicator.Applied);
         Assert.True(world.BobApplicator.ExtrasApplied[0].Change.Honorific);
         Assert.False(world.BobApplicator.ExtrasApplied[0].Change.CustomizePlus);
+    }
+
+    [Fact]
+    public async Task Des_extras_non_poses_a_temps_sont_retentes_seuls()
+    {
+        // Relevé en relecture : un personnage qui met plus de dix secondes à se
+        // charger n'avait pas ses extras, et le moteur les croyait posés.
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        world.AliceAppearance.Manifest = world.AliceAppearance.Manifest! with
+        {
+            Extras = CharacterExtras.None with { Heels = "{\"DefaultOffset\":0.1}" },
+        };
+        world.BobApplicator.ExtrasSucceed = false;
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        world.BobApplicator.ExtrasSucceed = true;
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.ExtrasApplied.Count > 0, [], sees),
+            "les extras n'ont jamais été retentés : " + world.Describe());
+
+        Assert.Single(world.BobApplicator.Applied);
+        Assert.True(world.BobApplicator.ExtrasApplied[0].Change.Heels);
     }
 
     [Fact]
