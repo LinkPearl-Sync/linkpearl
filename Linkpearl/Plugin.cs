@@ -530,10 +530,13 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ReleaseCharacter()
     {
+        // Le moteur d'abord : il partage le même PairBook, et la boucle de
+        // synchronisation doit voir _engine à null avant que le carnet ne
+        // soit vidé par Unbind.
+        StopEngine();
         _pairing.Unbind();
         _presence.ForgetRequests();
         _transients.Attach(null);
-        StopEngine();
     }
 
     /// <summary>
