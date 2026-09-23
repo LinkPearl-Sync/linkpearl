@@ -440,6 +440,11 @@ public sealed class Plugin : IDalamudPlugin
                     {
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
+                        // L'autre a dit oui à notre demande : le pair entre au
+                        // carnet sans rien redemander à celui qui a invité.
+                        while (_presence.TryTakeAcceptance(out var accepted) && accepted is not null)
+                            Report($"{accepted.CharacterName} a accepté : {_pairing.AddFromRequest(accepted)}");
+
                         _state.Nearby = await _objectSource.SnapshotAsync(ct).ConfigureAwait(false);
 
                         // Mesuré : 345 Mo par mois et par joueur à trois

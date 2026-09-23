@@ -50,12 +50,6 @@ internal sealed class PairsPage(PairingService pairing, Func<IReadOnlyList<PeerS
 
             DrawState(pair, status);
 
-            if (pair.KeyVerified is false)
-            {
-                ImGui.SameLine(0f, Theme.S(Theme.GapS));
-                Chip.Draw("non vérifié de vive voix", Theme.TextFaint, Icons.Unverified);
-            }
-
             if (status is { FingerprintDisputed: true })
             {
                 ImGui.Dummy(Theme.S(0f, Theme.GapS));

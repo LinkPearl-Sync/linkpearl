@@ -35,6 +35,9 @@ public sealed class PresenceService : IDisposable
     private readonly IClock _clock;
 
     private readonly ConcurrentQueue<IncomingRequest> _incoming = new();
+
+    /// <summary>Les acceptations reçues en réponse à nos propres demandes.</summary>
+    private readonly ConcurrentQueue<IncomingRequest> _accepted = new();
     private readonly ConcurrentDictionary<PlayerFingerprint, DateTimeOffset> _detected = new();
 
     private readonly Dictionary<RendezvousAddress, Session> _sessions = [];
@@ -184,6 +187,14 @@ public sealed class PresenceService : IDisposable
     }
 
     public IReadOnlyList<IncomingRequest> PeekRequests() => _incoming.ToArray();
+
+    /// <summary>Une acceptation qui conclut une demande que nous avons envoyée.</summary>
+    public bool TryTakeAcceptance(out IncomingRequest? request)
+    {
+        var taken = _accepted.TryDequeue(out var value);
+        request = value;
+        return taken;
+    }
 
     /// <summary>
     /// Ouvre nos boîtes, ou les rouvre si le personnage a changé.
@@ -532,8 +543,26 @@ public sealed class PresenceService : IDisposable
             if (_seen.Add(key) is false)
                 return;
 
-        _incoming.Enqueue(new IncomingRequest(
-            id, message.PublicKey, message.PairingNonce, message.CharacterName, message.WorldId, _clock.UtcNow));
+        var request = new IncomingRequest(
+            id, message.PublicKey, message.PairingNonce, message.CharacterName, message.WorldId, _clock.UtcNow);
+
+        // Une acceptation qui porte le nonce de notre propre demande n'est pas
+        // une demande : c'est l'autre qui dit oui à ce que nous avons proposé.
+        // La faire accepter une seconde fois à celui qui a invité est absurde,
+        // et c'est ce qui se passait.
+        var sender = PlayerFingerprint.Of(message.CharacterName.Trim().ToLowerInvariant(), message.WorldId);
+
+        if (message.IsAccept
+            && PendingOutgoing.TryGetValue(sender, out var ourNonce)
+            && ourNonce.AsSpan().SequenceEqual(message.PairingNonce))
+        {
+            PendingOutgoing.TryRemove(sender, out _);
+            _accepted.Enqueue(request);
+            _log.Information($"{message.CharacterName} a accepté notre demande.");
+            return;
+        }
+
+        _incoming.Enqueue(request);
 
         _log.Information($"Demande de pairage reçue de {message.CharacterName}.");
     }

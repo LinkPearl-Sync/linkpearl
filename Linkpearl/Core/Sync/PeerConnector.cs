@@ -34,8 +34,23 @@ public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, stri
 /// domestique, seulement les adresses publiques qu'il voit de toute façon.
 /// </remarks>
 public sealed class PeerConnector(
-    PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log) : IPeerDialer
+    PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log,
+    TimeSpan? announceBudget = null) : IPeerDialer
 {
+    /// <summary>
+    /// Combien de temps une annonce reste tenue au rendez-vous.
+    /// </summary>
+    /// <remarks>
+    /// Le service n'apparie que deux annonces présentes en même temps. À cinq
+    /// secondes d'attente pour trente entre deux essais, deux pairs pourtant en
+    /// ligne se manquaient presque toujours, chacun annonçant pendant que
+    /// l'autre patientait. Tenue vingt-cinq secondes sur trente, l'annonce de
+    /// l'un couvre forcément un essai de l'autre.
+    /// </remarks>
+    public static readonly TimeSpan DefaultAnnounceBudget = TimeSpan.FromSeconds(25);
+
+    private readonly TimeSpan _announceBudget = announceBudget ?? DefaultAnnounceBudget;
+
     private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v1"u8;
     private static ReadOnlySpan<byte> TokenInfo => "linkpearl:token:v1"u8;
 
@@ -130,12 +145,12 @@ public sealed class PeerConnector(
         var announcement = new Announcement(
             new RendezvousTicket(clock).Announce(pair.PairSecret), sealedCandidates);
 
-        // Le pair n'est peut-être pas en ligne : on n'attend pas longtemps, et
-        // son absence n'est pas une erreur.
+        // Le pair n'est peut-être pas en ligne, et son absence n'est pas une
+        // erreur. Mais on attend assez pour qu'il nous trouve s'il essaie.
         var dialer = new LiveDialer();
 
         var match = await AnnounceEverywhereAsync(
-            dialer, pair.Rendezvous, announcement, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+            dialer, pair.Rendezvous, announcement, _announceBudget, ct).ConfigureAwait(false);
 
         if (match is null)
         {
