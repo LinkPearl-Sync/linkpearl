@@ -191,6 +191,9 @@ internal sealed class SettingsPage(
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
+        // Aligné comme dans DrawService : sans ça, le texte flotte au-dessus
+        // de l'icône ⓘ qui suit, calée sur la hauteur d'un cadre.
+        ImGui.AlignTextToFramePadding();
         Text.Body("Services de rendez-vous");
         Feedback.Hint(
             "Ils aident deux joueurs à se trouver et relaient quand la connexion directe échoue. "
@@ -207,7 +210,7 @@ internal sealed class SettingsPage(
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-        ImGui.SetNextItemWidth(Card.FullWidth - Theme.S(110f));
+        ImGui.SetNextItemWidth(Card.FullWidth - Theme.S(110f) - Feedback.HintWidth);
         ImGui.InputTextWithHint("##nouveau", "rdv.exemple.ch ou rdv.exemple.ch:443", ref _newAddress, 260);
         ImGui.SameLine();
 

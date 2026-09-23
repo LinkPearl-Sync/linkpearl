@@ -52,7 +52,7 @@ internal sealed class CacheChooser(CacheKeeper keeper)
         var browse = Btn.Measure("Parcourir…", BtnSize.Small, Icons.Folder);
         var display = shown;
 
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - browse - Theme.S(Theme.GapS));
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - browse - Theme.S(Theme.GapS) - Feedback.HintWidth);
         ImGui.InputText("##cache_folder", ref display, 1024, ImGuiInputTextFlags.ReadOnly);
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 

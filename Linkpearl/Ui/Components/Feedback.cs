@@ -8,14 +8,17 @@ namespace Linkpearl.Ui.Components;
 /// <summary>Infobulles, pastilles d'état, écrans vides et bandeaux.</summary>
 internal static class Feedback
 {
-    public static void Tooltip(string text)
+    public static void Tooltip(string text) => Tooltip(() => Text.Body(text));
+
+    /// <summary>Comme <see cref="Tooltip(string)"/>, mais le contenu est dessiné librement.</summary>
+    public static void Tooltip(Action content)
     {
         using var style = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Theme.S(Theme.GapL, Theme.GapM));
         using var color = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.BgSurface);
 
         ImGui.BeginTooltip();
         ImGui.PushTextWrapPos(Theme.S(320f));
-        Text.Body(text);
+        content();
         ImGui.PopTextWrapPos();
         ImGui.EndTooltip();
     }
@@ -60,18 +63,17 @@ internal static class Feedback
         ImGui.AlignTextToFramePadding();
         Text.Icon(Icons.Info, Theme.TextFaint);
 
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) is false)
-            return;
-
-        using var style = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Theme.S(Theme.GapL, Theme.GapM));
-        using var color = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.BgSurface);
-
-        ImGui.BeginTooltip();
-        ImGui.PushTextWrapPos(Theme.S(320f));
-        content();
-        ImGui.PopTextWrapPos();
-        ImGui.EndTooltip();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            Tooltip(content);
     }
+
+    /// <summary>La place que prend un <see cref="Hint(string)"/> sur sa ligne.</summary>
+    /// <remarks>
+    /// À réserver dans tout <c>SetNextItemWidth</c> qui précède un <c>Hint</c> sur la même
+    /// ligne : sans ça, le widget prend toute la largeur restante et l'icône ⓘ se retrouve
+    /// rognée hors de la carte.
+    /// </remarks>
+    public static float HintWidth => ImGui.CalcTextSize(Icons.Info.S()).X + Theme.S(Theme.GapS);
 
     /// <summary>Pastille colorée, avec un libellé facultatif.</summary>
     public static void StatusDot(Vector4 color, string? label = null)
