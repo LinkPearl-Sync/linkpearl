@@ -278,10 +278,18 @@ internal sealed class SettingsPage(
             ? $"{Glyphs.Safe(entry.Label)}  ({Glyphs.Safe(entry.Address.ToString())})"
             : Glyphs.Safe(entry.Address.ToString());
 
+        // Le texte se cale sur la hauteur des cadres, sans quoi il flotte au
+        // dessus de la ligne que forment la case et les boutons.
+        ImGui.AlignTextToFramePadding();
         Text.Body(shown, enabled ? Theme.Text : Theme.TextFaint);
 
+        // Deux boutons carrés et l'espace qui les sépare : une largeur fixe
+        // ne suivait ni l'échelle ni l'espacement, et poussait la corbeille
+        // contre le bord.
+        var buttons = ImGui.GetFrameHeight() * 2f + ImGui.GetStyle().ItemSpacing.X;
+
         ImGui.SameLine();
-        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - Theme.S(72f));
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - buttons);
 
         if (Btn.Icon(Icons.Refresh, "discover", tooltip: "Demander à ce service ceux qu'il connaît"))
             discover(entry.Address);

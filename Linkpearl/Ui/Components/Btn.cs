@@ -93,7 +93,22 @@ internal static class Btn
         bool clicked;
 
         using (ImRaii.Disabled(disabled))
-            clicked = ImGui.Button($"{icon.S()}##{id}", new Vector2(side, side));
+        {
+            // Le bouton sans libellé, et l'icône posée au centre à la main :
+            // ImGui centre l'avance du glyphe, pas le glyphe dessiné, et les
+            // icônes FontAwesome fusionnées dans Inter en sortent décalées.
+            clicked = ImGui.Button($"##{id}", new Vector2(side, side));
+
+            var glyph = icon.S();
+            var size  = ImGui.CalcTextSize(glyph);
+            var min   = ImGui.GetItemRectMin();
+            var max   = ImGui.GetItemRectMax();
+
+            ImGui.GetWindowDrawList().AddText(
+                new Vector2(MathF.Round((min.X + max.X - size.X) * 0.5f),
+                            MathF.Round((min.Y + max.Y - size.Y) * 0.5f)),
+                ImGui.GetColorU32(ImGuiCol.Text), glyph);
+        }
 
         if (tooltip != null)
             Feedback.TooltipOnHover(tooltip);
