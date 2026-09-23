@@ -1,3 +1,4 @@
+using System.Buffers;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
@@ -39,6 +40,13 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly CancellationTokenSource _life = new();
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
     private readonly FileHashCache _hashes = new();
+
+    /// <summary>Plus grand os animé de chaque <c>.pap</c> déjà examiné, null s'il ne se charge pas.</summary>
+    /// <remarks>
+    /// Touché seulement par la construction, qui est unique, et par le passage
+    /// qu'elle attend sur le thread du framework : pas de concurrence.
+    /// </remarks>
+    private readonly Dictionary<string, (FileStamp Stamp, int? MaxBone)> _papBones = new(StringComparer.OrdinalIgnoreCase);
 
     private volatile CharacterManifest? _current;
 
@@ -176,7 +184,9 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         var known = new Dictionary<string, (BlobHash Hash, long Size)>(StringComparer.OrdinalIgnoreCase);
         var hashed = 0;
 
-        foreach (var file in classified.Files)
+        var files = await KeepPlayableAsync(classified.Files, ct).ConfigureAwait(false);
+
+        foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -308,6 +318,89 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>Écarte les animations que notre squelette ne sait pas jouer.</summary>
+    /// <remarks>
+    /// Les fichiers sont lus ici, hors du thread du jeu ; seul le chargement
+    /// Havok, court, passe sur le thread du framework, et une seule fois par
+    /// fichier tant qu'il ne change pas.
+    /// </remarks>
+    private async Task<IReadOnlyList<LocalFile>> KeepPlayableAsync(IReadOnlyList<LocalFile> files, CancellationToken ct)
+    {
+        static bool IsPap(string gamePath) => gamePath.EndsWith(".pap", StringComparison.OrdinalIgnoreCase);
+
+        var animations = files.Where(f => f.GamePaths.Any(IsPap) && File.Exists(f.LocalPath)).ToList();
+
+        if (animations.Count == 0)
+            return files;
+
+        var pending = new List<(string LocalPath, FileStamp Stamp, byte[] Buffer, int Length)>();
+
+        try
+        {
+            foreach (var file in animations)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var info = new FileInfo(file.LocalPath);
+                var stamp = new FileStamp(info.Length, info.LastWriteTimeUtc);
+
+                if (_papBones.TryGetValue(file.LocalPath, out var known) && known.Stamp == stamp)
+                    continue;
+
+                var gamePath = file.GamePaths.First(IsPap);
+
+                try
+                {
+                    if (PapSkeletonCheck.TryReadHavok(file.LocalPath, gamePath, out var buffer, out var length))
+                        pending.Add((file.LocalPath, stamp, buffer, length));
+                    else
+                        _papBones[file.LocalPath] = (stamp, null);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Pas mis en cache : un fichier verrouillé un instant se
+                    // relira à la construction suivante.
+                    _log.Debug($"Animation illisible pour l'instant : {Path.GetFileName(file.LocalPath)} ({e.GetType().Name})");
+                }
+            }
+
+            var bones = await _framework.RunOnFrameworkThread(() =>
+            {
+                foreach (var (localPath, stamp, buffer, length) in pending)
+                    _papBones[localPath] = (stamp, PapSkeletonCheck.MaxAnimatedBone(buffer.AsSpan(0, length)));
+
+                return _objects[PlayerIndex] is { } local ? PapSkeletonCheck.BoneCount(local) : null;
+            }).ConfigureAwait(false);
+
+            // Sans squelette lisible, on ne juge pas : mieux vaut annoncer ce
+            // que notre propre jeu joue déjà que de tout retirer sur un doute.
+            if (bones is not { } count)
+                return files;
+
+            var refused = animations
+                .Where(f => _papBones.TryGetValue(f.LocalPath, out var seen) && (seen.MaxBone is null || seen.MaxBone >= count))
+                .ToHashSet();
+
+            if (refused.Count == 0)
+                return files;
+
+            var gamePaths = refused.SelectMany(f => f.GamePaths).ToList();
+            _transients.Settle(gamePaths);
+
+            // Des chemins de jeu et des noms de fichier seulement : un chemin
+            // local complet porte le nom de l'utilisateur.
+            _log.Warning($"{refused.Count} animation(s) non annoncée(s), hors de notre squelette ({count} os) ou illisible(s) : "
+                       + string.Join(", ", refused.Take(5).Select(f => $"{f.GamePaths[0]} ({Path.GetFileName(f.LocalPath)})")));
+
+            return files.Where(f => refused.Contains(f) is false).ToList();
+        }
+        finally
+        {
+            foreach (var (_, _, buffer, _) in pending)
+                ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     /// <summary>Ajoute aux ressources les animations retenues qui sont encore moddées.</summary>
