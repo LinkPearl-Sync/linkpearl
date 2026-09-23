@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
@@ -105,6 +106,14 @@ public sealed class SyncEngine : IAsyncDisposable
     private readonly Dictionary<PeerId, Runtime> _runtimes = [];
     private readonly CancellationTokenSource _life = new();
 
+    /// <summary>Les demandes de réapplication, servies au prochain tic.</summary>
+    /// <remarks>
+    /// Une file plutôt qu'un accès direct : l'interface et le menu du jeu
+    /// appellent depuis un autre fil que celui du moteur, et les structures du
+    /// moteur ne sont pas faites pour deux fils.
+    /// </remarks>
+    private readonly ConcurrentQueue<(PeerId? Id, PlayerFingerprint? Fingerprint)> _reapply = new();
+
     private CharacterManifest? _announcedManifest;
     private PlayerFingerprint? _announcedFingerprint;
     private bool _ticking;
@@ -162,6 +171,7 @@ public sealed class SyncEngine : IAsyncDisposable
         try
         {
             await ReconcileBookAsync(ct).ConfigureAwait(false);
+            await ServeReapplyAsync(ct).ConfigureAwait(false);
             await AdoptFinishedDialsAsync(ct).ConfigureAwait(false);
             await DropDeadSessionsAsync().ConfigureAwait(false);
             StartDueDials();
@@ -176,6 +186,44 @@ public sealed class SyncEngine : IAsyncDisposable
     }
 
     /// <summary>Aligne les runtimes sur le carnet : un pair actif, un runtime.</summary>
+    /// <summary>Redemande et repose l'apparence de ce pair.</summary>
+    public void Reapply(PeerId id) => _reapply.Enqueue((id, null));
+
+    /// <summary>Même chose, pour le personnage visible qui porte cette empreinte.</summary>
+    public void Reapply(PlayerFingerprint fingerprint) => _reapply.Enqueue((null, fingerprint));
+
+    private async Task ServeReapplyAsync(CancellationToken ct)
+    {
+        while (_reapply.TryDequeue(out var request))
+        {
+            var runtime = _runtimes.Values.FirstOrDefault(candidate =>
+                request.Id is { } id ? candidate.Pair.Id == id
+                                     : candidate.Exchange?.View.Fingerprint == request.Fingerprint
+                                       || candidate.Pair.PinnedFingerprint == request.Fingerprint);
+
+            if (runtime is null)
+                continue;
+
+            // Oublier ce qu'on a posé suffit à reposer au prochain passage. Et on
+            // redemande le manifeste, pour que ce soit bien le dernier.
+            runtime.AppliedManifest = null;
+            runtime.AppliedOn = null;
+
+            if (runtime.Exchange is { } exchange && runtime.Session is not null)
+            {
+                try
+                {
+                    await exchange.RefreshAsync(ct).ConfigureAwait(false);
+                    _log.Info($"{runtime.Pair.DisplayName} : réapplication demandée.");
+                }
+                catch (Exception e)
+                {
+                    _log.Warning($"{runtime.Pair.DisplayName} : redemande du manifeste en échec.", e);
+                }
+            }
+        }
+    }
+
     private async Task ReconcileBookAsync(CancellationToken ct)
     {
         var active = _book.Active.ToDictionary(pair => pair.Id);

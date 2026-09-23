@@ -141,6 +141,15 @@ public sealed class PeerExchange : IAsyncDisposable
                       .ConfigureAwait(false);
     }
 
+    /// <summary>Redemande le manifeste courant du pair, quoi qu'on en sache.</summary>
+    /// <remarks>
+    /// Pour « réappliquer » : le pair répond avec ce qu'il montre maintenant, et
+    /// la réception repart de zéro, blobs manquants compris. Ce que le cache a
+    /// déjà ne se retransfère pas.
+    /// </remarks>
+    public ValueTask RefreshAsync(CancellationToken ct)
+        => _session.SendAsync(ChannelPlan.ControlChannel, MessageKind.ManifestRequest, ReadOnlyMemory<byte>.Empty, ct);
+
     private async Task OnManifestRequestAsync(CancellationToken ct)
     {
         var manifest = await _local.CurrentAsync(ct).ConfigureAwait(false);

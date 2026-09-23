@@ -33,7 +33,8 @@ public sealed class MainWindow : ThemedWindow
         PairingService pairing, PresenceService presence, PluginState state, Configuration configuration,
         Func<IReadOnlyList<PeerStatus>> statuses, DiscoveryState discovery,
         Action<RendezvousAddress> discover,
-        Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline)
+        Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline,
+        Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -43,7 +44,7 @@ public sealed class MainWindow : ThemedWindow
         _statuses = statuses;
 
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
-        var pairs  = new PairsPage(pairing, statuses);
+        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair);
         var settings = new SettingsPage(configuration, discovery, discover);
 
         _requests = new RequestsPage(state, presence, accept, decline);

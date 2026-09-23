@@ -1,5 +1,7 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Command;
+using Dalamud.Game.Gui.ContextMenu;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -43,6 +45,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IObjectTable            Objects         { get; private set; } = null!;
     [PluginService] internal static IClientState            ClientState     { get; private set; } = null!;
     [PluginService] internal static IPlayerState            PlayerState     { get; private set; } = null!;
+    [PluginService] internal static IContextMenu            ContextMenu     { get; private set; } = null!;
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
@@ -158,6 +161,8 @@ public sealed class Plugin : IDalamudPlugin
         // Glamourer signale la fin d'une application d'état. Les deux sont levés
         // depuis le thread du jeu : on ne fait que signaler, la reconstruction
         // part de la boucle de synchronisation.
+        penumbra.SettingsChanged += _appearanceChanged.Signal;
+
         penumbra.Redrawn += index =>
         {
             if (index == 0)
@@ -196,7 +201,15 @@ public sealed class Plugin : IDalamudPlugin
             at => RunSafely(() => DiscoverAsync(at)),
             player => RunSafely(() => RequestPairAsync(player)),
             request => RunSafely(() => AcceptAsync(request)),
-            Decline);
+            Decline,
+            (id, paused) => Report(_pairing.SetPaused(id, paused)),
+            id => { _engine?.Reapply(id); Report("réapplication demandée."); },
+            id => Report(_pairing.Remove(id)));
+
+        // Clic droit sur un personnage appairé : réappliquer, comme le font
+        // les autres outils de synchronisation. C'est le geste que les joueurs
+        // connaissent déjà.
+        ContextMenu.OnMenuOpened += OnMenuOpened;
 
         _windows.AddWindow(_window);
         PluginInterface.UiBuilder.Draw += _windows.Draw;
@@ -228,6 +241,41 @@ public sealed class Plugin : IDalamudPlugin
 
             if (left > 0)
                 Report($"{left} collection(s) de pair d'une session précédente ont été retirées.");
+        });
+    }
+
+    /// <summary>Ajoute « réappliquer » au menu d'un personnage appairé.</summary>
+    /// <remarks>
+    /// Seulement pour un personnage du carnet : proposer l'entrée à tout le
+    /// monde inviterait à cliquer pour rien, et dirait à qui regarde par-dessus
+    /// l'épaule que le plugin est là.
+    /// </remarks>
+    private void OnMenuOpened(IMenuOpenedArgs args)
+    {
+        if (args.Target is not MenuTargetDefault { TargetObject: IPlayerCharacter player })
+            return;
+
+        var name = player.Name.TextValue;
+
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        var fingerprint = PlayerFingerprint.Of(
+            DalamudObjectSource.Normalize(name), (ushort)player.HomeWorld.RowId);
+
+        if (_pairing.Book.All.Any(pair => pair.PinnedFingerprint == fingerprint) is false)
+            return;
+
+        args.AddMenuItem(new MenuItem
+        {
+            Name = "Linkpearl : réappliquer",
+            PrefixChar = 'L',
+            PrefixColor = 541,
+            OnClicked = _ =>
+            {
+                _engine?.Reapply(fingerprint);
+                Report($"réapplication demandée pour {name}.");
+            },
         });
     }
 
@@ -867,6 +915,7 @@ public sealed class Plugin : IDalamudPlugin
         _windows.RemoveAllWindows();
 
         Commands.RemoveHandler(Command);
+        ContextMenu.OnMenuOpened -= OnMenuOpened;
         Framework.Update -= PollLinks;
         Framework.Update -= FollowCharacter;
 

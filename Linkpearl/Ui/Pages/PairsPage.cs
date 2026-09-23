@@ -1,4 +1,7 @@
+using System.Numerics;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
 using Linkpearl.Integration;
@@ -7,22 +10,32 @@ using Linkpearl.Ui.Components;
 namespace Linkpearl.Ui.Pages;
 
 /// <summary>
-/// Le carnet de pairs, et ce que le moteur fait avec chacun.
+/// Le carnet de pairs, en listes par état.
 /// </summary>
 /// <remarks>
+/// Des lignes et non des cartes : un carnet compte vite vingt entrées, et ce
+/// qu'on y cherche est « qui est là », d'un coup d'œil. Les groupes répondent
+/// à cette question avant même de lire un nom.
+///
 /// <b>Aucune clé n'y est montrée.</b> L'utilisateur voit des noms, qui sont
-/// l'identité qui l'intéresse : il veut voir les mods de quelqu'un qu'il a
-/// devant lui, pas d'une suite hexadécimale.
+/// l'identité qui l'intéresse.
 /// </remarks>
-internal sealed class PairsPage(PairingService pairing, Func<IReadOnlyList<PeerStatus>> statuses)
+internal sealed class PairsPage(
+    PairingService pairing, Func<IReadOnlyList<PeerStatus>> statuses,
+    Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair)
 {
+    private string _filter = "";
+
+    /// <summary>Le pair dont le retrait attend un second clic, et jusqu'à quand.</summary>
+    private (PeerId Id, DateTime Until)? _confirming;
+
     public int Count => pairing.Book.All.Count;
 
     public void Draw()
     {
         Text.Title("Pairs");
         Text.Small("Ce que chacun vous montre, et où en est le transfert.");
-        ImGui.Dummy(Theme.S(0f, Theme.GapL));
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
         var pairs = pairing.Book.All.ToList();
 
@@ -36,38 +49,161 @@ internal sealed class PairsPage(PairingService pairing, Func<IReadOnlyList<PeerS
             return;
         }
 
+        ImGui.SetNextItemWidth(-1f);
+        ImGui.InputTextWithHint("##filtre_pairs", "Filtrer par nom", ref _filter, 64);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
         var byPeer = statuses().ToDictionary(status => status.Peer);
+
+        var shown = pairs
+            .Where(pair => _filter.Length == 0
+                        || pair.DisplayName.Contains(_filter, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(pair => pair.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var online  = new List<PairRecord>();
+        var offline = new List<PairRecord>();
+        var paused  = new List<PairRecord>();
+        var blocked = new List<PairRecord>();
+
+        foreach (var pair in shown)
+        {
+            byPeer.TryGetValue(pair.Id, out var status);
+
+            (pair.Trust is PairTrust.Blocked ? blocked
+             : pair.Paused ? paused
+             : status is { State: not PeerSessionState.Disconnected } ? online
+             : offline).Add(pair);
+        }
+
+        Group("En ligne", online, byPeer, defaultOpen: true);
+        Group("Hors ligne", offline, byPeer, defaultOpen: true);
+        Group("En pause", paused, byPeer, defaultOpen: false);
+        Group("Bloqués", blocked, byPeer, defaultOpen: false);
+
+        if (shown.Count == 0)
+            Text.Small("aucun pair ne correspond au filtre.", Theme.TextFaint);
+    }
+
+    private void Group(string title, List<PairRecord> pairs, Dictionary<PeerId, PeerStatus> byPeer, bool defaultOpen)
+    {
+        if (pairs.Count == 0)
+            return;
+
+        var flags = defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
+
+        using var header = ImRaii.PushColor(ImGuiCol.Header, Theme.BgSurface)
+                                 .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
+                                 .Push(ImGuiCol.HeaderActive, Theme.BgRaised);
+
+        if (ImGui.CollapsingHeader($"{title} ({pairs.Count})##groupe_{title}", flags) is false)
+            return;
+
+        using var table = ImRaii.Table($"pairs_{title}", 4, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX);
+
+        if (table.Success is false)
+            return;
+
+        ImGui.TableSetupColumn("état", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+        ImGui.TableSetupColumn("nom", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("statut", ImGuiTableColumnFlags.WidthFixed, Theme.S(190f));
+        ImGui.TableSetupColumn("actions", ImGuiTableColumnFlags.WidthFixed, (ImGui.GetFrameHeight() * 3f) + Theme.S(Theme.GapS * 2f));
 
         foreach (var pair in pairs)
         {
             byPeer.TryGetValue(pair.Id, out var status);
+            Row(pair, status);
+        }
+    }
 
-            using var card = Card.Begin($"pair_{pair.Id.ToHex()}", CardTone.Interactive,
-                                        accent: Theme.FromName(pair.DisplayName));
+    private void Row(PairRecord pair, PeerStatus? status)
+    {
+        var id = pair.Id.ToHex();
 
-            Text.H2(pair.DisplayName);
-            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        ImGui.TableNextRow(ImGuiTableRowFlags.None, ImGui.GetFrameHeight() + Theme.S(Theme.GapS));
 
-            DrawState(pair, status);
+        ImGui.TableNextColumn();
+        AlignToFrame();
+        Feedback.StatusDot(Tint(pair, status));
 
-            if (status is { FingerprintDisputed: true })
+        ImGui.TableNextColumn();
+        AlignToFrame();
+        ImGui.TextColored(Theme.Text, Glyphs.Safe(pair.DisplayName));
+
+        if (status is { FingerprintDisputed: true })
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            Text.Icon(Icons.Warning, Theme.Danger);
+            Feedback.TooltipOnHover(
+                "Ce pair annonce un autre personnage que celui auprès duquel vous vous êtes pairés. "
+              + "Rien ne lui est appliqué.");
+        }
+        else if (status is { LastFailure: { } failure })
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            Text.Icon(Icons.Warning, Theme.Idle);
+            Feedback.TooltipOnHover(failure);
+        }
+
+        ImGui.TableNextColumn();
+        AlignToFrame();
+        DrawState(pair, status);
+
+        ImGui.TableNextColumn();
+
+        if (pair.Paused)
+        {
+            if (Btn.Icon(Icons.Resume, $"resume_{id}", tooltip: "Reprendre"))
+                setPaused(pair.Id, false);
+        }
+        else if (Btn.Icon(Icons.Paused, $"pause_{id}", tooltip: "Mettre en pause : la session se ferme et l'apparence est retirée"))
+        {
+            setPaused(pair.Id, true);
+        }
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        var canReapply = status is { State: not PeerSessionState.Disconnected };
+
+        if (Btn.Icon(Icons.Refresh, $"reapply_{id}",
+                     tooltip: canReapply ? "Réappliquer : redemander la dernière apparence et la reposer" : "Hors ligne",
+                     disabled: canReapply is false))
+            reapply(pair.Id);
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        // Retirer se confirme par un second clic : un carnet ne se vide pas
+        // par un geste qui glisse.
+        var confirming = _confirming is { } c && c.Id == pair.Id && c.Until > DateTime.UtcNow;
+
+        if (Btn.Icon(Icons.Remove, $"unpair_{id}",
+                     tone: confirming ? BtnTone.Danger : BtnTone.Ghost,
+                     tooltip: confirming ? "Cliquer encore pour retirer ce pair" : "Retirer ce pair"))
+        {
+            if (confirming)
             {
-                ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-                Feedback.Alert(Theme.Danger, Icons.Warning,
-                    "Ce pair annonce un autre personnage que celui auprès duquel vous vous êtes pairés. "
-                  + "Rien ne lui est appliqué.");
+                _confirming = null;
+                unpair(pair.Id);
             }
-
-            if (status is { LastFailure: { } failure })
+            else
             {
-                ImGui.Dummy(Theme.S(0f, Theme.GapXs));
-                Text.Small(failure, Theme.TextFaint);
+                _confirming = (pair.Id, DateTime.UtcNow.AddSeconds(4));
             }
         }
     }
 
-    /// <summary>La puce d'état, qui résume tout ce que le moteur sait du pair.</summary>
+    /// <summary>Centre un texte d'une ligne sur la hauteur d'un bouton.</summary>
+    private static void AlignToFrame()
+        => ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((ImGui.GetFrameHeight() - ImGui.GetTextLineHeight()) * 0.5f));
+
+    private static Vector4 Tint(PairRecord pair, PeerStatus? status)
+        => pair.Trust is PairTrust.Blocked ? Theme.Danger
+         : pair.Paused ? Theme.Idle
+         : status is null || status.State is PeerSessionState.Disconnected ? Theme.TextFaint
+         : status.Applied ? Theme.Online
+         : Theme.Accent;
+
+    /// <summary>La puce d'état, qui résume ce que le moteur sait du pair.</summary>
     private static void DrawState(PairRecord pair, PeerStatus? status)
     {
         if (pair.Trust is PairTrust.Blocked)
@@ -98,7 +234,7 @@ internal sealed class PairsPage(PairingService pairing, Func<IReadOnlyList<PeerS
 
         if (view.Ready)
         {
-            Chip.Draw("prêt, en attente de le voir", Theme.Accent, Icons.Connected);
+            Chip.Draw("prêt, hors de vue", Theme.Accent, Icons.Connected);
             return;
         }
 

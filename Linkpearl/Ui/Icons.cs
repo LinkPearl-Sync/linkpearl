@@ -30,6 +30,7 @@ internal static class Icons
     public const FontAwesomeIcon Receiving  = FontAwesomeIcon.CloudDownloadAlt;
     public const FontAwesomeIcon Waiting    = FontAwesomeIcon.Clock;
     public const FontAwesomeIcon Paused     = FontAwesomeIcon.Pause;
+    public const FontAwesomeIcon Resume     = FontAwesomeIcon.Play;
     public const FontAwesomeIcon Blocked    = FontAwesomeIcon.Ban;
     public const FontAwesomeIcon Verified   = FontAwesomeIcon.ShieldAlt;
     public const FontAwesomeIcon Unverified = FontAwesomeIcon.QuestionCircle;

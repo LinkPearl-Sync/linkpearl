@@ -87,5 +87,5 @@ public sealed class DalamudObjectSource(IObjectTable objects, IClientState clien
     /// joueurs calculeraient deux adresses de boîte différentes pour le même
     /// personnage et ne se trouveraient jamais.
     /// </remarks>
-    private static string Normalize(string name) => name.Trim().ToLowerInvariant();
+    internal static string Normalize(string name) => name.Trim().ToLowerInvariant();
 }

@@ -24,10 +24,12 @@ public sealed class PenumbraIpc : IDisposable
     private readonly CreateTemporaryCollection _createCollection;
     private readonly AssignTemporaryCollection _assignCollection;
     private readonly AddTemporaryMod _addMod;
+    private readonly RemoveTemporaryMod _removeMod;
     private readonly DeleteTemporaryCollection _deleteCollection;
     private readonly RedrawObject _redraw;
     private readonly GetCollectionForObject _collectionForObject;
     private readonly IDisposable _redrawn;
+    private readonly IDisposable _settings;
 
     public PenumbraIpc(IDalamudPluginInterface pi)
     {
@@ -37,6 +39,7 @@ public sealed class PenumbraIpc : IDisposable
         _createCollection  = new CreateTemporaryCollection(pi);
         _assignCollection  = new AssignTemporaryCollection(pi);
         _addMod            = new AddTemporaryMod(pi);
+        _removeMod         = new RemoveTemporaryMod(pi);
         _deleteCollection  = new DeleteTemporaryCollection(pi);
         _redraw            = new RedrawObject(pi);
         _collectionForObject = new GetCollectionForObject(pi);
@@ -46,7 +49,17 @@ public sealed class PenumbraIpc : IDisposable
         // réglage à la place attraperait aussi les collections qui ne nous
         // concernent pas.
         _redrawn = GameObjectRedrawn.Subscriber(pi, (_, index) => Redrawn?.Invoke(index));
+
+        // Le redessin ne suffit pas : cocher un mod dans Penumbra sans redessiner
+        // change les fichiers résolus sans qu'aucun redessin n'ait lieu, et
+        // l'apparence annoncée restait alors celle d'avant. Le signal est plus
+        // large que nécessaire (toute collection), mais l'anti-rebond et la
+        // comparaison par hachage absorbent les reconstructions pour rien.
+        _settings = ModSettingChanged.Subscriber(pi, (_, _, _, _) => SettingsChanged?.Invoke());
     }
+
+    /// <summary>Un réglage de mod a changé, dans n'importe quelle collection.</summary>
+    public event Action? SettingsChanged;
 
     /// <summary>Un objet du jeu vient d'être redessiné, avec son index.</summary>
     /// <remarks>
@@ -55,7 +68,11 @@ public sealed class PenumbraIpc : IDisposable
     /// </remarks>
     public event Action<int>? Redrawn;
 
-    public void Dispose() => _redrawn.Dispose();
+    public void Dispose()
+    {
+        _redrawn.Dispose();
+        _settings.Dispose();
+    }
 
     /// <summary>
     /// Version de l'API, ou null si Penumbra n'est pas chargé.
@@ -109,8 +126,13 @@ public sealed class PenumbraIpc : IDisposable
     /// </remarks>
     public void SetTemporaryMod(Guid collection, Dictionary<string, string> pathMap, string metaManipulations)
     {
+        // Retirer avant de poser : on ne dépend pas de ce que Penumbra fait d'un
+        // second mod sous la même étiquette, et une apparence mise à jour part
+        // ainsi d'un état vide plutôt que d'un cumul.
+        _removeMod.Invoke(Tag, collection, priority: 1000);
+
         var ec = _addMod.Invoke(Tag, collection, pathMap, metaManipulations, priority: 1000);
-        if (ec is not PenumbraApiEc.Success)
+        if (ec is not PenumbraApiEc.Success and not PenumbraApiEc.NothingChanged)
             throw new InvalidOperationException($"pose des remplacements refusée par Penumbra : {ec}");
     }
 

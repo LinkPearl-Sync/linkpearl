@@ -298,6 +298,38 @@ public sealed class PairingService : IDisposable
             : $"{added.Count} pair(s) ajouté(s) : {string.Join(", ", added)}. Renommez-les avec « rename ».";
     }
 
+    /// <summary>Met un pair en pause, ou l'en sort.</summary>
+    /// <remarks>
+    /// En pause, le moteur ferme la session et retire ce qu'il avait posé :
+    /// c'est ce qui fait de la pause un bouton dont on voit l'effet.
+    /// </remarks>
+    public string SetPaused(PeerId id, bool paused)
+    {
+        if (_bookStore is null)
+            return NoCharacter;
+
+        if (_book.Find(id) is not { } record)
+            return "pair inconnu.";
+
+        _book.SetPaused(id, paused);
+        _bookStore.Save(_book);
+        return paused ? $"{record.DisplayName} en pause." : $"{record.DisplayName} repris.";
+    }
+
+    /// <summary>Retire un pair du carnet.</summary>
+    public string Remove(PeerId id)
+    {
+        if (_bookStore is null)
+            return NoCharacter;
+
+        if (_book.Find(id) is not { } record)
+            return "pair inconnu.";
+
+        _book.Remove(id);
+        _bookStore.Save(_book);
+        return $"{record.DisplayName} retiré du carnet.";
+    }
+
     public string Rename(string from, string to)
     {
         if (_bookStore is null)
