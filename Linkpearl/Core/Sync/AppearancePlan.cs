@@ -13,7 +13,11 @@ namespace Linkpearl.Core.Sync;
 public sealed record AppearancePlan(
     IReadOnlyDictionary<string, string> PathMap,
     string MetaManipulations,
-    string? GlamourerState);
+    string? GlamourerState)
+{
+    /// <summary>Les chemins transitoires écartés parce que leur fichier est mal formé, avec la raison.</summary>
+    public IReadOnlyList<string> Dropped { get; init; } = [];
+}
 
 /// <summary>
 /// Traduit un manifeste reçu en une table de remplacements pour Penumbra.
@@ -41,6 +45,7 @@ public static class AppearancePlanner
         }
 
         var pathMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var dropped = new List<string>();
 
         foreach (var replacement in manifest.Replacements)
         {
@@ -64,6 +69,15 @@ public static class AppearancePlanner
 
             foreach (var gamePath in replacement.GamePaths)
             {
+                // Un fichier transitoire est lu par du code natif du jeu : mal
+                // formé, il ne l'atteint pas. Écarté seul, pour que le reste de
+                // l'apparence soit posé quand même.
+                if (TransientCategories.IsTransient(gamePath) && IsWellFormed(store, replacement.Hash, gamePath, out var malformed) is false)
+                {
+                    dropped.Add($"{gamePath} : {malformed}");
+                    continue;
+                }
+
                 // Deux entrées pour un même chemin de jeu seraient une
                 // contradiction : laquelle poser ? Le manifeste est refusé
                 // plutôt que départagé par l'ordre d'itération, qui n'est pas
@@ -78,8 +92,24 @@ public static class AppearancePlanner
             }
         }
 
-        plan = new AppearancePlan(pathMap, manifest.MetaManipulations, manifest.GlamourerState);
+        plan = new AppearancePlan(pathMap, manifest.MetaManipulations, manifest.GlamourerState) { Dropped = dropped };
         rejection = null;
         return true;
+    }
+
+    private static bool IsWellFormed(IBlobStore store, BlobHash hash, string gamePath, out string? rejection)
+    {
+        try
+        {
+            // Hors du thread du jeu, comme tout TryBuild : une lecture de
+            // quelques octets, synchrone, suffit.
+            using var content = store.OpenReadAsync(hash, CancellationToken.None).GetAwaiter().GetResult();
+            return TransientFileCheck.IsWellFormed(gamePath, content, out rejection);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            rejection = $"illisible : {e.GetType().Name}";
+            return false;
+        }
     }
 }

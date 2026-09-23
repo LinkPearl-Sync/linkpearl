@@ -11,6 +11,7 @@ namespace Linkpearl.Core.Tests.Sync;
 internal sealed class FakeBlobStore : IBlobStore
 {
     private readonly Dictionary<BlobHash, long> _sizes = [];
+    private readonly Dictionary<BlobHash, byte[]> _contents = [];
 
     public List<BlobHash> Touched { get; } = [];
 
@@ -22,6 +23,14 @@ internal sealed class FakeBlobStore : IBlobStore
 
     public void Add(BlobHash hash, long size) => _sizes[hash] = size;
 
+    public BlobHash AddContent(byte[] content)
+    {
+        var hash = BlobHash.OfContent(content);
+        _sizes[hash] = content.Length;
+        _contents[hash] = content;
+        return hash;
+    }
+
     public bool TryGetSize(BlobHash hash, out long size) => _sizes.TryGetValue(hash, out size);
 
     public string PathFor(BlobHash hash)
@@ -30,7 +39,9 @@ internal sealed class FakeBlobStore : IBlobStore
     public void Touch(BlobHash hash) => Touched.Add(hash);
 
     public Task<Stream> OpenReadAsync(BlobHash hash, CancellationToken ct)
-        => throw new NotSupportedException();
+        => _contents.TryGetValue(hash, out var content)
+            ? Task.FromResult<Stream>(new MemoryStream(content, writable: false))
+            : throw new NotSupportedException("contenu non fourni à ce faux cache");
 
     public Task<IBlobWriter> BeginWriteAsync(BlobHash expected, long expectedSize, CancellationToken ct)
         => throw new NotSupportedException();
@@ -54,6 +65,57 @@ public class AppearancePlanTests
 
     private static CharacterManifest Manifest(params FileReplacement[] replacements)
         => new(CharacterManifest.CurrentVersion, replacements, string.Empty, null);
+
+    private const string Idle = "chara/human/c0101/animation/a0001/bt_common/resident/idle.pap";
+
+    /// <summary>Un en-tête de .pap comme ceux des mods mesurés, section Havok comprise.</summary>
+    private static byte[] WellFormedPap()
+    {
+        var file = new byte[26 + 40 + 64 + 16];
+        "pap "u8.CopyTo(file);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), 0x20001);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(file.AsSpan(8), 1);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(file.AsSpan(14), 26);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(file.AsSpan(18), 66);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(file.AsSpan(22), 66 + 64);
+        Convert.FromHexString("1E0DB0CACEFA11D0").CopyTo(file, 66);
+        return file;
+    }
+
+    [Fact]
+    public void Une_animation_mal_formee_est_ecartee_et_le_reste_pose()
+    {
+        // Un .pap est lu par du code natif du jeu : mal formé, il ne l'atteint
+        // pas. L'apparence, elle, est posée quand même.
+        var store = new FakeBlobStore();
+        var model = Hash("un modèle");
+        store.Add(model, 42);
+        var broken = store.AddContent("ceci n'est pas une animation"u8.ToArray());
+
+        var built = AppearancePlanner.TryBuild(
+            Manifest(new FileReplacement([Top], model, 42), new FileReplacement([Idle], broken, 28)),
+            store, Quotas.Default, out var plan, out var why);
+
+        Assert.True(built, why);
+        Assert.Contains(Top, plan!.PathMap.Keys);
+        Assert.DoesNotContain(Idle, plan.PathMap.Keys);
+        Assert.Contains(plan.Dropped, reason => reason.Contains(Idle));
+    }
+
+    [Fact]
+    public void Une_animation_bien_formee_est_posee()
+    {
+        var store = new FakeBlobStore();
+        var pap = WellFormedPap();
+        var hash = store.AddContent(pap);
+
+        var built = AppearancePlanner.TryBuild(
+            Manifest(new FileReplacement([Idle], hash, pap.Length)), store, Quotas.Default, out var plan, out var why);
+
+        Assert.True(built, why);
+        Assert.Contains(Idle, plan!.PathMap.Keys);
+        Assert.Empty(plan.Dropped);
+    }
 
     [Fact]
     public void Chaque_chemin_de_jeu_recoit_le_fichier_du_cache()

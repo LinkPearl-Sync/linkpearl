@@ -88,6 +88,11 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
         if (AppearancePlanner.TryBuild(manifest, _store, _quotas, out var plan, out var why) is false)
             throw new InvalidOperationException($"apparence refusée : {why}");
 
+        // Des chemins de jeu et une raison, jamais de chemin local : rien ici ne
+        // nomme le joueur.
+        if (plan!.Dropped.Count > 0)
+            _log.Warning($"Transitoires mal formés écartés ({plan.Dropped.Count}) : {string.Join(" ; ", plan.Dropped.Take(5))}");
+
         await _framework.RunOnFrameworkThread(() =>
         {
             if (Resolve(target) is false)
