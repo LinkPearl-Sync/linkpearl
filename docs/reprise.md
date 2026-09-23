@@ -1,6 +1,7 @@
 # Où on en est, et par où reprendre
 
-Écrit le 22 septembre 2026, en fin de première session. À lire en premier.
+Écrit le 22 septembre 2026, en fin de première session. Mis à jour le 23, après
+la première journée d'essais en jeu. À lire en premier.
 
 ## Ce que le projet est devenu
 
@@ -9,10 +10,14 @@ directement d'un joueur à l'autre, chiffrés de bout en bout. Le seul service e
 un rendez-vous minimal et auto-hébergeable, qui aide deux pairs à se trouver et
 relaie quand le direct échoue.
 
-**La conception a beaucoup bougé pendant la session**, et toujours dans le même
-sens : de l'échange de secrets entre inconnus vers deux personnes debout l'une à
-côté de l'autre dans le même jeu. Voir `pairage.md`, qui raconte les trois
-itérations et pourquoi les deux premières étaient fausses.
+**La conception a beaucoup bougé pendant la première session**, et toujours dans
+le même sens : de l'échange de secrets entre inconnus vers deux personnes debout
+l'une à côté de l'autre dans le même jeu. Voir `pairage.md`, qui raconte les
+trois itérations et pourquoi les deux premières étaient fausses.
+
+**Le 23, deux personnages se sont vus pour la première fois**, sur une même
+machine : pairage par l'interface, apparence moddée posée chez l'autre, suivi
+des changements de tenue.
 
 ## Les contraintes qui viennent de l'utilisateur, et qu'aucun code ne dit
 
@@ -31,6 +36,23 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    pas de nom de personnage, donc il lui faut un identifiant.
 6. **Désactiver le plugin ne doit rien changer à l'apparence** du joueur. Les
    clients comparables ne le font pas, et un jour où je l'ai fait c'était un bug.
+7. **Les joueurs visés font du jeu de rôle, pas du donjon.** Quelques
+   millisecondes de ping leur coûtent moins qu'une tenue qui met des minutes à
+   arriver : le limiteur d'envoi est désactivé par défaut, et « à l'époque de la
+   fibre », un débit de quelques Mo/s n'est pas acceptable.
+8. **Les références d'ergonomie sont Snowcloak et UmbraSync** : listes plutôt
+   que cartes, « Réappliquer » au clic droit, progression visible sur le
+   personnage. Ce qu'un joueur y connaît déjà, il doit le retrouver ici.
+9. **Une identité doit survivre à une réinstallation** sans fouiller dans
+   AppData : c'est la sauvegarde en un fichier, mot de passe facultatif.
+
+## Ce qui vient ensuite, dans l'ordre voulu par l'utilisateur
+
+1. **Les autres intégrations, comme le font les clients comparables** :
+   Customize+, SimpleHeels, Honorific, et le reste de ce qu'ils synchronisent.
+2. **Les animations, les VFX et les sons**, avec un moyen d'en bloquer la
+   synchronisation : un réglage global rapide, et un réglage par pair.
+3. **Les groupes**, plus tard. Ce sont eux qui porteront des codes (point 5).
 
 ## État des jalons
 
@@ -38,75 +60,68 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 |---|---|
 | 0, décider et mesurer | Fait pour l'utilisateur. Son cercle reste à interroger. |
 | 1, boucle jeu locale | **Clos**, voir `jalon-1-resultats.md`. |
-| 2, débit | **Mesuré**, voir `jalon-2-debit.md`. Le ping en jeu reste à mesurer. |
+| 2, débit | **Mesuré**, voir `jalon-2-debit.md`, puis dépassé le 23 (voir plus bas). Le ping en jeu reste à mesurer. |
 | 2 bis, traversée de NAT | NAT classé favorable. Test de paire réel en attente d'une seconde personne. |
 | 3, crypto et protocole | **Clos**. Relecture externe toujours due, voir plus bas. |
-| 4, cache et transfert | **Clos**, chaîne vérifiée de bout en bout sur des données réelles. |
-| 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit désormais dans son propre dépôt. |
-| 6, moteur de synchronisation | **Clos côté code**. Jamais éprouvé en jeu, voir ci-dessous. |
-| 7, interface | Partiellement fait, en avance sur le plan. |
+| 4, cache et transfert | **Clos**. Transfert par tronçons depuis le 23. |
+| 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit dans son propre dépôt. |
+| 6, moteur de synchronisation | **Éprouvé en jeu**, à deux personnages sur une même machine. |
+| 7, interface | Bien avancé : listes, badges de transfert, barre de statut, sauvegarde. |
 
-## Ce qui reste au jalon 6
+## Ce qui a changé le 23
 
-Fait : carnet de pairs, empreintes, anti-rebond, appariement, boîtes aux lettres,
-détection, demande et acceptation par interface, liaison LiteNetLib, réflexion
-d'adresse, candidats, connecteur, session authentifiée, dialogue avec un pair.
+- **Transfert par tronçons de 4 Mio**, répartis sur 32 canaux
+  (`Core/Transfer/BlobSegments.cs`). Un blob n'a plus à tenir sur un seul
+  canal : c'était la traîne de tout transfert.
+- **Accusés LiteNetLib à la milliseconde et découverte du MTU**
+  (`PeerLinkFactory`). Au défaut de 15 ms, la fenêtre fiable se libérait trop
+  lentement, même en local.
+- **Limiteur** : une marge absolue de 20 ms avant de reculer, sans laquelle un
+  lien local s'effondrait au plancher ; et débrayable, débrayé par défaut.
+- **Reconnexion** : une session qui tombe après avoir tenu se réannonce
+  aussitôt, et l'attente d'un pair absent se compte depuis le début de
+  l'annonce, ce qui tient bien 25 s d'annonce sur 30.
+- **Apparence locale** : on écoute aussi `StateChanged` de Glamourer, on attend
+  que le personnage soit entièrement chargé avant de lire ses ressources
+  (`DrawReadiness`), et une demande de reconstruction n'est plus jamais perdue.
+- **Sauvegarde de l'identité** en un fichier, et une identité illisible est
+  désormais écartée au lieu d'être écrasée en silence.
+- Interface : « Autour de vous » en listes, badges de transfert sous les pairs,
+  symbole HQ dans la barre de statut et le titre.
 
-Les trois pièces qui manquaient sont écrites : le moteur (`Core/Sync/SyncEngine.cs`),
-l'applicateur distant (`Integration/RemoteApplicator.cs`, avec la décision dans
-`Core/Sync/AppearancePlan.cs`) et le mode « faux pair » du harnais.
+### Ce que le faux pair mesure maintenant
 
-Le câblage dans `Plugin.cs` est fait : le moteur est construit avec le carnet, le
-cache partagé, la socket unique et l'applicateur ; `LocalAppearance` construit
-notre manifeste en tâche de fond depuis Penumbra ; `Framework.Update` bat la
-socket ; un tic par seconde fait avancer le moteur en réutilisant l'instantané
-de l'ObjectTable que la boucle d'interface prend déjà.
+Une apparence réelle de 405 Mo, 70 blobs dont plusieurs de 85 Mo, le vrai
+moteur des deux côtés, sans limiteur, un relais qui retarde les paquets :
 
-**Rien de tout cela n'a encore tourné en jeu.** C'est la seule chose qui
-compte maintenant, et c'est aussi la seule que ni les tests ni le harnais ne
-peuvent dire. Deux commandes ont été ajoutées pour cela : `/lpearl sync` dit où
-en est chaque pair, `/lpearl rebuild` reconstruit l'apparence annoncée.
+| | 0 ms | 20 ms | 60 ms |
+|---|---|---|---|
+| avant le 23, 8 canaux | 12,5 Mo/s | 5,5 Mo/s | 2,0 Mo/s |
+| maintenant, 32 canaux | 53,8 Mo/s | 33,0 Mo/s | 17,5 Mo/s |
 
-Ce qui reste à faire de mémoire d'ici là :
+Au-delà de 32 canaux, c'est instable : 48 canaux se sont effondrés à 3,6 Mo/s à
+60 ms. Les mesures d'avant le 23, qui plafonnaient vers 16 canaux, étaient
+faussées par un `/tmp` en mémoire saturé par le banc lui-même ; il nettoie
+désormais derrière lui.
 
-- **Rien ne détecte un changement de mods.** L'apparence se reconstruit au
-  changement de personnage et sur `/lpearl rebuild`, pas quand l'utilisateur
-  change de tenue. Il faut s'abonner aux événements de Penumbra, et faire passer
-  la rafale par le `Debouncer` qui attend déjà dans `Core/Sync`.
+Commande : `dotnet run -c Release --project Linkpearl.Harness -- fakepeer
+--channels 32 --no-limit --latency 20`. Le mode `endtoend` sert un blob à la
+fois et ne mesure pas le moteur.
+
+## Ce qui reste de mémoire
+
 - **L'éviction du cache ne connaît pas ce qui est à l'écran.** `EvictToAsync`
   prend un ensemble d'épinglés que personne ne lui donne : le moteur devrait lui
   passer les blobs des apparences posées, sinon le cache peut retirer sous les
   pieds ce qu'un pair porte.
-
-### Ce que le faux pair a mesuré
-
-Une apparence réelle de 405 Mo, 70 blobs, 81 chemins de jeu, en boucle locale,
-sans limiteur :
-
-| canaux | durée | débit |
-|---|---|---|
-| 1 | 123,3 s | 3,3 Mo/s |
-| 2 | 70,0 s | 5,8 Mo/s |
-| 4 | 45,5 s | 8,9 Mo/s |
-| 8 | 31,8 s | 12,7 Mo/s |
-| 16 | 26,1 s | 15,5 Mo/s |
-| 24 | 83,2 s | 4,9 Mo/s, et un passage sans aboutir en cinq minutes |
-
-Le gain s'inverse au-delà de seize, et le défaut par défaut est donc passé à
-huit. Ce n'est plus le réseau qui décide à ce stade mais la localité des
-lectures et des écritures, ce que le jalon 2 ne pouvait pas voir : il mesurait
-un flux synthétique, pas soixante-dix fichiers ouverts de part et d'autre.
-
-Avec le limiteur, qui part à 512 Kio/s et gagne 128 Kio toutes les deux
-secondes, le même transfert prend 143 s. C'est lui qui décide alors, et c'est
-voulu : personne ne veut voir son jeu ramer parce qu'une amie vient d'arriver.
+- **Un client d'avant les tronçons ne peut plus échanger** avec un client
+  d'après. Le receveur le dit dans le journal, mais la version du protocole n'a
+  pas été relevée : ses vecteurs figés servent à la relecture externe.
+- **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
+  rien n'a encore mesuré ce qu'il coûte au processeur.
 
 ## Défauts connus, non corrigés
 
-- **L'interrogation de présence toutes les trois secondes est trop bavarde.**
-  Environ 345 Mo par mois et par joueur, contre 20 avec une cadence de quinze
-  secondes et seulement quand les joueurs visibles changent. Facteur 17 pour un
-  confort invisible.
 - **Le handshake SIGMA-I n'a pas été relu par quelqu'un d'autre.** C'est une
   condition de diffusion, pas une amélioration souhaitable. `protocol.md` existe
   pour cela.
@@ -115,22 +130,34 @@ voulu : personne ne veut voir son jeu ramer parce qu'une amie vient d'arriver.
 
 ## Ce qui attend l'utilisateur en jeu
 
-- Mesurer le **ping de FFXIV pendant un transfert**. C'est le vrai critère du
-  jalon 2, celui que le plan avait mal posé.
+- Mesurer le **ping de FFXIV pendant un transfert**, maintenant que le limiteur
+  est débrayé par défaut.
 - Le **test de paire réel** entre deux réseaux, quand quelqu'un sera disponible.
-- **Deux joueurs qui se voient**, qui est la preuve que le projet marche.
+  Tout ce qui précède a été éprouvé sur une seule machine.
 
 ## Pièges appris à la dure
 
 - Penumbra applique un fichier nommé par son seul hash : l'extension n'est jamais
   une donnée fournie par le pair.
+- Penumbra rend les ressources *chargées* : lues pendant un redessin, elles sont
+  incomplètes. Vu en jeu : un fichier sur soixante-quatre, et le pair a reçu les
+  objets de base sans aucun mod.
 - Passer une clé non nulle à `ApplyState` de Glamourer **verrouille** l'état,
   même sans le drapeau `Lock`. La documentation dit « to unlock or lock ».
-- LiteNetLib ne garantit l'ordre qu'à l'intérieur d'un canal : un blob entier
+- `StateFinalized` de Glamourer ne se lève qu'à la fin d'un changement groupé :
+  une retouche manuelle ne lève que `StateChanged`.
+- LiteNetLib ne garantit l'ordre qu'à l'intérieur d'un canal : un tronçon entier
   doit tenir sur un seul canal.
 - Sa file d'envoi n'est pas bornée : sans contre-pression, un transfert alloue
   tout d'avance dans le processus du jeu.
-- Sa fenêtre fiable est une constante de 64 paquets : le multi-canal est la
-  condition d'existence du transfert, pas une optimisation.
+- Sa fenêtre fiable est une constante de 64 paquets, libérée au rythme de
+  `UpdateTime` : le multi-canal et un rythme rapide sont la condition
+  d'existence du transfert, pas une optimisation.
+- Un seuil de ping relatif seul ne tient pas sur un lien local : 2 ms qui
+  passent à 4, c'est cent pour cent de plus.
+- DPAPI lie l'identité au compte Windows : copier le dossier de configuration
+  ne survit pas à une réinstallation du système.
 - Le runtime .NET ne vérifie pas qu'un point public importé est sur la courbe.
 - La réflexion d'adresse doit partir de la socket qui portera les liens.
+- Sous WSL, `/tmp` vit en mémoire : un banc qui n'y nettoie pas fausse les
+  mesures suivantes avant de tout bloquer.
