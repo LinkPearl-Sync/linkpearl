@@ -9,7 +9,8 @@
 #
 # Côté Dalamud, une seule configuration à faire une fois :
 #   /xlsettings > Experimental > Dev Plugin Locations > ajouter
-#   C:\Users\yann\XIVDev\Linkpearl
+#   C:\Users\yann\XIVDev\Linkpearl\LinkpearlSync.dll (la DLL elle-même : depuis le
+#   renommage, un emplacement qui visait Linkpearl.dll ne trouve plus rien)
 
 set -euo pipefail
 
