@@ -738,6 +738,92 @@ public sealed class SyncEngineTests : IDisposable
     private FileSystemBlobStore Store(string name)
         => new(Path.Combine(_root, name), new CacheSettings(), _clock, _ => long.MaxValue);
 
+    private static async Task<BlobHash> PutAsync(FileSystemBlobStore store, byte[] content)
+    {
+        var hash = BlobHash.OfContent(content);
+
+        await using var writer = await store.BeginWriteAsync(hash, content.Length, default);
+        await writer.WriteAsync(content, default);
+        Assert.True((await writer.CommitAsync(default)).Accepted);
+
+        return hash;
+    }
+
+    [Fact]
+    public async Task Au_dela_du_quota_le_cache_evince_ce_qui_n_est_pas_a_l_ecran()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        var stale = await PutAsync(world.BobStore, Encoding.UTF8.GetBytes(new string('x', 200)));
+        world.BobStore.SetQuota(world.BlobSize + 10);
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+
+        await world.TickAsync([], sees);
+
+        Assert.False(world.BobStore.TryGetSize(stale, out _));
+        Assert.True(world.BobStore.TryGetSize(world.Blob, out _));
+    }
+
+    [Fact]
+    public async Task Le_cache_garde_toujours_notre_propre_apparence()
+    {
+        var store = Store("seul");
+        var oursContent = Encoding.UTF8.GetBytes("notre tenue, en tout petit");
+        var ours = await PutAsync(store, oursContent);
+        var stale = await PutAsync(store, Encoding.UTF8.GetBytes(new string('y', 200)));
+
+        var manifest = new CharacterManifest(
+            CharacterManifest.CurrentVersion,
+            [new FileReplacement(["chara/equipment/e0001/model/c0101e0001_top.mdl"], ours, oursContent.Length)],
+            string.Empty, null);
+
+        var identity = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(identity);
+
+        await using var engine = new SyncEngine(
+            new PairBook(_clock), new FailingDialer(peerWasAbsent: true), new FixedAppearance(manifest, AlicePrint),
+            new RecordingApplicator(), store, PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), identity,
+            _clock, new SilentLog());
+
+        store.SetQuota(oursContent.Length + 10);
+        await engine.TickAsync([], default);
+
+        Assert.True(store.TryGetSize(ours, out _));
+        Assert.False(store.TryGetSize(stale, out _));
+    }
+
+    [Fact]
+    public async Task L_eviction_n_est_verifiee_qu_a_intervalle()
+    {
+        var store = Store("cadence");
+        var identity = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(identity);
+
+        await using var engine = new SyncEngine(
+            new PairBook(_clock), new FailingDialer(peerWasAbsent: true), new FixedAppearance(null, AlicePrint),
+            new RecordingApplicator(), store, PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), identity,
+            _clock, new SilentLog());
+
+        await engine.TickAsync([], default);
+
+        var stale = await PutAsync(store, Encoding.UTF8.GetBytes(new string('z', 200)));
+        store.SetQuota(10);
+
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await engine.TickAsync([], default);
+        Assert.True(store.TryGetSize(stale, out _));
+
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        await engine.TickAsync([], default);
+        Assert.False(store.TryGetSize(stale, out _));
+    }
+
     private const string IdlePath = "chara/human/c0101/animation/a0001/bt_common/resident/idle.pap";
 
     private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null, bool withAnimation = false)

@@ -96,6 +96,16 @@ public sealed record SyncEngineSettings
     /// croissante espace les tentatives jusqu'à sa mise à jour.
     /// </remarks>
     public TimeSpan RevocationPatience { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Intervalle entre deux vérifications du quota.
+    /// </summary>
+    /// <remarks>
+    /// Vérifier le quota, c'est sommer la taille de chaque blob : des dizaines de
+    /// milliers à chaque seconde, pour un dépassement qui se rattrape très bien
+    /// trente secondes plus tard.
+    /// </remarks>
+    public TimeSpan EvictionInterval { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>L'état d'un pair, tel que l'interface l'affiche.</summary>
@@ -159,6 +169,7 @@ public sealed class SyncEngine : IAsyncDisposable
     private CharacterManifest? _announcedManifest;
     private PlayerFingerprint? _announcedFingerprint;
     private bool _ticking;
+    private DateTimeOffset _lastEvictionCheck = DateTimeOffset.MinValue;
 
     public SyncEngine(
         PairBook book, IPeerDialer dialer, ILocalAppearance local, IRemoteApplicator applicator,
@@ -237,11 +248,44 @@ public sealed class SyncEngine : IAsyncDisposable
             ObserveLinks();
             await AnnounceIfChangedAsync(ct).ConfigureAwait(false);
             ReconcileVisibility(visible);
+            await EvictIfDueAsync(ct).ConfigureAwait(false);
         }
         finally
         {
             _ticking = false;
         }
+    }
+
+    /// <summary>
+    /// Ramène le cache sous son quota, sans toucher à ce qui sert.
+    /// </summary>
+    /// <remarks>
+    /// Dans le tic, et non ailleurs : c'est le seul fil qui peut lire les
+    /// runtimes sans course. Notre apparence est demandée à la source plutôt
+    /// qu'au dernier manifeste annoncé, qui n'existe pas tant qu'aucun pair
+    /// n'est joint.
+    /// </remarks>
+    private async Task EvictIfDueAsync(CancellationToken ct)
+    {
+        if (_clock.UtcNow - _lastEvictionCheck < _settings.EvictionInterval)
+            return;
+
+        _lastEvictionCheck = _clock.UtcNow;
+
+        if (_store.NeedsEviction is false)
+            return;
+
+        var ours = await _local.CurrentAsync(ct).ConfigureAwait(false);
+
+        var pinned = PinnedBlobs.Of(
+            _runtimes.Values
+                .SelectMany(runtime => new[] { runtime.AppliedValue, runtime.Exchange?.View.Manifest })
+                .Append(ours));
+
+        var before = _store.TotalBytes;
+        await _store.EvictToAsync(_store.EvictionTarget, pinned, ct).ConfigureAwait(false);
+
+        _log.Info($"cache au-delà du quota : {(before - _store.TotalBytes) / (1024 * 1024)} Mo libérés.");
     }
 
     /// <summary>Aligne les runtimes sur le carnet : un pair actif, un runtime.</summary>

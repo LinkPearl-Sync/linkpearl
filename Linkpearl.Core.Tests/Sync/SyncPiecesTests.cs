@@ -1,6 +1,8 @@
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Cache;
 using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
 using Xunit;
@@ -381,5 +383,25 @@ public class PairBookTests
         book.PinFingerprint(code.Id, PlayerFingerprint.Of("amie", 21));
 
         Assert.Equal(PlayerFingerprint.Of("amie", 21), book.Find(code.Id)!.PinnedFingerprint);
+    }
+}
+
+public class PinnedBlobsTests
+{
+    private static BlobHash H(string content) => BlobHash.OfContent(System.Text.Encoding.UTF8.GetBytes(content));
+
+    private static CharacterManifest With(params string[] contents)
+        => new(CharacterManifest.CurrentVersion,
+               contents.Select(c => new FileReplacement([$"chara/x/{c}.tex"], H(c), 1)).ToArray(),
+               string.Empty, null);
+
+    [Fact]
+    public void Tous_les_blobs_des_manifestes_sont_epingles_sans_doublon()
+    {
+        var pinned = PinnedBlobs.Of([With("a", "b"), null, With("b", "c")]);
+
+        Assert.Equal(3, pinned.Count);
+        Assert.Contains(H("a"), pinned);
+        Assert.Contains(H("c"), pinned);
     }
 }
