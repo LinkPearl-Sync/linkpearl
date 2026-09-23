@@ -9,6 +9,11 @@ name: Publier le plugin
 # les imposer à tout le monde : Dalamud ne les propose qu'à ceux qui ont
 # coché « Get plugin testing builds ».
 
+# Le nom affiché de chaque exécution : sans lui, GitHub reprend le titre du
+# dernier commit, qui ne dit rien de ce qui est publié. Le tag n'est ici
+# qu'un texte affiché, jamais exécuté.
+run-name: Publication ${{ github.ref_name }}
+
 on:
   push:
     tags:
