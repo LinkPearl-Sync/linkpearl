@@ -44,7 +44,8 @@ internal sealed class PairsPage(
             Feedback.EmptyState(
                 Icons.Pairs,
                 "Aucun pair",
-                "Allez dans « Autour de vous » et demandez le pairage à quelqu'un qui utilise Linkpearl.");
+                "Allez dans « Autour de vous » et demandez le pairage à quelqu'un qui utilise Linkpearl, "
+              + "ou restaurez une sauvegarde depuis les réglages.");
 
             return;
         }

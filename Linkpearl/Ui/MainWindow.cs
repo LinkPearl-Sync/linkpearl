@@ -27,6 +27,7 @@ public sealed class MainWindow : ThemedWindow
     private readonly PluginState _state;
     private readonly Func<IReadOnlyList<PeerStatus>> _statuses;
     private readonly RequestsPage _requests;
+    private readonly BackupCard _backup;
     private readonly AppShell _shell;
 
     public MainWindow(
@@ -34,7 +35,8 @@ public sealed class MainWindow : ThemedWindow
         Func<IReadOnlyList<PeerStatus>> statuses, DiscoveryState discovery,
         Action<RendezvousAddress> discover,
         Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline,
-        Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair)
+        Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
+        BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -45,7 +47,8 @@ public sealed class MainWindow : ThemedWindow
 
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
         var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair);
-        var settings = new SettingsPage(configuration, discovery, discover);
+        _backup = new BackupCard(backupState, backup, restore);
+        var settings = new SettingsPage(configuration, discovery, discover, _backup);
 
         _requests = new RequestsPage(state, presence, accept, decline);
 
@@ -95,6 +98,7 @@ public sealed class MainWindow : ThemedWindow
             _shell.Navigate("requests");
 
         _shell.Draw(out var closeRequested, Status());
+        _backup.DrawDialogs();
 
         if (closeRequested)
             IsOpen = false;

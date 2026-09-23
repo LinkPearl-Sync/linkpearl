@@ -53,6 +53,8 @@ internal static class Icons
     public const FontAwesomeIcon Copy    = FontAwesomeIcon.Copy;
     public const FontAwesomeIcon Refresh = FontAwesomeIcon.SyncAlt;
     public const FontAwesomeIcon Close   = FontAwesomeIcon.Times;
+    public const FontAwesomeIcon Backup  = FontAwesomeIcon.Save;
+    public const FontAwesomeIcon Restore = FontAwesomeIcon.FileImport;
 
     // ─── Messages ─────────────────────────────────────────────────────────────
     public const FontAwesomeIcon Warning = FontAwesomeIcon.ExclamationTriangle;
@@ -72,7 +74,7 @@ internal static class Icons
         Nearby, Pairs, Requests, Settings,
         Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
-        Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close,
+        Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore,
         Warning, Info, Empty,
     ];
 }

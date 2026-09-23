@@ -16,7 +16,26 @@ namespace Linkpearl.Integration;
 public static class CharacterStorage
 {
     /// <summary>Ce qui appartient à un personnage, et à lui seul.</summary>
-    private static readonly string[] Belongings = ["identity.key", "pairs.json", "invitations.json"];
+    public static readonly string[] Belongings = ["identity.key", "pairs.json", "invitations.json"];
+
+    /// <summary>
+    /// Écarte un fichier sans le détruire, et rend le nom sous lequel il reste.
+    /// </summary>
+    /// <remarks>
+    /// Une identité illisible aujourd'hui peut redevenir lisible demain : un
+    /// profil Windows restauré, une sauvegarde retrouvée. L'écraser par une
+    /// neuve serait perdre tous les pairages sans retour, et sans que personne
+    /// ne l'ait décidé.
+    /// </remarks>
+    public static string? SetAside(string path, string reason)
+    {
+        if (File.Exists(path) is false)
+            return null;
+
+        var aside = $"{path}.{reason}-{DateTime.Now:yyyyMMdd-HHmmss}";
+        File.Move(path, aside, overwrite: true);
+        return aside;
+    }
 
     public static string Prepare(string baseRoot, ulong contentId, string legacyRoot, Action<string> log)
     {

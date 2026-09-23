@@ -39,7 +39,7 @@ public sealed class DiscoveryState
 /// se paie en vie privée doit se lire avant d'être coché, pas après.
 /// </remarks>
 internal sealed class SettingsPage(
-    Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover)
+    Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover, BackupCard backup)
 {
     private string _newAddress = "";
 
@@ -49,6 +49,7 @@ internal sealed class SettingsPage(
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
         DrawDiscoverable();
+        backup.Draw();
         DrawServices();
         DrawDiscovery();
     }

@@ -19,16 +19,25 @@ public sealed class DpapiIdentityStore(string path) : IIdentityStore
 {
     private static readonly byte[] Entropy = "linkpearl:identity:v1"u8.ToArray();
 
+    /// <remarks>
+    /// Une erreur d'entrée-sortie remonte au lieu de rendre null : null veut
+    /// dire « pas d'identité », et l'appelant en créerait une neuve. Un fichier
+    /// verrouillé un instant ne doit pas coûter tous les pairages.
+    /// </remarks>
     public byte[]? Load()
     {
+        if (File.Exists(path) is false)
+            return null;
+
         try
         {
-            return File.Exists(path)
-                ? ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser)
-                : null;
+            return ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser);
         }
-        catch (Exception e) when (e is CryptographicException or IOException)
+        catch (CryptographicException)
         {
+            // Protégée par un autre compte Windows, ou par ce compte avant une
+            // réinstallation du système. Écartée plutôt qu'écrasée.
+            CharacterStorage.SetAside(path, "illisible");
             return null;
         }
     }
@@ -41,6 +50,11 @@ public sealed class DpapiIdentityStore(string path) : IIdentityStore
         // une identité tronquée, qui reviendrait à perdre tous les pairages.
         var temporary = path + ".part";
         File.WriteAllBytes(temporary, ProtectedData.Protect(blob, Entropy, DataProtectionScope.CurrentUser));
-        File.Move(temporary, path, overwrite: true);
+
+        // Une identité ne s'écrit par-dessus une autre que par accident : la
+        // création suit une lecture qui a échoué, la restauration écarte déjà
+        // la sienne. L'ancienne reste donc à côté.
+        CharacterStorage.SetAside(path, "remplacee");
+        File.Move(temporary, path);
     }
 }

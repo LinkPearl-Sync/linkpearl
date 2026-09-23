@@ -41,20 +41,51 @@ public sealed class PairBookStore(string path)
     {
         try
         {
-            if (File.Exists(path) is false)
+            if (ReadPlain() is not { } plain)
                 return;
 
-            var plain = ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser);
             var records = JsonSerializer.Deserialize<List<Dto>>(plain) ?? [];
 
             book.Load(records.Select(Rehydrate).OfType<PairRecord>());
         }
-        catch (Exception e) when (e is CryptographicException or IOException or JsonException)
+        catch (Exception e) when (e is CryptographicException or JsonException)
         {
             // Carnet illisible : on démarre avec un carnet vide plutôt que
-            // d'empêcher le plugin de se charger. Rien n'est écrasé tant que
-            // l'utilisateur n'ajoute pas un pair.
+            // d'empêcher le plugin de se charger, et le fichier est écarté,
+            // sans quoi le premier pair ajouté l'écraserait.
+            CharacterStorage.SetAside(path, "illisible");
         }
+    }
+
+    /// <summary>Le carnet déchiffré, tel que la sauvegarde le transporte. Null s'il n'existe pas.</summary>
+    public byte[]? ReadPlain()
+        => File.Exists(path)
+            ? ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser)
+            : null;
+
+    /// <summary>Vrai si ces octets se relisent comme un carnet.</summary>
+    /// <remarks>
+    /// Vérifié avant toute restauration : un carnet qui ne se relit pas serait
+    /// écarté au chargement suivant, et les pairages avec lui.
+    /// </remarks>
+    public static bool IsValid(byte[] plain)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<Dto>>(plain) is not null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public void WritePlain(byte[] plain)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".part";
+        File.WriteAllBytes(temporary, ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser));
+        File.Move(temporary, path, overwrite: true);
     }
 
     public void Save(PairBook book)
@@ -74,12 +105,7 @@ public sealed class PairBookStore(string path)
             record.PinnedFingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null,
             record.Rendezvous.Select(place => place.ToString()).ToArray()));
 
-        var plain = JsonSerializer.SerializeToUtf8Bytes(dtos.ToList());
-
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".part";
-        File.WriteAllBytes(temporary, ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser));
-        File.Move(temporary, path, overwrite: true);
+        WritePlain(JsonSerializer.SerializeToUtf8Bytes(dtos.ToList()));
     }
 
     private static PairRecord? Rehydrate(Dto dto)

@@ -68,6 +68,15 @@ public sealed class Plugin : IDalamudPlugin
     private SyncEngine? _engine;
 
     private ulong _character;
+
+    /// <summary>Vrai pendant qu'une restauration réécrit les dossiers des personnages.</summary>
+    /// <remarks>
+    /// Le suivi du personnage se tait pendant ce temps : recharger le carnet au
+    /// milieu, ou pire le réécrire, mélangerait l'ancien et le restauré.
+    /// </remarks>
+    private volatile bool _restoring;
+
+    private readonly BackupState _backupState = new();
     private readonly string _root;
     private readonly string _legacyRoot;
     private readonly PairingService _pairing;
@@ -207,7 +216,10 @@ public sealed class Plugin : IDalamudPlugin
             Decline,
             (id, paused) => Report(_pairing.SetPaused(id, paused)),
             id => { _engine?.Reapply(id); Report("réapplication demandée."); },
-            id => Report(_pairing.Remove(id)));
+            id => Report(_pairing.Remove(id)),
+            _backupState,
+            (path, password) => RunSafely(() => BackupAsync(path, password)),
+            (path, password) => RunSafely(() => RestoreAsync(path, password)));
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -318,6 +330,9 @@ public sealed class Plugin : IDalamudPlugin
     {
         // L'identifiant de contenu du personnage connecté, que Dalamud expose
         // ici depuis qu'il a séparé l'état du joueur de celui du client.
+        if (_restoring)
+            return;
+
         var current = ClientState.IsLoggedIn ? PlayerState.ContentId : 0;
 
         if (current == _character)
@@ -599,6 +614,149 @@ public sealed class Plugin : IDalamudPlugin
 
         _statusBarDueAt = now + 1000;
         _statusBar.Update(_state.Nearby, _pairing.Book.All);
+
+        RemindBackup();
+    }
+
+    /// <summary>
+    /// Rappelle, une fois, qu'une sauvegarde existe.
+    /// </summary>
+    /// <remarks>
+    /// Au premier pair et pas avant : c'est à ce moment qu'il y a quelque chose
+    /// à perdre, et une réinstallation de Windows obligerait sinon à refaire
+    /// chaque pairage.
+    /// </remarks>
+    private void RemindBackup()
+    {
+        if (_configuration.BackupReminded || _pairing.Book.All.Count == 0)
+            return;
+
+        _configuration.BackupReminded = true;
+        _configuration.Save();
+
+        Report("pensez à sauvegarder votre identité (Réglages, « Sauvegarde de l'identité ») : "
+             + "sans elle, une réinstallation de Windows oblige à refaire chaque pairage.");
+    }
+
+    private string CharactersRoot => Path.Combine(_root, "characters");
+
+    private async Task BackupAsync(string destination, string? password)
+    {
+        _backupState.Running = true;
+
+        try
+        {
+            var (entries, unreadable) = await Task.Run(() => IdentityBackupService.Collect(CharactersRoot))
+                .ConfigureAwait(false);
+
+            if (entries.Count == 0)
+            {
+                Tell("aucun personnage à sauvegarder : connectez-vous d'abord avec chacun.", failed: true);
+                return;
+            }
+
+            // PBKDF2 prend une demi-seconde : hors du thread du jeu.
+            var content = await Task.Run(() => IdentityBackup.Write(entries, password)).ConfigureAwait(false);
+            IdentityBackupService.WriteFile(destination, content);
+
+            _configuration.BackupReminded = true;
+            _configuration.Save();
+
+            var saved = entries.Count == 1 ? "1 personnage sauvegardé" : $"{entries.Count} personnages sauvegardés";
+            var skipped = unreadable > 0 ? $", {unreadable} illisible(s) laissé(s) de côté" : "";
+
+            // Le nom du fichier seulement : un chemin complet porte le nom du
+            // compte Windows.
+            Tell($"{saved}{skipped}, dans {Path.GetFileName(destination)}.", failed: unreadable > 0);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Tell($"écriture impossible : {e.Message}", failed: true);
+        }
+        finally
+        {
+            _backupState.Running = false;
+        }
+    }
+
+    private async Task RestoreAsync(string source, string? password)
+    {
+        _backupState.Running = true;
+
+        try
+        {
+            var file = new FileInfo(source);
+
+            if (file.Exists is false || file.Length > 16 * 1024 * 1024)
+            {
+                Tell("ce fichier n'est pas une sauvegarde Linkpearl.", failed: true);
+                return;
+            }
+
+            var content = await File.ReadAllBytesAsync(source).ConfigureAwait(false);
+            var read = await Task.Run(() => IdentityBackup.Read(content, password)).ConfigureAwait(false);
+
+            if (read.Failure is { } failure)
+            {
+                _backupState.AwaitingPassword = read.NeedsPassword ? source : null;
+
+                // La première demande de mot de passe n'est pas un échec : le
+                // fichier est simplement protégé.
+                Tell(password is null && read.NeedsPassword ? null : failure, failed: true);
+                return;
+            }
+
+            // Lâcher le personnage avant d'écrire : un carnet encore chargé
+            // réécrirait l'ancien par-dessus le restauré.
+            await Framework.RunOnFrameworkThread(() =>
+            {
+                _restoring = true;
+                ReleaseCharacter();
+            }).ConfigureAwait(false);
+
+            (bool Restored, string Message) outcome;
+
+            try
+            {
+                outcome = await Task.Run(() => IdentityBackupService.Restore(CharactersRoot, read.Entries))
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                // Zéro force le suivi à reprendre le personnage connecté à
+                // l'image suivante, avec l'identité qu'on vient de poser.
+                await Framework.RunOnFrameworkThread(() =>
+                {
+                    _character = 0;
+                    _restoring = false;
+                }).ConfigureAwait(false);
+            }
+
+            _backupState.AwaitingPassword = null;
+
+            if (outcome.Restored)
+            {
+                _configuration.BackupReminded = true;
+                _configuration.Save();
+            }
+
+            Tell(outcome.Message, failed: outcome.Restored is false);
+            Report(outcome.Message);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Tell($"lecture impossible : {e.Message}", failed: true);
+        }
+        finally
+        {
+            _backupState.Running = false;
+        }
+    }
+
+    private void Tell(string? message, bool failed)
+    {
+        _backupState.Message = message;
+        _backupState.Failed = failed;
     }
 
     /// <summary>

@@ -77,5 +77,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Plafond d'émission, en octets par seconde.</summary>
     public long UploadCeilingBytesPerSecond { get; set; } = 8 * 1024 * 1024;
 
+    /// <summary>Le rappel de sauvegarder a été fait, ou une sauvegarde faite.</summary>
+    /// <remarks>
+    /// Une seule fois : un rappel qui revient à chaque connexion s'apprend à
+    /// ignorer, et ne sert alors plus à rien.
+    /// </remarks>
+    public bool BackupReminded { get; set; }
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
