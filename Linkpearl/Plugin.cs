@@ -103,6 +103,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly StatusBarEntry _statusBar;
     private readonly TransferOverlay _overlay;
     private readonly ExtrasIpc _extras;
+    private readonly TransientCapture _transients;
     private long _statusBarDueAt;
     private readonly Configuration _configuration;
     private readonly SystemClock _clock = new();
@@ -174,8 +175,13 @@ public sealed class Plugin : IDalamudPlugin
 
         _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
         _extras = new ExtrasIpc(PluginInterface, Objects, Log);
+        _transients = new TransientCapture(penumbra, Framework, Objects, clock, Log);
         _appearance = new LocalAppearance(
-            penumbra, glamourer, Framework, Objects, _extras, MoodlesKey, _cache, Log);
+            penumbra, glamourer, Framework, Objects, _extras, _transients, MoodlesKey, _cache, Log);
+
+        // Une animation moddée jouée pour la première fois : elle rejoint
+        // l'apparence annoncée, par le même anti-rebond.
+        _transients.Discovered += _appearanceChanged.Signal;
 
         // Tout changement de mod affectant le personnage produit un redessin, et
         // Glamourer signale chaque changement d'état. Les deux sont levés
@@ -388,6 +394,7 @@ public sealed class Plugin : IDalamudPlugin
         var root = CharacterStorage.Prepare(_root, contentId, _legacyRoot, Report);
 
         _pairing.Bind(root);
+        _transients.Attach(root);
 
         _engine = new SyncEngine(
             _pairing.Book,
@@ -412,6 +419,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _engine = null;
         _pairing.Unbind();
+        _transients.Attach(null);
 
         if (engine is null)
             return;
@@ -1169,6 +1177,7 @@ public sealed class Plugin : IDalamudPlugin
         _engine?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         _applicator.Dispose();
         _appearance.Dispose();
+        _transients.Dispose();
         _extras.Dispose();
         _penumbra.Dispose();
         _glamourer.Dispose();

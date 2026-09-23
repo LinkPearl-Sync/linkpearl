@@ -1,3 +1,4 @@
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
@@ -31,6 +32,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly IFramework _framework;
     private readonly IObjectTable _objects;
     private readonly ExtrasIpc _extras;
+    private readonly TransientCapture _transients;
     private readonly Func<byte[]?> _moodlesKey;
     private readonly IBlobStore _store;
     private readonly IPluginLog _log;
@@ -46,13 +48,14 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
     public LocalAppearance(
         PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
-        ExtrasIpc extras, Func<byte[]?> moodlesKey, IBlobStore store, IPluginLog log)
+        ExtrasIpc extras, TransientCapture transients, Func<byte[]?> moodlesKey, IBlobStore store, IPluginLog log)
     {
         _penumbra = penumbra;
         _glamourer = glamourer;
         _framework = framework;
         _objects = objects;
         _extras = extras;
+        _transients = transients;
         _moodlesKey = moodlesKey;
         _store = store;
         _log = log;
@@ -154,13 +157,15 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
             return;
         }
 
-        var (resources, meta, glamourer, rawExtras) = snapshot.Value;
+        var (resources, meta, glamourer, rawExtras, transientPaths, transientResolved) = snapshot.Value;
 
         if (resources is null)
         {
             Description = "Penumbra n'a rendu aucune ressource";
             return;
         }
+
+        resources = WithTransients(resources, transientPaths, transientResolved);
 
         var classified = ResourcePathClassifier.Classify(
             resources.Select(kv => (kv.Key, (IReadOnlyCollection<string>)kv.Value)), Quotas.Default);
@@ -268,19 +273,33 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     /// Le contrôle et la lecture se font dans le même passage sur le thread du
     /// framework : entre les deux, un redessin pourrait sinon recommencer.
     /// </remarks>
-    private async Task<(IReadOnlyDictionary<string, HashSet<string>>? Resources, string Meta, string? Glamourer, CharacterExtras Extras)?>
+    ///
+    /// Les animations retenues pour le job courant sont re-résolues dans le
+    /// même passage, par la collection du joueur telle qu'elle est maintenant :
+    /// un mod désactivé depuis ne doit plus rien faire partir.
+    /// </remarks>
+    private async Task<(IReadOnlyDictionary<string, HashSet<string>>? Resources, string Meta, string? Glamourer,
+            CharacterExtras Extras, string[] TransientPaths, string[] TransientResolved)?>
         ReadWhenDrawnAsync(CancellationToken ct)
     {
         for (var attempt = 0; attempt < 40; attempt++)
         {
             var snapshot = await _framework.RunOnFrameworkThread(() =>
-                _objects[PlayerIndex] is { } local && DrawReadiness.IsReady(local)
-                    ? ((IReadOnlyDictionary<string, HashSet<string>>?, string, string?, CharacterExtras)?)(
-                        _penumbra.ResourcePathsOf(PlayerIndex),
-                        _penumbra.MetaManipulations(),
-                        _glamourer.StateOf(PlayerIndex),
-                        _extras.ReadLocal(local))
-                    : null).ConfigureAwait(false);
+            {
+                if (_objects[PlayerIndex] is not { } local || DrawReadiness.IsReady(local) is false)
+                    return null;
+
+                var job = local is ICharacter character ? character.ClassJob.RowId : 0;
+                var transients = _transients.Collect(job);
+
+                return ((IReadOnlyDictionary<string, HashSet<string>>?, string, string?, CharacterExtras, string[], string[])?)(
+                    _penumbra.ResourcePathsOf(PlayerIndex),
+                    _penumbra.MetaManipulations(),
+                    _glamourer.StateOf(PlayerIndex),
+                    _extras.ReadLocal(local),
+                    transients,
+                    _penumbra.ResolvePlayer(transients));
+            }).ConfigureAwait(false);
 
             if (snapshot is not null)
                 return snapshot;
@@ -289,6 +308,46 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>Ajoute aux ressources les animations retenues qui sont encore moddées.</summary>
+    /// <remarks>
+    /// Celles qui ne le sont plus sont oubliées : leur mod a été retiré ou
+    /// désactivé, et les annoncer ferait poser chez l'autre ce qu'on ne porte
+    /// plus.
+    /// </remarks>
+    private IReadOnlyDictionary<string, HashSet<string>> WithTransients(
+        IReadOnlyDictionary<string, HashSet<string>> resources, string[] paths, string[] resolved)
+    {
+        if (paths.Length == 0 || resolved.Length != paths.Length)
+        {
+            _transients.Settle([]);
+            return resources;
+        }
+
+        var merged = resources.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
+        var vanilla = new List<string>();
+
+        for (var i = 0; i < paths.Length; i++)
+        {
+            if (TransientPath.TryModded(paths[i], resolved[i], out var actual) is false)
+            {
+                vanilla.Add(paths[i]);
+                continue;
+            }
+
+            if (merged.TryGetValue(actual, out var gamePaths) is false)
+                merged[actual] = gamePaths = [];
+
+            gamePaths.Add(paths[i]);
+        }
+
+        _transients.Settle(vanilla);
+
+        if (vanilla.Count > 0)
+            _log.Debug($"{vanilla.Count} animation(s) retenue(s) redevenue(s) vanilla, oubliée(s).");
+
+        return merged;
     }
 
     private CharacterExtras Clean(CharacterExtras raw)

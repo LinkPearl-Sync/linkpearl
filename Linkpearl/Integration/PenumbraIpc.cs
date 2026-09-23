@@ -28,8 +28,10 @@ public sealed class PenumbraIpc : IDisposable
     private readonly DeleteTemporaryCollection _deleteCollection;
     private readonly RedrawObject _redraw;
     private readonly GetCollectionForObject _collectionForObject;
+    private readonly ResolvePlayerPaths _resolvePlayer;
     private readonly IDisposable _redrawn;
     private readonly IDisposable _settings;
+    private readonly IDisposable _resolved;
 
     public PenumbraIpc(IDalamudPluginInterface pi)
     {
@@ -43,6 +45,7 @@ public sealed class PenumbraIpc : IDisposable
         _deleteCollection  = new DeleteTemporaryCollection(pi);
         _redraw            = new RedrawObject(pi);
         _collectionForObject = new GetCollectionForObject(pi);
+        _resolvePlayer     = new ResolvePlayerPaths(pi);
 
         // Le redessin est le signal qui compte : tout changement de mod
         // affectant le personnage en produit un. S'abonner aux changements de
@@ -56,7 +59,20 @@ public sealed class PenumbraIpc : IDisposable
         // large que nécessaire (toute collection), mais l'anti-rebond et la
         // comparaison par hachage absorbent les reconstructions pour rien.
         _settings = ModSettingChanged.Subscriber(pi, (_, _, _, _) => SettingsChanged?.Invoke());
+
+        // Seul moyen d'apprendre qu'une animation ou un VFX est moddé : le jeu
+        // ne les charge qu'au moment de les jouer, et l'arbre des ressources
+        // d'un personnage ne les montre pas.
+        _resolved = GameObjectResourcePathResolved.Subscriber(
+            pi, (address, gamePath, localPath) => ResourceResolved?.Invoke(address, gamePath, localPath));
     }
+
+    /// <summary>Penumbra a résolu une ressource pour un objet : adresse, chemin de jeu, chemin résolu.</summary>
+    /// <remarks>
+    /// Levé très souvent, et pas forcément depuis le thread du jeu : l'abonné
+    /// ne fait que trier et mettre en file.
+    /// </remarks>
+    public event Action<nint, string, string>? ResourceResolved;
 
     /// <summary>Un réglage de mod a changé, dans n'importe quelle collection.</summary>
     public event Action? SettingsChanged;
@@ -72,6 +88,7 @@ public sealed class PenumbraIpc : IDisposable
     {
         _redrawn.Dispose();
         _settings.Dispose();
+        _resolved.Dispose();
     }
 
     /// <summary>
@@ -96,6 +113,11 @@ public sealed class PenumbraIpc : IDisposable
     /// <summary>Ressources résolues pour un objet : chemin réel vers chemins de jeu.</summary>
     public IReadOnlyDictionary<string, HashSet<string>>? ResourcePathsOf(ushort objectIndex)
         => _resourcePaths.Invoke(objectIndex)[0];
+
+    /// <summary>Résout des chemins de jeu pour la collection du joueur ; même longueur, même ordre.</summary>
+    /// <remarks>Un chemin que Penumbra ne touche pas revient tel quel.</remarks>
+    public string[] ResolvePlayer(string[] gamePaths)
+        => gamePaths.Length == 0 ? [] : _resolvePlayer.Invoke(gamePaths, []).Item1;
 
     public string MetaManipulations()
         => _meta.Invoke();
