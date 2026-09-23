@@ -47,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPlayerState            PlayerState     { get; private set; } = null!;
     [PluginService] internal static IContextMenu            ContextMenu     { get; private set; } = null!;
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
+    [PluginService] internal static IDtrBar                 DtrBar          { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly PenumbraIpc _penumbra;
@@ -87,6 +88,8 @@ public sealed class Plugin : IDalamudPlugin
         new(new SystemClock(), TimeSpan.FromMilliseconds(750), TimeSpan.FromSeconds(5));
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
+    private readonly StatusBarEntry _statusBar;
+    private long _statusBarDueAt;
     private readonly Configuration _configuration;
     private readonly SystemClock _clock = new();
     private SyncEngineSettings _engineSettings = new();
@@ -212,6 +215,10 @@ public sealed class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened += OnMenuOpened;
 
         _windows.AddWindow(_window);
+
+        _statusBar = new StatusBarEntry(DtrBar, Open);
+        Framework.Update += UpdateStatusBar;
+
         PluginInterface.UiBuilder.Draw += _windows.Draw;
         PluginInterface.UiBuilder.OpenMainUi += Open;
         PluginInterface.UiBuilder.OpenConfigUi += Open;
@@ -577,6 +584,24 @@ public sealed class Plugin : IDalamudPlugin
     private void PollLinks(IFramework framework) => _links.Poll();
 
     /// <summary>
+    /// Tient à jour le compte de la barre de statut.
+    /// </summary>
+    /// <remarks>
+    /// Une fois par seconde : l'instantané des joueurs proches ne change pas
+    /// plus vite, et la barre est un nœud du jeu qu'on ne touche que d'ici.
+    /// </remarks>
+    private void UpdateStatusBar(IFramework framework)
+    {
+        var now = Environment.TickCount64;
+
+        if (now < _statusBarDueAt)
+            return;
+
+        _statusBarDueAt = now + 1000;
+        _statusBar.Update(_state.Nearby, _pairing.Book.All);
+    }
+
+    /// <summary>
     /// Fait avancer le moteur.
     /// </summary>
     /// <remarks>
@@ -918,6 +943,8 @@ public sealed class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened -= OnMenuOpened;
         Framework.Update -= PollLinks;
         Framework.Update -= FollowCharacter;
+        Framework.Update -= UpdateStatusBar;
+        _statusBar.Dispose();
 
         // Le moteur d'abord : il retire des pairs ce qu'il leur a posé, et cela
         // passe par des appels au jeu que la suite ne pourrait plus faire.

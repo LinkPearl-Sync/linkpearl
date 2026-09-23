@@ -119,6 +119,12 @@ internal static class Fonts
         };
 
         p.AddFontAwesomeIconFont(in icons);
+
+        // Les symboles du jeu, dont le HQ qui sert de marque au plugin. Ils
+        // vivent dans la zone d'usage privé et ne chevauchent donc ni Inter ni
+        // FontAwesome.
+        var symbols = new SafeFontConfig { SizePx = sizePx, MergeFont = font };
+        p.AddGameSymbol(in symbols);
         p.SetFontScaleMode(font, FontScaleMode.Default);
     }
 
