@@ -152,6 +152,11 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
+        // Tout au début, avant GetPluginConfig() : Dalamud range configuration
+        // et identités sous l'InternalName, donc encore sous l'ancien nom tant
+        // que ceci n'a pas couru une première fois après le renommage.
+        AdoptLegacyConfiguration();
+
         var penumbra  = _penumbra  = new PenumbraIpc(PluginInterface);
         var glamourer = _glamourer = new GlamourerIpc(PluginInterface);
         _selfLoop = new SelfLoop(penumbra, glamourer, Log);
@@ -449,6 +454,42 @@ public sealed class Plugin : IDalamudPlugin
             PrefixColor = 541,
             OnClicked = _ => RunSafely(() => RequestPairAsync(target)),
         };
+    }
+
+    /// <summary>
+    /// Reprend la configuration et les identités d'avant le renommage en
+    /// LinkpearlSync, si elles sont manifestement à nous.
+    /// </summary>
+    /// <remarks>
+    /// pluginConfigs/Linkpearl.json et pluginConfigs/Linkpearl/ sont aussi les
+    /// emplacements du plugin officiel Linkpearl (NotNite) : LegacyConfigAdoption
+    /// vérifie que c'est bien à nous avant de reprendre quoi que ce soit, et ne
+    /// remplace ni n'efface jamais rien. Une reprise ratée ne doit pas empêcher
+    /// le plugin de charger, d'où le journal qui ne garde que le type
+    /// d'exception : IOException embarque souvent le chemin complet, qui porte
+    /// le nom du compte Windows.
+    /// </remarks>
+    private void AdoptLegacyConfiguration()
+    {
+        try
+        {
+            var newConfigFile = PluginInterface.ConfigFile.FullName;
+            var legacyConfigFile = Path.Combine(
+                Path.GetDirectoryName(newConfigFile) ?? "", "Linkpearl.json");
+
+            if (LegacyConfigAdoption.TryAdoptConfigFile(legacyConfigFile, newConfigFile))
+                Log.Information("configuration d'avant le renommage reprise.");
+
+            var newConfigDir = Path.TrimEndingDirectorySeparator(PluginInterface.ConfigDirectory.FullName);
+            var legacyConfigDir = Path.Combine(Path.GetDirectoryName(newConfigDir) ?? "", "Linkpearl");
+
+            if (LegacyConfigAdoption.TryAdoptDirectory(legacyConfigDir, newConfigDir))
+                Log.Information("identités d'avant le renommage reprises.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning($"reprise d'avant le renommage impossible ({e.GetType().Name}).");
+        }
     }
 
     /// <summary>Reprend le témoin des collections de l'emplacement précédent.</summary>
