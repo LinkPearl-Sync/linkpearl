@@ -70,7 +70,7 @@ internal static class Icons
     public static readonly FontAwesomeIcon[] All =
     [
         Nearby, Pairs, Requests, Settings,
-        Connected, Applied, Receiving, Waiting, Paused, Blocked, Verified, Unverified,
+        Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
         Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close,
         Warning, Info, Empty,
