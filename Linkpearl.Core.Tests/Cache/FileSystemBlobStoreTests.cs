@@ -293,4 +293,64 @@ public sealed class FileSystemBlobStoreTests : IDisposable
             Path.GetPathRoot(Path.Combine(_root, "incoming")));
         Assert.True(Directory.Exists(Path.Combine(_root, "incoming")));
     }
+
+    [Fact]
+    public async Task Un_cache_dont_le_dossier_a_disparu_refuse_d_ecrire_sans_le_recreer()
+    {
+        var store = Store();
+        var lost = 0;
+        store.RootLost += () => lost++;
+
+        Directory.Delete(_root, recursive: true);
+
+        var result = await PutAsync(store, Bytes("après la disparition"));
+
+        Assert.False(result.Accepted);
+        Assert.False(Directory.Exists(_root));
+        Assert.True(lost > 0);
+    }
+
+    [Fact]
+    public async Task Un_dossier_disparu_pendant_une_ecriture_n_est_pas_recree_a_la_publication()
+    {
+        var store = Store();
+        var content = Bytes("écrit pendant qu'on vide le disque");
+
+        await using var writer = await store.BeginWriteAsync(BlobHash.OfContent(content), content.Length, default);
+        await writer.WriteAsync(content, default);
+
+        // Sous Linux, un dossier se supprime même avec un fichier ouvert dedans :
+        // c'est le cas le plus défavorable, celui où la publication arrive après.
+        Directory.Delete(_root, recursive: true);
+
+        var result = await writer.CommitAsync(default);
+
+        Assert.False(result.Accepted);
+        Assert.False(Directory.Exists(_root));
+    }
+
+    [Fact]
+    public async Task Un_quota_abaisse_a_chaud_demande_une_eviction()
+    {
+        var store = Store();
+        await PutAsync(store, new byte[100]);
+
+        Assert.False(store.NeedsEviction);
+
+        store.SetQuota(50);
+
+        Assert.True(store.NeedsEviction);
+        Assert.Equal((long)(50 * new CacheSettings().LowWatermark), store.EvictionTarget);
+    }
+
+    [Fact]
+    public async Task Un_quota_abaisse_a_chaud_refuse_un_blob_plus_gros_que_lui()
+    {
+        var store = Store();
+        store.SetQuota(10);
+
+        var result = await PutAsync(store, new byte[20]);
+
+        Assert.False(result.Accepted);
+    }
 }

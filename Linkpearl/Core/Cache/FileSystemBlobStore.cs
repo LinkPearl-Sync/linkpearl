@@ -25,7 +25,9 @@ public sealed class FileSystemBlobStore : IBlobStore
     private sealed record Entry(long Size, DateTimeOffset LastUsed);
 
     private readonly string _root;
-    private readonly CacheSettings _settings;
+
+    /// <summary>Remplacé en bloc par <see cref="SetQuota"/>, lu sans verrou.</summary>
+    private volatile CacheSettings _settings;
     private readonly IClock _clock;
     private readonly Func<string, long> _freeSpace;
     private readonly ConcurrentDictionary<BlobHash, Entry> _entries = new();
@@ -47,6 +49,48 @@ public sealed class FileSystemBlobStore : IBlobStore
     private string BlobsDirectory => Path.Combine(_root, "blobs");
     private string IncomingDirectory => Path.Combine(_root, "incoming");
     private string IndexPath => Path.Combine(_root, "cache.index");
+
+    /// <summary>Le dossier du cache, tel qu'il a été ouvert.</summary>
+    public string Root => _root;
+
+    /// <summary>Faux si quelqu'un a supprimé le dossier depuis l'ouverture.</summary>
+    public bool RootExists => Directory.Exists(_root);
+
+    /// <summary>
+    /// Levé quand une écriture trouve le dossier disparu.
+    /// </summary>
+    /// <remarks>
+    /// Le sondage périodique finirait par le voir ; ceci le dit dès qu'un
+    /// transfert bute dessus. Peut être levé plusieurs fois, depuis n'importe
+    /// quel fil : l'abonné doit être idempotent.
+    /// </remarks>
+    public event Action? RootLost;
+
+    /// <summary>Change le quota sans rouvrir le cache.</summary>
+    /// <remarks>
+    /// L'éviction qui suit est l'affaire du moteur, qui sait ce qui est à
+    /// l'écran et ne doit pas partir.
+    /// </remarks>
+    public void SetQuota(long bytes) => _settings = _settings with { QuotaBytes = bytes };
+
+    private const string RootMissing = "dossier du cache introuvable";
+
+    /// <summary>
+    /// Vrai si la racine manque, après l'avoir signalé.
+    /// </summary>
+    /// <remarks>
+    /// Jamais de <c>Directory.CreateDirectory</c> de la racine en dehors du
+    /// constructeur : un dossier qui a disparu a peut-être été vidé exprès, ou
+    /// était sur un disque débranché.
+    /// </remarks>
+    private bool SignalIfRootMissing()
+    {
+        if (RootExists)
+            return false;
+
+        RootLost?.Invoke();
+        return true;
+    }
 
     public long TotalBytes => _entries.Values.Sum(e => e.Size);
 
@@ -92,12 +136,15 @@ public sealed class FileSystemBlobStore : IBlobStore
 
     public Task<IBlobWriter> BeginWriteAsync(BlobHash expected, long expectedSize, CancellationToken ct)
     {
+        if (SignalIfRootMissing())
+            return Task.FromResult<IBlobWriter>(new RefusedBlobWriter(RootMissing));
+
         if (IsReadOnly)
-            return Task.FromResult<IBlobWriter>(new RefusedWriter(
+            return Task.FromResult<IBlobWriter>(new RefusedBlobWriter(
                 $"espace libre insuffisant sur le volume du cache (moins de {_settings.MinimumFreeBytes} octets)"));
 
         if (expectedSize > _settings.QuotaBytes)
-            return Task.FromResult<IBlobWriter>(new RefusedWriter(
+            return Task.FromResult<IBlobWriter>(new RefusedBlobWriter(
                 $"blob plus gros que le quota entier ({expectedSize} octets pour un quota de {_settings.QuotaBytes})"));
 
         var part = Path.Combine(IncomingDirectory, Guid.NewGuid().ToString("N") + ".part");
@@ -106,12 +153,15 @@ public sealed class FileSystemBlobStore : IBlobStore
 
     public Task<IBlobAssembly> BeginAssemblyAsync(BlobHash expected, long expectedSize, CancellationToken ct)
     {
+        if (SignalIfRootMissing())
+            return Task.FromResult<IBlobAssembly>(new RefusedBlobAssembly(RootMissing));
+
         if (IsReadOnly)
-            return Task.FromResult<IBlobAssembly>(new RefusedAssembly(
+            return Task.FromResult<IBlobAssembly>(new RefusedBlobAssembly(
                 $"espace libre insuffisant sur le volume du cache (moins de {_settings.MinimumFreeBytes} octets)"));
 
         if (expectedSize > _settings.QuotaBytes)
-            return Task.FromResult<IBlobAssembly>(new RefusedAssembly(
+            return Task.FromResult<IBlobAssembly>(new RefusedBlobAssembly(
                 $"blob plus gros que le quota entier ({expectedSize} octets pour un quota de {_settings.QuotaBytes})"));
 
         var part = Path.Combine(IncomingDirectory, Guid.NewGuid().ToString("N") + ".part");
@@ -240,31 +290,6 @@ public sealed class FileSystemBlobStore : IBlobStore
 
     private void Publish(BlobHash hash, long size) => _entries[hash] = new Entry(size, _clock.UtcNow);
 
-    /// <summary>Écriture refusée d'avance, pour que l'appelant n'ait qu'un chemin à gérer.</summary>
-    private sealed class RefusedWriter(string reason) : IBlobWriter
-    {
-        public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) => ValueTask.CompletedTask;
-
-        public ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct)
-            => ValueTask.FromResult(BlobCommitResult.Refused(reason));
-
-        public void Abort() { }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
-    private sealed class RefusedAssembly(string reason) : IBlobAssembly
-    {
-        public ValueTask WriteAtAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct) => ValueTask.CompletedTask;
-
-        public ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct)
-            => ValueTask.FromResult(BlobCommitResult.Refused(reason));
-
-        public void Abort() { }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
     /// <summary>
     /// Un blob écrit par morceaux placés.
     /// </summary>
@@ -323,6 +348,14 @@ public sealed class FileSystemBlobStore : IBlobStore
             {
                 Discard();
                 return BlobCommitResult.Refused($"empreinte reçue {actual}, annoncée {expected}");
+            }
+
+            // Le dossier a pu disparaître pendant le transfert : le recréer
+            // ici, c'est remplir un disque que l'utilisateur vient de vider.
+            if (store.SignalIfRootMissing())
+            {
+                Discard();
+                return BlobCommitResult.Refused(RootMissing);
             }
 
             var destination = store.PathFor(expected);
@@ -441,6 +474,14 @@ public sealed class FileSystemBlobStore : IBlobStore
             {
                 Discard();
                 return BlobCommitResult.Refused($"empreinte reçue {actual}, annoncée {expected}");
+            }
+
+            // Le dossier a pu disparaître pendant le transfert : le recréer
+            // ici, c'est remplir un disque que l'utilisateur vient de vider.
+            if (store.SignalIfRootMissing())
+            {
+                Discard();
+                return BlobCommitResult.Refused(RootMissing);
             }
 
             var destination = store.PathFor(expected);

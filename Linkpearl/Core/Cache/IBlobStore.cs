@@ -25,6 +25,16 @@ public interface IBlobStore
     void Touch(BlobHash hash);
 
     Task EvictToAsync(long targetBytes, IReadOnlySet<BlobHash> pinned, CancellationToken ct);
+
+    /// <summary>Vrai quand le cache dépasse son quota.</summary>
+    /// <remarks>
+    /// Par défaut faux : les doublures de test n'ont pas de quota, et n'ont pas
+    /// à en inventer un.
+    /// </remarks>
+    bool NeedsEviction => false;
+
+    /// <summary>La taille à laquelle une éviction doit redescendre.</summary>
+    long EvictionTarget => TotalBytes;
 }
 
 /// <summary>
