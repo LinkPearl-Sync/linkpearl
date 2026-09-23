@@ -52,6 +52,13 @@ l'implémentation qu'ils testent.
 - **Le noyau ne voit jamais un nom de personnage en clair.** C'est l'adaptateur Dalamud qui
   hache `nom@monde`. Cette frontière rend structurellement impossible qu'un nom fuite dans
   une trame ou dans un journal.
+- **L'identité appartient au personnage, pas à l'installation.** La clé, le carnet de pairs
+  et les invitations vivent sous `PluginInterface.ConfigDirectory`, dans
+  `characters/<empreinte du ContentId>/`, et ne sont chargés qu'une fois connecté :
+  `Plugin.FollowCharacter` les attache et les détache. Deux personnages sont deux pairs que
+  personne ne peut relier l'un à l'autre, et deux clients sur une même machine peuvent
+  s'appairer pour de vrai. Le cache de blobs fait exception et reste sous `%LocalAppData%` :
+  il pèse des gigaoctets et se régénère, ce qui n'a rien à faire dans un profil itinérant.
 - **Le cache accélère, il ne remplace pas le consentement.** Un pair injoignable garde son
   apparence par défaut, même si son dernier manifeste est en cache. Une apparence périmée
   est indiscernable d'une apparence courante par celui qui la regarde.

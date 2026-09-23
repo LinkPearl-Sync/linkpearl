@@ -41,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IChatGui                Chat            { get; private set; } = null!;
     [PluginService] internal static IObjectTable            Objects         { get; private set; } = null!;
     [PluginService] internal static IClientState            ClientState     { get; private set; } = null!;
+    [PluginService] internal static IPlayerState            PlayerState     { get; private set; } = null!;
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
@@ -51,7 +52,19 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PeerLinkFactory _links;
     private readonly LocalAppearance _appearance;
     private readonly RemoteApplicator _applicator;
-    private readonly SyncEngine _engine;
+    /// <summary>
+    /// Le moteur n'existe qu'une fois un personnage connecté.
+    /// </summary>
+    /// <remarks>
+    /// Il porte la clé d'identité, qui appartient au personnage : la construire
+    /// à l'écran-titre reviendrait à en inventer une pour personne, que le
+    /// premier connecté hériterait.
+    /// </remarks>
+    private SyncEngine? _engine;
+
+    private ulong _character;
+    private readonly string _root;
+    private readonly string _legacyRoot;
     private readonly PairingService _pairing;
     private readonly PresenceService _presence;
     private readonly DalamudObjectSource _objectSource;
@@ -71,6 +84,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
     private readonly Configuration _configuration;
+    private readonly SystemClock _clock = new();
+    private SyncEngineSettings _engineSettings = new();
     private readonly CancellationTokenSource _shutdown = new();
 
     /// <summary>Les empreintes visibles à la ronde précédente.</summary>
@@ -93,12 +108,26 @@ public sealed class Plugin : IDalamudPlugin
         // n'est demandé à l'utilisateur, et rien n'est écrasé s'il a déjà choisi.
         _configuration.MigrateIfNeeded();
 
-        var root = Path.Combine(
+        // Le dossier que Dalamud attribue au plugin, et non un chemin de notre
+        // invention : c'est là qu'une sauvegarde, une désinstallation ou un
+        // utilisateur curieux iront chercher ce qui appartient à Linkpearl.
+        var root = _root = PluginInterface.ConfigDirectory.FullName;
+        Directory.CreateDirectory(root);
+
+        // Le cache reste ailleurs : plusieurs gigaoctets qui se régénèrent n'ont
+        // rien à faire dans un profil itinérant. C'est aussi l'emplacement
+        // d'avant, donc les caches déjà constitués restent utilisables.
+        _legacyRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Linkpearl");
 
-        var clock = new SystemClock();
-        _pairing = new PairingService(root, _configuration, clock, Log);
-        _presence = new PresenceService(_configuration, _pairing.Identity, clock, Log);
+        // Le témoin des collections posées suit le plugin dans son dossier.
+        // Il est repris de l'ancien emplacement, sans quoi les collections
+        // laissées par la session d'avant ne seraient plus retirables.
+        AdoptLeftoverMarker();
+
+        var clock = _clock;
+        _pairing = new PairingService(_configuration, clock, Log);
+        _presence = new PresenceService(_configuration, () => _pairing.Identity, clock, Log);
         _objectSource = new DalamudObjectSource(Objects, ClientState, Framework);
 
         // Le moteur et ce qu'il lui faut. Une seule socket pour tous les pairs :
@@ -113,7 +142,7 @@ public sealed class Plugin : IDalamudPlugin
         };
 
         _cache = new FileSystemBlobStore(
-            _configuration.CacheDirectory is "" ? Path.Combine(root, "cache") : _configuration.CacheDirectory,
+            _configuration.CacheDirectory is "" ? Path.Combine(_legacyRoot, "cache") : _configuration.CacheDirectory,
             new CacheSettings { QuotaBytes = _configuration.CacheQuotaBytes },
             clock,
             path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace);
@@ -140,15 +169,11 @@ public sealed class Plugin : IDalamudPlugin
         _applicator = new RemoteApplicator(
             penumbra, glamourer, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
 
-        _engine = new SyncEngine(
-            _pairing.Book,
-            new PeerConnector(
-                _links,
-                new RendezvousEndpoint(_configuration.RendezvousHost, _configuration.RendezvousPort),
-                clock,
-                new PluginLogSink(Log, "moteur")),
-            _appearance, _applicator, _cache, _pairing.Id, _pairing.Identity.Key, clock,
-            new PluginLogSink(Log, "moteur"), engineSettings);
+        _engineSettings = engineSettings;
+
+        // Le personnage est inconnu au chargement : le plugin démarre à
+        // l'écran-titre. Tout ce qui porte l'identité attend donc la connexion.
+        Framework.Update += FollowCharacter;
 
         // PollEvents depuis le thread du jeu, jamais avec UnsyncedEvents : les
         // trames reçues remontent ainsi sur le fil qui a le droit de toucher au
@@ -162,7 +187,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
-            () => _engine.Statuses,
+            () => _engine?.Statuses ?? [],
             _discovery,
             at => RunSafely(() => DiscoverAsync(at)),
             player => RunSafely(() => RequestPairAsync(player)),
@@ -202,6 +227,109 @@ public sealed class Plugin : IDalamudPlugin
         });
     }
 
+    /// <summary>Reprend le témoin des collections de l'emplacement précédent.</summary>
+    private void AdoptLeftoverMarker()
+    {
+        const string marker = "remote-collections.txt";
+
+        var from = Path.Combine(_legacyRoot, marker);
+        var to = Path.Combine(_root, marker);
+
+        try
+        {
+            if (File.Exists(from) && File.Exists(to) is false)
+                File.Move(from, to);
+        }
+        catch (IOException e)
+        {
+            Log.Warning(e, "Reprise du témoin de collections impossible.");
+        }
+    }
+
+    /// <summary>
+    /// Suit le personnage connecté, et attache l'identité qui lui appartient.
+    /// </summary>
+    /// <remarks>
+    /// Sur le changement de l'identifiant plutôt que sur les événements de
+    /// connexion : le même test couvre l'arrivée à l'écran de sélection, le
+    /// départ, et le passage d'un personnage à un autre sans déconnexion, qui
+    /// ne lève pas les mêmes événements.
+    /// </remarks>
+    private void FollowCharacter(IFramework framework)
+    {
+        // L'identifiant de contenu du personnage connecté, que Dalamud expose
+        // ici depuis qu'il a séparé l'état du joueur de celui du client.
+        var current = ClientState.IsLoggedIn ? PlayerState.ContentId : 0;
+
+        if (current == _character)
+            return;
+
+        _character = current;
+
+        try
+        {
+            ReleaseCharacter();
+
+            if (current is not 0)
+                TakeCharacter(current);
+        }
+        catch (Exception e)
+        {
+            // Une exception ici remonterait dans la boucle du jeu.
+            Log.Error(e, "Changement de personnage en échec.");
+            Report("l'identité de ce personnage n'a pas pu être chargée, voir le journal.");
+        }
+    }
+
+    private void TakeCharacter(ulong contentId)
+    {
+        var root = CharacterStorage.Prepare(_root, contentId, _legacyRoot, Report);
+
+        _pairing.Bind(root);
+
+        _engine = new SyncEngine(
+            _pairing.Book,
+            new PeerConnector(
+                _links,
+                new RendezvousEndpoint(_configuration.RendezvousHost, _configuration.RendezvousPort),
+                _clock,
+                new PluginLogSink(Log, "moteur")),
+            _appearance, _applicator, _cache, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
+            new PluginLogSink(Log, "moteur"), _engineSettings);
+
+        var pairs = _pairing.Book.All.Count;
+
+        Report(pairs is 0
+            ? $"identité de ce personnage : {_pairing.Id}. Aucun pair pour l'instant."
+            : $"identité de ce personnage : {_pairing.Id}. {pairs} pair(s) au carnet.");
+    }
+
+    private void ReleaseCharacter()
+    {
+        var engine = _engine;
+
+        _engine = null;
+        _pairing.Unbind();
+
+        if (engine is null)
+            return;
+
+        // Hors du thread du jeu : le moteur retire des pairs ce qu'il leur a
+        // posé, ce qui passe par RunOnFrameworkThread, et l'attendre depuis ce
+        // thread-là se bloquerait sur soi-même.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await engine.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                Log.Warning(e, "Arrêt du moteur en échec au changement de personnage.");
+            }
+        });
+    }
+
     private static string Describe((int Major, int Minor)? version)
         => version is { } v ? $"{v.Major}.{v.Minor}" : "absent";
 
@@ -214,7 +342,11 @@ public sealed class Plugin : IDalamudPlugin
             case "invite":        RunSafely(InviteAsync);                      break;
             case "check":         RunSafely(CheckAsync);                       break;
             case "pairs":         ShowPairs();                                 break;
-            case "id":            Report($"votre identifiant : {_pairing.Id}"); break;
+            case "id":
+                Report(_pairing.Id is { } id
+                    ? $"votre identifiant sur ce personnage : {id}"
+                    : "connectez-vous d'abord : l'identité appartient au personnage.");
+                break;
             case "":              Open();                                      break;
             case "diag":          RunSafely(DiagnoseAsync);                    break;
             case "unlock":        RunSafely(UnlockAsync);                      break;
@@ -407,7 +539,8 @@ public sealed class Plugin : IDalamudPlugin
                     .Select(player => new VisiblePlayer(player.Object, player.Fingerprint))
                     .ToList();
 
-                await _engine.TickAsync(visible, ct).ConfigureAwait(false);
+                if (_engine is { } engine)
+                    await engine.TickAsync(visible, ct).ConfigureAwait(false);
             }
             catch (Exception e) when (ct.IsCancellationRequested is false)
             {
@@ -423,7 +556,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         Report($"apparence annoncée : {_appearance.Description}{(_appearance.Building ? " (en construction)" : "")}");
 
-        var statuses = _engine.Statuses;
+        var statuses = _engine?.Statuses ?? [];
 
         if (statuses.Count == 0)
         {
@@ -682,10 +815,11 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.RemoveHandler(Command);
         Framework.Update -= PollLinks;
+        Framework.Update -= FollowCharacter;
 
         // Le moteur d'abord : il retire des pairs ce qu'il leur a posé, et cela
         // passe par des appels au jeu que la suite ne pourrait plus faire.
-        _engine.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        _engine?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         _applicator.Dispose();
         _appearance.Dispose();
         _penumbra.Dispose();

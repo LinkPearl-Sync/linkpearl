@@ -30,7 +30,7 @@ public sealed record IncomingRequest(
 public sealed class PresenceService : IDisposable
 {
     private readonly Configuration _configuration;
-    private readonly IdentityKeyPair _identity;
+    private readonly Func<IdentityKeyPair?> _identity;
     private readonly IPluginLog _log;
     private readonly IClock _clock;
 
@@ -65,13 +65,22 @@ public sealed class PresenceService : IDisposable
         public DateTimeOffset NextAttempt { get; set; }
     }
 
-    public PresenceService(Configuration configuration, IdentityKeyPair identity, IClock clock, IPluginLog log)
+    /// <remarks>
+    /// L'identité est demandée à chaque usage et non prise une fois : elle
+    /// appartient au personnage connecté, donc elle apparaît à la connexion,
+    /// change au changement de personnage, et n'existe pas à l'écran-titre.
+    /// </remarks>
+    public PresenceService(Configuration configuration, Func<IdentityKeyPair?> identity, IClock clock, IPluginLog log)
     {
         _configuration = configuration;
         _identity = identity;
         _clock = clock;
         _log = log;
     }
+
+    /// <summary>Ce qu'on répond tant qu'aucun personnage n'est connecté.</summary>
+    private const string NoCharacter =
+        "connectez-vous d'abord : l'identité Linkpearl appartient au personnage, pas à l'installation.";
 
     /// <summary>Vrai dès qu'un seul service répond.</summary>
     /// <remarks>
@@ -287,10 +296,13 @@ public sealed class PresenceService : IDisposable
         if (Connected is false)
             return "aucun service de rendez-vous joignable.";
 
+        if (_identity() is not { } identity)
+            return NoCharacter;
+
         var nonce = RandomNumberGenerator.GetBytes(PairRequestMessage.NonceLength);
 
         var message = new PairRequestMessage(
-            IsAccept: false, _identity.PublicKey, nonce, self.Name, self.WorldId);
+            IsAccept: false, identity.PublicKey, nonce, self.Name, self.WorldId);
 
         var address = MailboxAddress.Of(target.Fingerprint, _clock.UtcNow).ToBytes();
         var (delivered, failure) = await DepositEverywhereAsync(address, message.Encode(), ct).ConfigureAwait(false);
@@ -345,8 +357,11 @@ public sealed class PresenceService : IDisposable
         if (Connected is false)
             return "aucun service de rendez-vous joignable.";
 
+        if (_identity() is not { } identity)
+            return NoCharacter;
+
         var reply = new PairRequestMessage(
-            IsAccept: true, _identity.PublicKey, request.PairingNonce, self.Name, self.WorldId);
+            IsAccept: true, identity.PublicKey, request.PairingNonce, self.Name, self.WorldId);
 
         var theirFingerprint = PlayerFingerprint.Of(request.CharacterName.Trim().ToLowerInvariant(), request.WorldId);
 
@@ -378,7 +393,10 @@ public sealed class PresenceService : IDisposable
 
         var id = PeerId.Of(message!.PublicKey);
 
-        if (id == _identity.Id)
+        if (_identity() is not { } identity)
+            return;   // déconnecté entre-temps : plus personne à qui remettre ceci
+
+        if (id == identity.Id)
             return;   // notre propre écho, sans intérêt
 
         // Un expéditeur qui dépose sur plusieurs services ne doit produire

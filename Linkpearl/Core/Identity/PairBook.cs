@@ -165,6 +165,15 @@ public sealed class PairBook(IClock clock)
 
     public bool Remove(PeerId id) => _pairs.Remove(id);
 
+    /// <summary>Oublie tout, au changement de personnage.</summary>
+    /// <remarks>
+    /// Le carnet est attaché à une identité, et l'identité à un personnage. Se
+    /// déconnecter pour en reprendre un autre ne doit pas laisser en mémoire
+    /// des pairs que le nouveau n'a jamais rencontrés, ni les réécrire dans son
+    /// fichier à lui.
+    /// </remarks>
+    public void Clear() => _pairs.Clear();
+
     /// <summary>
     /// Décide si une clé publique reçue dans un handshake est acceptable.
     /// </summary>

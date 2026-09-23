@@ -19,27 +19,68 @@ public sealed record AnnounceReport(int Pairs, int Announced, int Matched, strin
 /// </remarks>
 public sealed class PairingService : IDisposable
 {
-    private readonly IdentityKeyPair _identity;
     private readonly PairBook _book;
-    private readonly PairBookStore _bookStore;
     private readonly RendezvousTicket _tickets;
-    private readonly PendingInvitationStore _invitationStore;
-    private readonly List<PendingInvitation> _pending;
+    private readonly List<PendingInvitation> _pending = [];
     private readonly Configuration _configuration;
     private readonly IPluginLog _log;
 
-    public PairingService(string root, Configuration configuration, SystemClock clock, IPluginLog log)
+    private IdentityKeyPair? _identity;
+    private PairBookStore? _bookStore;
+    private PendingInvitationStore? _invitationStore;
+
+    public PairingService(Configuration configuration, SystemClock clock, IPluginLog log)
     {
         _configuration = configuration;
         _log = log;
+        _book = new PairBook(clock);
+        _tickets = new RendezvousTicket(clock);
+    }
+
+    /// <summary>Ce qu'on répond tant qu'aucun personnage n'est connecté.</summary>
+    private const string NoCharacter =
+        "connectez-vous d'abord : l'identité Linkpearl appartient au personnage, pas à l'installation.";
+
+    /// <summary>Vrai quand une identité de personnage est chargée.</summary>
+    public bool IsBound => _identity is not null;
+
+    /// <summary>
+    /// Reprend l'identité et le carnet d'un personnage.
+    /// </summary>
+    /// <remarks>
+    /// Par personnage et non par installation : deux personnages sur une même
+    /// machine sont deux pairs distincts, que personne ne peut relier l'un à
+    /// l'autre. C'est cohérent avec le reste, où la boîte aux lettres et la
+    /// liste de bannissement portent déjà sur un personnage, et c'est ce qui
+    /// permet à deux clients de la même machine de se pairer pour de vrai.
+    /// </remarks>
+    public void Bind(string root)
+    {
+        Unbind();
 
         _identity = IdentityKeyPair.LoadOrCreate(new DpapiIdentityStore(Path.Combine(root, "identity.key")));
-        _book = new PairBook(clock);
+
         _bookStore = new PairBookStore(Path.Combine(root, "pairs.json"));
         _bookStore.Load(_book);
-        _tickets = new RendezvousTicket(clock);
+
         _invitationStore = new PendingInvitationStore(Path.Combine(root, "invitations.json"));
-        _pending = _invitationStore.Load();
+        _pending.AddRange(_invitationStore.Load());
+    }
+
+    /// <summary>Repose tout à la déconnexion.</summary>
+    /// <remarks>
+    /// Le carnet est vidé, sans quoi le personnage suivant réécrirait dans son
+    /// propre fichier les pairs de celui d'avant.
+    /// </remarks>
+    public void Unbind()
+    {
+        _identity?.Dispose();
+        _identity = null;
+        _bookStore = null;
+        _invitationStore = null;
+
+        _book.Clear();
+        _pending.Clear();
     }
 
     /// <summary>Nos propres lieux de rendez-vous, ceux qui sont activés.</summary>
@@ -59,13 +100,16 @@ public sealed class PairingService : IDisposable
     private const string NoService =
         "aucun service de rendez-vous actif : ajoutez-en un dans les réglages.";
 
-    public PeerId Id => _identity.Id;
+    public PeerId? Id => _identity?.Id;
 
-    public IdentityKeyPair Identity => _identity;
+    public IdentityKeyPair? Identity => _identity;
 
     /// <summary>Ajoute un pair depuis une demande acceptée dans l'interface.</summary>
     public string AddFromRequest(IncomingRequest request)
     {
+        if (_identity is null || _bookStore is null)
+            return NoCharacter;
+
         if (_book.Find(request.Id) is { } existing)
             return $"déjà appairé avec {existing.DisplayName}.";
 
@@ -91,6 +135,9 @@ public sealed class PairingService : IDisposable
     /// </remarks>
     public async Task<(string? Ticket, string? Rejection)> CreateInvitationAsync(CancellationToken ct)
     {
+        if (_identity is null || _invitationStore is null)
+            return (null, NoCharacter);
+
         var ticket = InvitationTicket.Create();
         var nonce = RandomNumberGenerator.GetBytes(PairingCode.NonceLength);
 
@@ -120,6 +167,9 @@ public sealed class PairingService : IDisposable
     /// <summary>Retire une invitation et ajoute son auteur au carnet.</summary>
     public async Task<string> RedeemAsync(string text, string displayName, CancellationToken ct)
     {
+        if (_identity is null || _bookStore is null)
+            return NoCharacter;
+
         if (InvitationTicketText.TryParse(text, out var ticket, out var at, out var why) is false)
             return $"ticket refusé : {why}";
 
@@ -190,6 +240,9 @@ public sealed class PairingService : IDisposable
     /// <summary>Relève les réponses à nos invitations en attente.</summary>
     public async Task<string> CollectRepliesAsync(CancellationToken ct)
     {
+        if (_identity is null || _bookStore is null || _invitationStore is null)
+            return NoCharacter;
+
         if (_pending.Count == 0)
             return "aucune invitation en attente.";
 
@@ -247,6 +300,9 @@ public sealed class PairingService : IDisposable
 
     public string Rename(string from, string to)
     {
+        if (_bookStore is null)
+            return NoCharacter;
+
         var record = _book.All.FirstOrDefault(
             p => string.Equals(p.DisplayName, from, StringComparison.OrdinalIgnoreCase));
 
@@ -260,6 +316,9 @@ public sealed class PairingService : IDisposable
 
     public string Remove(string displayName)
     {
+        if (_bookStore is null)
+            return NoCharacter;
+
         var record = _book.All.FirstOrDefault(
             p => string.Equals(p.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
 
@@ -282,6 +341,9 @@ public sealed class PairingService : IDisposable
     /// </remarks>
     public async Task<AnnounceReport> AnnounceAsync(CancellationToken ct)
     {
+        if (_identity is null)
+            return new AnnounceReport(0, 0, 0, NoCharacter);
+
         var active = _book.Active.ToList();
 
         if (active.Count == 0)
@@ -328,5 +390,5 @@ public sealed class PairingService : IDisposable
         return new AnnounceReport(active.Count, announced, matched, failure);
     }
 
-    public void Dispose() => _identity.Dispose();
+    public void Dispose() => Unbind();
 }
