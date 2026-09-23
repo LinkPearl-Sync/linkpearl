@@ -47,8 +47,9 @@ Dans Dalamud, `/xlsettings` > Experimental > Custom Plugin Repositories, ajouter
 https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl/main/repo.json
 ```
 
-Puis installer Linkpearl depuis la liste des plugins. **Penumbra et Glamourer
-sont requis.**
+Puis installer Linkpearl depuis la liste des plugins : il y apparaît sous le
+nom « Linkpearl Sync », l'InternalName « Linkpearl » étant déjà pris par un
+plugin officiel. **Penumbra et Glamourer sont requis.**
 
 Vous et vos pairs devez être réglés sur un même service de rendez-vous, ce qui
 est le cas par défaut. Vous pouvez en héberger un vous-même, voir

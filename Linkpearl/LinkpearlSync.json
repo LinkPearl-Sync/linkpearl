@@ -1,8 +1,10 @@
 {
-  "Name": "Linkpearl",
+  "Name": "Linkpearl Sync",
   "Author": "Neprena",
   "Description": "Synchronise votre apparence moddée avec les personnes que vous avez explicitement appairées, en pair à pair. Les fichiers passent directement d'un joueur à l'autre, chiffrés de bout en bout : aucun serveur ne les stocke ni ne les redistribue.",
   "Punchline": "Voyez les mods de vos proches, sans serveur au milieu.",
-  "InternalName": "Linkpearl",
+  "InternalName": "LinkpearlSync",
+  "RepoUrl": "https://github.com/LinkPearl-Sync/linkpearl",
+  "IconUrl": "https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl/main/Plugin_Logo.png",
   "Tags": ["penumbra", "glamourer", "sync", "p2p"]
 }

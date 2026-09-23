@@ -34,8 +34,8 @@ fi
 echo "==> Compilation Debug"
 dotnet build "$PROJECT" -c Debug --nologo
 
-if [ ! -f "$BUILD_DIR/Linkpearl.dll" ]; then
-  echo "Erreur : $BUILD_DIR/Linkpearl.dll est introuvable." >&2
+if [ ! -f "$BUILD_DIR/LinkpearlSync.dll" ]; then
+  echo "Erreur : $BUILD_DIR/LinkpearlSync.dll est introuvable." >&2
   exit 1
 fi
 
@@ -61,7 +61,7 @@ rsync -a --delete --inplace "$BUILD_DIR/" "$DEST/"
 # Dernière écriture sur la DLL elle-même, après tout le reste : c'est elle que
 # Dalamud surveille, et elle doit être le dernier événement qu'il reçoive, sans
 # quoi il rechargerait pendant que les dépendances changent encore.
-touch "$DEST/Linkpearl.dll"
+touch "$DEST/LinkpearlSync.dll"
 
 echo "==> Déployé :"
 ls -la "$DEST"

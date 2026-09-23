@@ -85,8 +85,8 @@ jobs:
         shell: bash
         run: |
           # Le SDK Dalamud produit déjà l'archive au bon format.
-          cp Linkpearl/bin/Release/Linkpearl/latest.zip Linkpearl.zip
-          unzip -l Linkpearl.zip
+          cp Linkpearl/bin/Release/LinkpearlSync/latest.zip LinkpearlSync.zip
+          unzip -l LinkpearlSync.zip
 
       - name: Publier la version
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
@@ -94,7 +94,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: v${{ steps.tag.outputs.VERSION }}${{ steps.tag.outputs.IS_TEST == 'true' && ' (test)' || '' }}
           prerelease: ${{ steps.tag.outputs.IS_TEST == 'true' }}
-          files: Linkpearl.zip
+          files: LinkpearlSync.zip
           generate_release_notes: true
 
       - name: Mettre à jour le manifeste du dépôt
@@ -115,7 +115,7 @@ jobs:
 
           # Le niveau d'API vient du manifeste que le SDK vient de générer :
           # le coder en dur ici le ferait mentir au prochain changement.
-          $manifest = Get-Content Linkpearl/bin/Release/Linkpearl/Linkpearl.json -Raw | ConvertFrom-Json
+          $manifest = Get-Content Linkpearl/bin/Release/LinkpearlSync/LinkpearlSync.json -Raw | ConvertFrom-Json
           $entry.DalamudApiLevel = $manifest.DalamudApiLevel
           $entry | Add-Member -MemberType NoteProperty -Name TestingDalamudApiLevel `
                               -Value $manifest.DalamudApiLevel -Force
@@ -128,13 +128,13 @@ jobs:
             # Le canal stable n'est pas touché : une version de test ne doit
             # atteindre que ceux qui les ont demandées.
             $entry.TestingAssemblyVersion = "$v.0"
-            $entry.DownloadLinkTesting    = "$base/Linkpearl.zip"
+            $entry.DownloadLinkTesting    = "$base/LinkpearlSync.zip"
           } else {
             $entry.AssemblyVersion        = "$v.0"
             $entry.TestingAssemblyVersion = "$v.0"
-            $entry.DownloadLinkInstall    = "$base/Linkpearl.zip"
-            $entry.DownloadLinkUpdate     = "$base/Linkpearl.zip"
-            $entry.DownloadLinkTesting    = "$base/Linkpearl.zip"
+            $entry.DownloadLinkInstall    = "$base/LinkpearlSync.zip"
+            $entry.DownloadLinkUpdate     = "$base/LinkpearlSync.zip"
+            $entry.DownloadLinkTesting    = "$base/LinkpearlSync.zip"
           }
 
           ConvertTo-Json @($entry) -Depth 10 | Set-Content repo.json

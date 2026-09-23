@@ -2,7 +2,10 @@
 
   <PropertyGroup>
     <Version>0.1.3</Version>
-    <AssemblyName>Linkpearl</AssemblyName>
+    <!-- Linkpearl est déjà l'InternalName d'un plugin officiel (NotNite, audio
+         positionnel Mumble) : Dalamud refuse qu'un dépôt tiers publie le même
+         InternalName qu'un plugin du dépôt officiel. -->
+    <AssemblyName>LinkpearlSync</AssemblyName>
   </PropertyGroup>
 
   <!-- Les API de Penumbra et Glamourer sont des dépendances du plugin, pas du
