@@ -26,33 +26,43 @@ internal sealed class StatusBarEntry : IDisposable
     private static readonly string Glyph = SeIconChar.HighQuality.ToIconString();
 
     private readonly IDtrBarEntry _entry;
-    private (int Nearby, int Pending)? _shown;
+    private (int Nearby, int Pending, bool CacheMissing)? _shown;
 
     public StatusBarEntry(IDtrBar bar, Action open)
     {
         _entry = bar.Get("Linkpearl");
         _entry.OnClick = _ => open();
-        Show(0, 0);
+        Show(0, 0, false);
     }
 
-    public void Update(IReadOnlyList<NearbyPlayer> nearby, IEnumerable<PairRecord> pairs, int pending)
+    public void Update(IReadOnlyList<NearbyPlayer> nearby, IEnumerable<PairRecord> pairs, int pending, bool cacheMissing)
     {
         var pinned = pairs
             .Where(pair => pair.Trust is not PairTrust.Blocked && pair.PinnedFingerprint is not null)
             .Select(pair => pair.PinnedFingerprint!.Value)
             .ToHashSet();
 
-        Show(nearby.Count(player => pinned.Contains(player.Fingerprint)), pending);
+        Show(nearby.Count(player => pinned.Contains(player.Fingerprint)), pending, cacheMissing);
     }
 
-    private void Show(int count, int pending)
+    private void Show(int count, int pending, bool cacheMissing)
     {
         // Réécrire le texte à chaque appel marquerait le nœud comme modifié
         // pour rien, et le jeu le recomposerait à chaque fois.
-        if (_shown == (count, pending))
+        if (_shown == (count, pending, cacheMissing))
             return;
 
-        _shown = (count, pending);
+        _shown = (count, pending, cacheMissing);
+
+        // Le blocage passe devant tout : tant qu'il dure, rien ne se synchronise,
+        // et le nombre de pairs à portée ne voudrait rien dire.
+        if (cacheMissing)
+        {
+            _entry.Text = $"{Glyph} cache introuvable";
+            _entry.Tooltip = "Linkpearl : le dossier du cache a disparu, la synchronisation est arrêtée.\n"
+                           + "Cliquez pour en choisir un autre.";
+            return;
+        }
 
         // Rien entre parenthèses sans demande : un « (0) » permanent apprendrait
         // à ne plus regarder la parenthèse.

@@ -1,10 +1,11 @@
 using Dalamud.Configuration;
+using Linkpearl.Core.Cache;
 using Linkpearl.Core.Sync;
 
 namespace Linkpearl;
 
 /// <summary>Réglages du plugin, conservés par Dalamud.</summary>
-public sealed class Configuration : IPluginConfiguration
+public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
 {
     public int Version { get; set; } = 2;
 
@@ -72,7 +73,22 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Répertoire du cache. Vide pour le défaut sous LOCALAPPDATA.</summary>
     public string CacheDirectory { get; set; } = "";
 
-    public long CacheQuotaBytes { get; set; } = 20L * 1024 * 1024 * 1024;
+    /// <summary>Taille maximale du cache.</summary>
+    /// <remarks>
+    /// 50 Go : une apparence pèse environ 800 Mo, soit une soixantaine
+    /// d'apparences. Une configuration qui avait enregistré l'ancien défaut de
+    /// 20 Go le garde.
+    /// </remarks>
+    public long CacheQuotaBytes { get; set; } = 50L * 1024 * 1024 * 1024;
+
+    /// <summary>La présentation a été fermée une fois.</summary>
+    public bool OnboardingSeen { get; set; }
+
+    /// <summary>Le cache a déjà créé son dossier : sa disparition bloque le plugin.</summary>
+    public bool CacheEstablished { get; set; }
+
+    /// <summary>L'ancien dossier après un changement, à proposer à la suppression.</summary>
+    public string PreviousCacheDirectory { get; set; } = "";
 
     /// <summary>Un badge aux pieds des pairs dont l'apparence arrive ou se fait attendre.</summary>
     public bool ShowTransferBadges { get; set; } = true;

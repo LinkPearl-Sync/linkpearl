@@ -1,6 +1,7 @@
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.ContextMenu;
+using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -52,11 +53,21 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameGui                GameGui         { get; private set; } = null!;
     [PluginService] internal static INamePlateGui           NamePlates      { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
+    [PluginService] internal static INotificationManager    Notifications   { get; private set; } = null!;
 
     private readonly PenumbraIpc _penumbra;
     private readonly GlamourerIpc _glamourer;
     private readonly SelfLoop _selfLoop;
-    private readonly FileSystemBlobStore _cache;
+
+    /// <summary>
+    /// Décide quand le cache existe. L'apparence locale et l'applicateur
+    /// reçoivent son magasin commutable, le moteur n'existe que cache ouvert.
+    /// </summary>
+    private readonly CacheKeeper _cacheKeeper;
+
+    /// <summary>Compte les tics, pour sonder le dossier du cache toutes les cinq secondes.</summary>
+    private int _syncTicks;
+
     private readonly PeerLinkFactory _links;
     private readonly LocalAppearance _appearance;
     private readonly RemoteApplicator _applicator;
@@ -171,17 +182,18 @@ public sealed class Plugin : IDalamudPlugin
             },
         };
 
-        _cache = new FileSystemBlobStore(
-            _configuration.CacheDirectory is "" ? Path.Combine(_legacyRoot, "cache") : _configuration.CacheDirectory,
-            new CacheSettings { QuotaBytes = _configuration.CacheQuotaBytes },
+        _cacheKeeper = new CacheKeeper(
+            _configuration,
+            Path.Combine(_legacyRoot, "cache"),
             clock,
-            path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace);
+            path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace,
+            new PluginLogSink(Log, "cache"));
 
         _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
         _extras = new ExtrasIpc(PluginInterface, Objects, Log);
         _transients = new TransientCapture(penumbra, Framework, Objects, clock, Log);
         _appearance = new LocalAppearance(
-            penumbra, glamourer, Framework, Objects, _extras, _transients, MoodlesKey, _cache, Log);
+            penumbra, glamourer, Framework, Objects, _extras, _transients, MoodlesKey, _cacheKeeper.Store, Log);
 
         // Une animation moddée jouée pour la première fois : elle rejoint
         // l'apparence annoncée, par le même anti-rebond.
@@ -221,7 +233,7 @@ public sealed class Plugin : IDalamudPlugin
         };
 
         _applicator = new RemoteApplicator(
-            penumbra, glamourer, _extras, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
+            penumbra, glamourer, _extras, Framework, Objects, ClientState, Condition, _cacheKeeper.Store, Quotas.Default, root, Log);
 
         _engineSettings = engineSettings;
 
@@ -307,6 +319,15 @@ public sealed class Plugin : IDalamudPlugin
             if (left > 0)
                 Log.Information($"{left} collection(s) de pair d'une session précédente ont été retirées.");
         });
+
+        // En dernier : l'ouverture peut lever Lost, qui ouvre la fenêtre, et la
+        // fenêtre doit exister.
+        _cacheKeeper.Opened += OnCacheOpened;
+        _cacheKeeper.Lost += OnCacheLost;
+        _cacheKeeper.Start();
+
+        // L'ancien cache se mesure en parcourant tout l'arbre : hors du chargement.
+        RunSafely(() => Task.Run(_cacheKeeper.MeasurePrevious));
     }
 
     /// <summary>
@@ -464,6 +485,22 @@ public sealed class Plugin : IDalamudPlugin
 
         _pairing.Bind(root);
         _transients.Attach(root);
+        StartEngineIfReady();
+    }
+
+    /// <summary>
+    /// Construit le moteur si tout ce qu'il lui faut est là : un personnage et
+    /// un cache ouvert.
+    /// </summary>
+    /// <remarks>
+    /// Appelé à la connexion et à l'ouverture du cache, dans n'importe quel
+    /// ordre : le second appel est celui qui construit. Sur le thread du jeu.
+    /// </remarks>
+    private void StartEngineIfReady()
+    {
+        if (_engine is not null || _character is 0 || _pairing.Id is null
+            || _cacheKeeper.State is not CacheGateState.Open)
+            return;
 
         _engine = new SyncEngine(
             _pairing.Book,
@@ -472,7 +509,7 @@ public sealed class Plugin : IDalamudPlugin
                 new RendezvousEndpoint(_configuration.RendezvousHost, _configuration.RendezvousPort),
                 _clock,
                 new PluginLogSink(Log, "moteur")),
-            _appearance, _applicator, _cache, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
+            _appearance, _applicator, _cacheKeeper.Store, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
             new PluginLogSink(Log, "moteur"), _engineSettings);
 
         // Le moteur a déjà retiré l'entrée du carnet : il reste à l'écrire, et
@@ -493,19 +530,27 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ReleaseCharacter()
     {
-        var engine = _engine;
-
-        _engine = null;
         _pairing.Unbind();
         _presence.ForgetRequests();
         _transients.Attach(null);
+        StopEngine();
+    }
+
+    /// <summary>
+    /// Arrête le moteur, qui retire des pairs ce qu'il leur a posé.
+    /// </summary>
+    /// <remarks>
+    /// Hors du thread du jeu : le retrait passe par RunOnFrameworkThread, et
+    /// l'attendre depuis ce thread-là se bloquerait sur soi-même.
+    /// </remarks>
+    private void StopEngine()
+    {
+        var engine = _engine;
+        _engine = null;
 
         if (engine is null)
             return;
 
-        // Hors du thread du jeu : le moteur retire des pairs ce qu'il leur a
-        // posé, ce qui passe par RunOnFrameworkThread, et l'attendre depuis ce
-        // thread-là se bloquerait sur soi-même.
         _ = Task.Run(async () =>
         {
             try
@@ -514,8 +559,44 @@ public sealed class Plugin : IDalamudPlugin
             }
             catch (Exception e)
             {
-                Log.Warning(e, "Arrêt du moteur en échec au changement de personnage.");
+                Log.Warning(e, "Arrêt du moteur en échec.");
             }
+        });
+    }
+
+    /// <summary>Le cache est ouvert : le moteur peut naître, et notre apparence y entrer.</summary>
+    /// <remarks>
+    /// Peut être levé depuis le pool de threads (un dossier rechoisi) : le
+    /// moteur se construit sur le thread du jeu. L'apparence est recapturée
+    /// parce que ses fichiers ne sont pas dans un cache neuf.
+    /// </remarks>
+    private void OnCacheOpened()
+    {
+        _appearanceChanged.Signal();
+        Framework.RunOnFrameworkThread(StartEngineIfReady);
+    }
+
+    /// <summary>
+    /// Le dossier du cache a disparu : tout s'arrête, et on le dit.
+    /// </summary>
+    /// <remarks>
+    /// Arrêter le moteur rend chaque pair à son apparence par défaut : ses mods
+    /// temporaires pointent sur des fichiers qui n'existent plus.
+    /// </remarks>
+    private void OnCacheLost()
+    {
+        Framework.RunOnFrameworkThread(() =>
+        {
+            StopEngine();
+            _window.IsOpen = true;
+
+            Notifications.AddNotification(new Notification
+            {
+                Title = "Linkpearl",
+                Content = "Le dossier du cache est introuvable. La synchronisation est arrêtée "
+                        + "jusqu'au choix d'un autre dossier.",
+                Type = NotificationType.Error,
+            });
         });
     }
 
@@ -649,7 +730,8 @@ public sealed class Plugin : IDalamudPlugin
             return;
 
         _statusBarDueAt = now + 1000;
-        _statusBar.Update(_state.Nearby, _pairing.Book.Listed, _presence.RequestCount);
+        _statusBar.Update(
+            _state.Nearby, _pairing.Book.Listed, _presence.RequestCount, _cacheKeeper.State is CacheGateState.Missing);
 
         RemindBackup();
     }
@@ -888,13 +970,23 @@ public sealed class Plugin : IDalamudPlugin
         {
             try
             {
-                _appearance.Follow(_state.Self?.Fingerprint);
+                // Rien ne touche au cache tant qu'il n'est pas ouvert : la capture
+                // de notre apparence y écrit. Le signal reste en attente, et la
+                // capture part dès l'ouverture.
+                if (_cacheKeeper.State is CacheGateState.Open)
+                {
+                    _appearance.Follow(_state.Self?.Fingerprint);
 
-                // L'anti-rebond n'est consommé qu'une fois le calme revenu, ou
-                // au plafond : c'est ce qui évite de rehacher pendant qu'on
-                // essaie dix tenues d'affilée.
-                if (_appearanceChanged.TryConsume())
-                    _appearance.Rebuild();
+                    // L'anti-rebond n'est consommé qu'une fois le calme revenu, ou
+                    // au plafond : c'est ce qui évite de rehacher pendant qu'on
+                    // essaie dix tenues d'affilée.
+                    if (_appearanceChanged.TryConsume())
+                        _appearance.Rebuild();
+                }
+
+                // Le dossier du cache peut être supprimé pendant qu'on joue.
+                if (++_syncTicks % 5 == 0)
+                    _cacheKeeper.Check();
 
                 var visible = _state.Nearby
                     .Select(player => new VisiblePlayer(player.Object, player.Fingerprint))
@@ -981,6 +1073,8 @@ public sealed class Plugin : IDalamudPlugin
         // ici ferait fuir l'AssemblyLoadContext, et le rechargement suivant en
         // créerait un second.
         _shutdown.Cancel();
+        _cacheKeeper.Opened -= OnCacheOpened;
+        _cacheKeeper.Lost -= OnCacheLost;
 
         PluginInterface.UiBuilder.Draw -= _windows.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= Open;
