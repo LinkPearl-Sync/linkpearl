@@ -41,6 +41,17 @@ public sealed record SyncEngineSettings
     public TimeSpan AbsentBackoff { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Durée au-delà de laquelle une session qui tombe n'est pas un échec.
+    /// </summary>
+    /// <remarks>
+    /// Une session qui a tenu et qui se ferme, c'est un pair qui nous met en
+    /// pause, se déconnecte ou recharge son plugin : on se réannonce aussitôt,
+    /// pour qu'il nous retrouve dès son retour. Une session qui tombe à peine
+    /// établie ressemble à un lien qui clignote, et reprend le délai croissant.
+    /// </remarks>
+    public TimeSpan StableSession { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// Blobs servis de front, un par canal.
     /// </summary>
     /// <remarks>
@@ -295,6 +306,7 @@ public sealed class SyncEngine : IAsyncDisposable
             session, _store, _local, limiter, _settings.DataChannels, _settings.BlockSize, _quotas, _log);
 
         runtime.Session = session;
+        runtime.SessionSince = _clock.UtcNow;
         runtime.Exchange = exchange;
         runtime.Limiter = limiter;
         runtime.Failures = 0;
@@ -330,8 +342,23 @@ public sealed class SyncEngine : IAsyncDisposable
 
             _log.Info($"{runtime.Pair.DisplayName} : session tombée.");
 
+            var stable = _clock.UtcNow - runtime.SessionSince >= _settings.StableSession;
+
             await TearDownAsync(id, runtime, CancellationToken.None).ConfigureAwait(false);
-            Retry(runtime, peerWasAbsent: false, "lien perdu");
+
+            if (stable)
+            {
+                // Mesuré en jeu : à cinq secondes d'attente ici, une pause suivie
+                // d'une reprise coûtait une dizaine de secondes, l'autre n'étant
+                // pas encore revenu au rendez-vous quand on l'y cherchait.
+                runtime.Failures = 0;
+                runtime.LastFailure = null;
+                runtime.NextAttempt = _clock.UtcNow;
+            }
+            else
+            {
+                Retry(runtime, peerWasAbsent: false, "lien perdu");
+            }
         }
     }
 
@@ -345,6 +372,7 @@ public sealed class SyncEngine : IAsyncDisposable
             if (_clock.UtcNow < runtime.NextAttempt)
                 continue;
 
+            runtime.DialStartedAt = _clock.UtcNow;
             runtime.Dial = DialAsync(runtime.Pair, _life.Token);
         }
     }
@@ -593,7 +621,12 @@ public sealed class SyncEngine : IAsyncDisposable
 
         if (peerWasAbsent)
         {
-            runtime.NextAttempt = _clock.UtcNow + _settings.AbsentBackoff;
+            // Depuis le début de la tentative, et non sa fin : l'annonce tient
+            // vingt-cinq secondes, et compter depuis sa fin ferait un cycle de
+            // cinquante-cinq où l'on n'est présent que vingt-cinq. C'est le
+            // recouvrement des annonces des deux côtés qui les apparie.
+            var next = runtime.DialStartedAt + _settings.AbsentBackoff;
+            runtime.NextAttempt = next > _clock.UtcNow ? next : _clock.UtcNow;
             return;
         }
 
@@ -649,6 +682,10 @@ public sealed class SyncEngine : IAsyncDisposable
         public int Failures { get; set; }
 
         public DateTimeOffset NextAttempt { get; set; }
+
+        public DateTimeOffset DialStartedAt { get; set; }
+
+        public DateTimeOffset SessionSince { get; set; }
 
         public string? LastFailure { get; set; }
 

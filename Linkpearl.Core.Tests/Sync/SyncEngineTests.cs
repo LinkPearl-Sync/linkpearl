@@ -127,6 +127,20 @@ internal sealed class FailingDialer(bool peerWasAbsent) : IPeerDialer
     }
 }
 
+/// <summary>Un pair absent, dont l'annonce tient un moment au rendez-vous avant d'abandonner.</summary>
+internal sealed class AnnouncingDialer(MovableClock clock, TimeSpan announce) : IPeerDialer
+{
+    public int Attempts { get; private set; }
+
+    public Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
+    {
+        Attempts++;
+        clock.Advance(announce);
+
+        return Task.FromResult(new ConnectionAttempt(null, true, null));
+    }
+}
+
 internal sealed class FixedAppearance(CharacterManifest? manifest, PlayerFingerprint? fingerprint) : ILocalAppearance
 {
     public CharacterManifest? Manifest { get; set; } = manifest;
@@ -386,6 +400,61 @@ public sealed class SyncEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task L_attente_d_un_absent_se_compte_depuis_le_debut_de_l_annonce()
+    {
+        // L'annonce est tenue vingt-cinq secondes sur un cycle de trente. Si
+        // l'attente partait de la fin de l'annonce, le cycle durerait
+        // cinquante-cinq secondes, et une reprise attendrait jusqu'à trente.
+        var dialer = new AnnouncingDialer(_clock, TimeSpan.FromSeconds(25));
+        await using var engine = Solitary(dialer);
+
+        await engine.TickAsync([], default);
+        await engine.TickAsync([], default);
+        Assert.Equal(1, dialer.Attempts);
+
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await engine.TickAsync([], default);
+
+        Assert.Equal(2, dialer.Attempts);
+    }
+
+    [Fact]
+    public async Task Une_session_qui_tombe_se_rejoint_sans_attendre()
+    {
+        // Mettre en pause puis reprendre : l'autre côté voit tomber la session
+        // et doit se réannoncer aussitôt, sans quoi la reprise attend son délai.
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        // Une session qui a tenu : ce n'est pas un lien qui clignote.
+        world.Clock.Advance(TimeSpan.FromSeconds(30));
+
+        world.AliceBook.SetPaused(world.BobId, true);
+        await world.TickAsync([], sees);
+        await world.TickAsync([], sees);
+
+        world.AliceBook.SetPaused(world.BobId, false);
+
+        // Deux secondes d'horloge au plus, bien moins que le premier délai.
+        var back = false;
+
+        for (var i = 0; i < 40 && back is false; i++)
+        {
+            await world.TickAsync([], sees);
+            back = world.Bob.Statuses.Single().State is not (PeerSessionState.Disconnected
+                or PeerSessionState.Connecting or PeerSessionState.Handshaking);
+            await Task.Delay(10);
+        }
+
+        Assert.True(back, "la session n'est pas revenue sans délai : " + world.Describe());
+    }
+
+    [Fact]
     public async Task Rien_n_est_pose_tant_que_le_jeu_n_est_pas_pret()
     {
         await using var world = await TwoEnginesAsync();
@@ -498,13 +567,13 @@ public sealed class SyncEngineTests : IDisposable
 
         return new TwoEngines(
             aliceEngine, bobEngine, bobBook, bobApplicator, bobStore, aliceId, hash, content.Length,
-            aliceLog, bobLog, _clock);
+            aliceLog, bobLog, _clock, aliceBook, bobId);
     }
 
     private sealed record TwoEngines(
         SyncEngine Alice, SyncEngine Bob, PairBook BobBook, RecordingApplicator BobApplicator,
         FileSystemBlobStore BobStore, PeerId AliceId, BlobHash Blob, long BlobSize,
-        SilentLog AliceLog, SilentLog BobLog, MovableClock Clock)
+        SilentLog AliceLog, SilentLog BobLog, MovableClock Clock, PairBook AliceBook, PeerId BobId)
         : IAsyncDisposable
     {
         public PeerStatus BobStatus() => Bob.Statuses.Single();
