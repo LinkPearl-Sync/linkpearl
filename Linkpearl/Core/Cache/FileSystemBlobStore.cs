@@ -250,7 +250,22 @@ public sealed class FileSystemBlobStore : IBlobStore
 
         // Un index vide alors que des blobs existent signale une corruption :
         // mieux vaut reconstruire que démarrer en croyant le cache vide.
-        return loaded > 0 || Directory.EnumerateFiles(BlobsDirectory, "*", SearchOption.AllDirectories).Any() is false;
+        if (loaded == 0 && Directory.EnumerateFiles(BlobsDirectory, "*", SearchOption.AllDirectories).Any())
+            return false;
+
+        // L'index n'est écrit qu'à l'éviction : tout blob publié depuis la
+        // dernière écriture y manque. On le retrouve en parcourant blobs/,
+        // avec sa date de publication (l'écriture du fichier) comme dernier
+        // accès, faute de mieux.
+        foreach (var path in Directory.EnumerateFiles(BlobsDirectory, "*", SearchOption.AllDirectories))
+        {
+            if (BlobHash.TryParseHex(Path.GetFileName(path), out var hash) is false || _entries.ContainsKey(hash))
+                continue;
+
+            _entries[hash] = new Entry(new FileInfo(path).Length, new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero));
+        }
+
+        return true;
     }
 
     /// <summary>

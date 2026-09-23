@@ -353,4 +353,25 @@ public sealed class FileSystemBlobStoreTests : IDisposable
 
         Assert.False(result.Accepted);
     }
+
+    [Fact]
+    public async Task L_index_ne_fait_pas_perdre_un_blob_publie_apres_la_derniere_eviction()
+    {
+        // EvictToAsync écrit l'index même sans rien évincer. Tout ce qui est
+        // publié après cette écriture doit quand même être vu au rechargement.
+        var premier = Store();
+        var a = Bytes("A, présent à l'écriture de l'index");
+        await PutAsync(premier, a);
+
+        await premier.EvictToAsync(long.MaxValue, new HashSet<BlobHash>(), default);
+
+        var b = Bytes("B, publié après la dernière écriture de l'index");
+        await PutAsync(premier, b);
+
+        var second = Store();
+
+        Assert.True(second.TryGetSize(BlobHash.OfContent(b), out var sizeB));
+        Assert.Equal(b.Length, sizeB);
+        Assert.Equal(a.Length + b.Length, second.TotalBytes);
+    }
 }
