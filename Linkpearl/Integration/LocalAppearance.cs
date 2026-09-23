@@ -28,6 +28,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly PenumbraIpc _penumbra;
     private readonly GlamourerIpc _glamourer;
     private readonly IFramework _framework;
+    private readonly IObjectTable _objects;
     private readonly IBlobStore _store;
     private readonly IPluginLog _log;
     private readonly CancellationTokenSource _life = new();
@@ -35,14 +36,19 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly FileHashCache _hashes = new();
 
     private volatile CharacterManifest? _current;
+
+    /// <summary>Une demande arrivée pendant une construction, à servir juste après.</summary>
+    private volatile bool _pending;
     private PlayerFingerprint? _fingerprint;
 
     public LocalAppearance(
-        PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IBlobStore store, IPluginLog log)
+        PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
+        IBlobStore store, IPluginLog log)
     {
         _penumbra = penumbra;
         _glamourer = glamourer;
         _framework = framework;
+        _objects = objects;
         _store = store;
         _log = log;
     }
@@ -81,11 +87,18 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     /// <remarks>
     /// Une seule construction à la fois : deux hachages simultanés de plusieurs
     /// centaines de mégaoctets se disputeraient le disque pour rien.
+    ///
+    /// Mais aucune demande n'est perdue : celle qui arrive pendant une
+    /// construction est notée, et une nouvelle construction suit. Sans cela, une
+    /// retouche faite pendant le hachage de la précédente n'était jamais
+    /// capturée, et les pairs gardaient l'avant-dernière tenue.
     /// </remarks>
     public void Rebuild()
     {
         if (_life.IsCancellationRequested)
             return;
+
+        _pending = true;
 
         _ = Task.Run(async () =>
         {
@@ -96,7 +109,11 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
             try
             {
-                await RebuildAsync(_life.Token).ConfigureAwait(false);
+                while (_pending && _life.IsCancellationRequested is false)
+                {
+                    _pending = false;
+                    await RebuildAsync(_life.Token).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -111,6 +128,11 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
                 Building = false;
                 _oneAtATime.Release();
             }
+
+            // Une demande arrivée entre la dernière vérification et la
+            // libération a trouvé le verrou pris : on la relance ici.
+            if (_pending && _life.IsCancellationRequested is false)
+                Rebuild();
         }, _life.Token);
     }
 
@@ -118,12 +140,16 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     {
         // L'ObjectTable et l'IPC ne se touchent que depuis le thread du
         // framework. Ce qui suit est une copie, manipulable ailleurs.
-        var (resources, meta, glamourer) = await _framework.RunOnFrameworkThread(() =>
-        (
-            _penumbra.ResourcePathsOf(PlayerIndex),
-            _penumbra.MetaManipulations(),
-            _glamourer.StateOf(PlayerIndex)
-        )).ConfigureAwait(false);
+        var snapshot = await ReadWhenDrawnAsync(ct).ConfigureAwait(false);
+
+        if (snapshot is null)
+        {
+            Description = "personnage encore en chargement, l'apparence précédente est conservée";
+            _log.Warning(Description);
+            return;
+        }
+
+        var (resources, meta, glamourer) = snapshot.Value;
 
         if (resources is null)
         {
@@ -222,6 +248,36 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     /// côté puis publie après vérification, de sorte qu'un arrêt brutal ne
     /// laisse jamais un blob visible et tronqué.
     /// </remarks>
+    /// <summary>
+    /// Lit ressources, métadonnées et état Glamourer, une fois le personnage
+    /// entièrement chargé. Null s'il ne l'est toujours pas au bout de dix secondes.
+    /// </summary>
+    /// <remarks>
+    /// Le contrôle et la lecture se font dans le même passage sur le thread du
+    /// framework : entre les deux, un redessin pourrait sinon recommencer.
+    /// </remarks>
+    private async Task<(IReadOnlyDictionary<string, HashSet<string>>? Resources, string Meta, string? Glamourer)?>
+        ReadWhenDrawnAsync(CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            var snapshot = await _framework.RunOnFrameworkThread(() =>
+                DrawReadiness.IsReady(_objects[PlayerIndex])
+                    ? ((IReadOnlyDictionary<string, HashSet<string>>?, string, string?)?)(
+                        _penumbra.ResourcePathsOf(PlayerIndex),
+                        _penumbra.MetaManipulations(),
+                        _glamourer.StateOf(PlayerIndex))
+                    : null).ConfigureAwait(false);
+
+            if (snapshot is not null)
+                return snapshot;
+
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
     private async Task StoreAsync(string source, BlobHash hash, long size, CancellationToken ct)
     {
         if (_store.TryGetSize(hash, out _))

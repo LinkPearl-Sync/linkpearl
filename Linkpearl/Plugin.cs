@@ -170,7 +170,7 @@ public sealed class Plugin : IDalamudPlugin
             path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace);
 
         _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
-        _appearance = new LocalAppearance(penumbra, glamourer, Framework, _cache, Log);
+        _appearance = new LocalAppearance(penumbra, glamourer, Framework, Objects, _cache, Log);
 
         // Tout changement de mod affectant le personnage produit un redessin, et
         // Glamourer signale chaque changement d'état. Les deux sont levés
