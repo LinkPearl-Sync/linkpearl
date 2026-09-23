@@ -103,10 +103,10 @@ public class ManifestBuilderTests
     public void Une_extension_hors_perimetre_est_ecartee_et_rapportee()
     {
         var result = ManifestBuilder.Build(
-            [Torse, File("chara/action/emote.pap", "x")], Meta, Glam, Quotas.Default);
+            [Torse, File("shader/sm5/shpk/character.shpk", "x")], Meta, Glam, Quotas.Default);
 
         Assert.Single(result.Manifest.Replacements);
-        Assert.Contains("transitoire", Assert.Single(result.Skipped).Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shader", Assert.Single(result.Skipped).Reason, StringComparison.OrdinalIgnoreCase);
     }
 }
 

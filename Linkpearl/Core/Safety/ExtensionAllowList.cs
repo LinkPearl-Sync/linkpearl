@@ -12,22 +12,20 @@ namespace Linkpearl.Core.Safety;
 /// </remarks>
 public static class ExtensionAllowList
 {
-    /// <summary>Apparence statique du personnage : modèles, matières, textures, squelette.</summary>
+    /// <summary>
+    /// Apparence statique du personnage (modèles, matières, textures,
+    /// squelette), puis ressources transitoires (animations, trames, effets
+    /// visuels, sons).
+    /// </summary>
+    /// <remarks>
+    /// Les transitoires sont admises depuis leur capture chez l'émetteur. Leur
+    /// contenu passe en plus par <see cref="TransientFileCheck"/> avant toute
+    /// pose, et le receveur peut les bloquer par catégorie
+    /// (<see cref="TransientCategories"/>).
+    /// </remarks>
     private static readonly HashSet<string> Allowed =
     [
         ".tex", ".mdl", ".mtrl", ".sklb", ".skp", ".phyb", ".pbd", ".eid", ".imc",
-    ];
-
-    /// <summary>
-    /// Ressources transitoires, chargées seulement quand elles jouent.
-    /// </summary>
-    /// <remarks>
-    /// Hors périmètre de la v1 : elles exigent un suivi dédié, par personnage et
-    /// par job. Elles sont nommées à part pour que le refus explique qu'il s'agit
-    /// d'une limite connue et non d'un manifeste malformé.
-    /// </remarks>
-    private static readonly HashSet<string> Transient =
-    [
         ".pap", ".tmb", ".avfx", ".atex", ".scd",
     ];
 
@@ -50,7 +48,6 @@ public static class ExtensionAllowList
         rejection = extension switch
         {
             ".shpk" => "paquet de shader : du bytecode consommé par le pilote graphique",
-            _ when Transient.Contains(extension) => $"ressource transitoire ({extension}), hors périmètre de la v1",
             _ => $"extension non autorisée ({extension})",
         };
         return false;

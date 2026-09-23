@@ -135,10 +135,10 @@ public class ResourcePathClassifierTests
     [Fact]
     public void Une_extension_hors_perimetre_est_ecartee_et_rapportee()
     {
-        var result = Classify((@"C:\mods\emote.pap", ["chara/action/emote.pap"]));
+        var result = Classify((@"C:\mods\character.shpk", ["shader/sm5/shpk/character.shpk"]));
 
         Assert.Empty(result.Files);
-        Assert.Contains("transitoire", Assert.Single(result.Skipped).Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shader", Assert.Single(result.Skipped).Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

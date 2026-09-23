@@ -23,12 +23,12 @@ public class ExtensionAllowListTests
     [InlineData("vfx/common/eff/truc.avfx")]   // effet visuel
     [InlineData("vfx/common/eff/truc.atex")]   // texture d'effet visuel
     [InlineData("sound/voice/truc.scd")]       // audio
-    public void Les_ressources_transitoires_sont_refusees_en_v1(string path)
+    public void Les_ressources_transitoires_sont_admises(string path)
     {
-        // Hors perimetre : elles demandent un suivi dedie, par personnage et par
-        // job. Les accepter ici donnerait un manifeste que rien ne sait produire.
-        Assert.False(ExtensionAllowList.IsAllowed(path, out var why));
-        Assert.NotNull(why);
+        // Admises depuis la capture des animations, VFX et sons : leur contenu
+        // est vérifié à part (TransientFileCheck), et le receveur peut les
+        // bloquer par catégorie.
+        Assert.True(ExtensionAllowList.IsAllowed(path, out var why), why);
     }
 
     [Fact]
