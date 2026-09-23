@@ -352,13 +352,11 @@ public sealed class Plugin : IDalamudPlugin
             _onboarding.Show();
 
         // En dernier : l'ouverture peut lever Lost, qui ouvre la fenêtre, et la
-        // fenêtre doit exister.
+        // fenêtre doit exister. La mesure de l'ancien cache suit l'ouverture,
+        // voir OnCacheOpened.
         _cacheKeeper.Opened += OnCacheOpened;
         _cacheKeeper.Lost += OnCacheLost;
         _cacheKeeper.Start();
-
-        // L'ancien cache se mesure en parcourant tout l'arbre : hors du chargement.
-        RunSafely(() => Task.Run(_cacheKeeper.MeasurePrevious));
     }
 
     /// <summary>
@@ -608,6 +606,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         _appearanceChanged.Signal();
         Framework.RunOnFrameworkThread(StartEngineIfReady);
+
+        // L'ancien cache se mesure en parcourant tout l'arbre : hors du
+        // chargement. Après l'ouverture et non au constructeur : Choose
+        // pendant la présentation peut fixer PreviousCacheDirectory, et la
+        // mesure doit porter sur ce que l'ouverture vient de retenir.
+        RunSafely(() => Task.Run(_cacheKeeper.MeasurePrevious));
     }
 
     /// <summary>

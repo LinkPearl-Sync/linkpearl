@@ -259,6 +259,27 @@ public sealed class CacheKeeperTests : IDisposable
     }
 
     [Fact]
+    public void Choisir_un_autre_dossier_pendant_la_presentation_garde_l_ancien_a_la_suppression()
+    {
+        // Un utilisateur existant (avant l'onboarding) a déjà un cache au
+        // dossier par défaut. En choisir un autre pendant la présentation ne
+        // doit pas l'abandonner silencieusement : il doit rester proposable
+        // à la suppression une fois le nouveau ouvert.
+        Directory.CreateDirectory(DefaultRoot);
+        File.WriteAllBytes(Path.Combine(DefaultRoot, "temoin.txt"), [1]);
+
+        var keeper = Keeper();
+        keeper.Start();
+
+        Assert.Null(keeper.Choose(Chosen("ailleurs")));
+        keeper.FinishOnboarding();
+
+        Assert.Equal(CacheGateState.Open, keeper.State);
+        Assert.Equal(Path.Combine(_root, "ailleurs", "LinkpearlCache"), keeper.ActiveRoot);
+        Assert.Equal(DefaultRoot, keeper.PreviousRoot);
+    }
+
+    [Fact]
     public void Un_cache_etabli_dont_la_racine_existe_mais_est_vide_bloque_au_chargement()
     {
         _configuration.OnboardingSeen = true;

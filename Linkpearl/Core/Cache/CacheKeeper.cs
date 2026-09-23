@@ -162,6 +162,15 @@ public sealed class CacheKeeper(
                 return _state is CacheGateState.Open ? null : "ce dossier n'a pas pu être ouvert.";
 
             default:
+                // AwaitingOnboarding : un utilisateur d'avant l'onboarding a
+                // pu avoir un cache au dossier par défaut. En choisir un
+                // autre ne doit pas l'abandonner en silence : il doit rester
+                // proposable à la suppression une fois le nouveau ouvert.
+                var priorRoot = ConfiguredRoot;
+
+                if (Directory.Exists(priorRoot))
+                    configuration.PreviousCacheDirectory = SamePath(root, priorRoot) ? "" : priorRoot;
+
                 configuration.CacheDirectory = root;
                 configuration.Save();
                 return null;
