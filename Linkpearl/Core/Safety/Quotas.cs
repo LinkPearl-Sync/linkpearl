@@ -43,4 +43,25 @@ public sealed record Quotas
 
     /// <summary>Chaîne d'état de Glamourer, opaque pour nous.</summary>
     public int MaxGlamourerStateChars { get; init; } = 64 * 1024;
+
+    /// <summary>Profil Customize+, JSON des os : de 1 à 15 Kio relevés, marge large.</summary>
+    public int MaxCustomizePlusChars { get; init; } = 64 * 1024;
+
+    /// <summary>Configuration SimpleHeels nettoyée : moins de 1 Kio relevé.</summary>
+    public int MaxHeelsChars { get; init; } = 16 * 1024;
+
+    /// <summary>Titre Honorific : moins de 250 octets relevés.</summary>
+    public int MaxHonorificChars { get; init; } = 4 * 1024;
+
+    /// <summary>Honorific refuse lui-même d'afficher plus de 32 caractères.</summary>
+    public int MaxHonorificTitleLength { get; init; } = 32;
+
+    /// <summary>Moodles en base64 : de 0,5 à 3 Kio relevés.</summary>
+    public int MaxMoodlesChars { get; init; } = 32 * 1024;
+
+    /// <summary>PetNicknames en base64 : de 0,5 à 3 Kio relevés.</summary>
+    public int MaxPetNicknamesChars { get; init; } = 16 * 1024;
+
+    /// <summary>Profondeur maximale des extras JSON.</summary>
+    public int MaxExtrasJsonDepth { get; init; } = 8;
 }

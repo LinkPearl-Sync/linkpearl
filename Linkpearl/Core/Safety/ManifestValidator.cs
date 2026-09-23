@@ -109,6 +109,12 @@ public static class ManifestValidator
             }
         }
 
+        if (ExtrasValidator.TryAccept(manifest.ExtrasOrNone, quotas, out var extrasRejection) is false)
+        {
+            rejection = extrasRejection;
+            return false;
+        }
+
         rejection = null;
         return true;
     }
