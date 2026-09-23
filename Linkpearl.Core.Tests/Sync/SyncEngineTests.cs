@@ -151,6 +151,21 @@ internal sealed class FixedAppearance(CharacterManifest? manifest, PlayerFingerp
     public Task<CharacterManifest?> CurrentAsync(CancellationToken ct) => Task.FromResult(Manifest);
 }
 
+/// <summary>Une apparence dont CurrentAsync se bloque jusqu'à ce que le test le libère.</summary>
+/// <remarks>Sert à faire chevaucher un tic en cours avec un DisposeAsync du moteur.</remarks>
+internal sealed class BlockingAppearance(PlayerFingerprint? fingerprint) : ILocalAppearance
+{
+    public TaskCompletionSource Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public PlayerFingerprint? Fingerprint { get; } = fingerprint;
+
+    public async Task<CharacterManifest?> CurrentAsync(CancellationToken ct)
+    {
+        await Gate.Task.WaitAsync(ct).ConfigureAwait(false);
+        return null;
+    }
+}
+
 internal sealed class RecordingApplicator : IRemoteApplicator
 {
     public List<(PeerId Peer, GameObjectRef Target, CharacterManifest Manifest)> Applied { get; } = [];
@@ -822,6 +837,37 @@ public sealed class SyncEngineTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(30));
         await engine.TickAsync([], default);
         Assert.False(store.TryGetSize(stale, out _));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_attend_le_tic_en_cours_et_un_tic_apres_ne_fait_rien()
+    {
+        // Un démontage pendant un tic laisserait des mods temporaires pointer
+        // sur un dossier supprimé : DisposeAsync doit attendre le tic en vol.
+        var appearance = new BlockingAppearance(BobPrint);
+        var identity = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(identity);
+
+        var engine = new SyncEngine(
+            new PairBook(_clock), new FailingDialer(peerWasAbsent: true), appearance,
+            new RecordingApplicator(), Store("porte"), PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), identity,
+            _clock, new SilentLog());
+
+        var tick = engine.TickAsync([], default);
+        await Task.Delay(50);
+
+        var dispose = engine.DisposeAsync().AsTask();
+        await Task.Delay(50);
+        Assert.False(dispose.IsCompleted, "DisposeAsync n'a pas attendu le tic en cours.");
+
+        // Entré pendant que Dispose attend le tic en vol : la vie est déjà
+        // annulée, ce tic-là ne doit rien faire et revenir tout de suite.
+        var afterDispose = engine.TickAsync([], default);
+        await afterDispose.WaitAsync(TimeSpan.FromSeconds(2));
+
+        appearance.Gate.SetResult();
+        await tick;
+        await dispose;
     }
 
     private const string IdlePath = "chara/human/c0101/animation/a0001/bt_common/resident/idle.pap";

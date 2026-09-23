@@ -1074,7 +1074,11 @@ public sealed class Plugin : IDalamudPlugin
                     .Select(player => new VisiblePlayer(player.Object, player.Fingerprint))
                     .ToList();
 
-                if (_engine is { } engine)
+                // Sur le chemin de la perte, StopEngine ne fait que mettre
+                // l'arrêt en file sur le thread du jeu : sans cette condition,
+                // ce même tic pourrait encore appeler TickAsync pendant que
+                // DisposeAsync du moteur tourne.
+                if (_engine is { } engine && _cacheKeeper.State is CacheGateState.Open)
                     await engine.TickAsync(visible, ct).ConfigureAwait(false);
             }
             catch (Exception e) when (ct.IsCancellationRequested is false)

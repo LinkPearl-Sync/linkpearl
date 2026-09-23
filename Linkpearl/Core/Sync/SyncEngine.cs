@@ -168,7 +168,14 @@ public sealed class SyncEngine : IAsyncDisposable
 
     private CharacterManifest? _announcedManifest;
     private PlayerFingerprint? _announcedFingerprint;
-    private bool _ticking;
+
+    /// <summary>
+    /// Un jeton plutôt qu'un booléen : DisposeAsync doit pouvoir attendre le
+    /// tic en cours avant de démonter les runtimes, sans quoi un démontage
+    /// pendant un tic laisserait des mods temporaires pointer sur un dossier
+    /// supprimé. Jamais relâché après cette attente : plus aucun tic n'entre.
+    /// </summary>
+    private readonly SemaphoreSlim _tickGate = new(1, 1);
     private DateTimeOffset _lastEvictionCheck = DateTimeOffset.MinValue;
 
     public SyncEngine(
@@ -230,10 +237,8 @@ public sealed class SyncEngine : IAsyncDisposable
     /// </remarks>
     public async Task TickAsync(IReadOnlyList<VisiblePlayer> visible, CancellationToken ct)
     {
-        if (_life.IsCancellationRequested || _ticking)
+        if (_life.IsCancellationRequested || _tickGate.Wait(0) is false)
             return;
-
-        _ticking = true;
 
         try
         {
@@ -252,7 +257,7 @@ public sealed class SyncEngine : IAsyncDisposable
         }
         finally
         {
-            _ticking = false;
+            _tickGate.Release();
         }
     }
 
@@ -1002,10 +1007,18 @@ public sealed class SyncEngine : IAsyncDisposable
     {
         await _life.CancelAsync().ConfigureAwait(false);
 
+        // Un tic déjà entré doit finir avant qu'on démonte : sans cela, il
+        // pourrait encore lire _runtimes pendant qu'on le vide, ou poser un
+        // mod temporaire pointant sur un cache qu'on vient de fermer. Jamais
+        // relâché ensuite : les tics suivants voient _life annulée et
+        // repartent avant même de solliciter ce sémaphore.
+        await _tickGate.WaitAsync().ConfigureAwait(false);
+
         foreach (var (id, runtime) in _runtimes)
             await TearDownAsync(id, runtime, CancellationToken.None).ConfigureAwait(false);
 
         _runtimes.Clear();
+        _tickGate.Dispose();
         _life.Dispose();
     }
 
