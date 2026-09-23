@@ -21,6 +21,40 @@ public static class ExtrasValidator
         return rejection is null;
     }
 
+    /// <summary>
+    /// À l'envoi : garde chaque extra qui passerait la réception, omet les autres.
+    /// </summary>
+    /// <remarks>
+    /// Un seul extra hors plafond fait rejeter le manifeste entier chez le
+    /// receveur, et le joueur disparaîtrait alors de chez tous ses pairs pour
+    /// trente moodles de trop. Mieux vaut qu'il manque ses moodles que tout le
+    /// reste. Les noms rendus servent au journal, pour que l'omission se voie.
+    /// </remarks>
+    public static CharacterExtras KeepValid(CharacterExtras extras, Quotas quotas, out IReadOnlyList<string> dropped)
+    {
+        var none = CharacterExtras.None;
+        var gone = new List<string>();
+
+        string? Keep(string name, string? value, CharacterExtras alone)
+        {
+            if (value is null || Check(alone, quotas) is null)
+                return value;
+
+            gone.Add(name);
+            return null;
+        }
+
+        var kept = new CharacterExtras(
+            Keep("Customize+", extras.CustomizePlus, none with { CustomizePlus = extras.CustomizePlus }),
+            Keep("SimpleHeels", extras.Heels, none with { Heels = extras.Heels }),
+            Keep("Honorific", extras.Honorific, none with { Honorific = extras.Honorific }),
+            Keep("Moodles", extras.Moodles, none with { Moodles = extras.Moodles }),
+            Keep("PetNicknames", extras.PetNicknames, none with { PetNicknames = extras.PetNicknames }));
+
+        dropped = gone;
+        return kept;
+    }
+
     private static string? Check(CharacterExtras extras, Quotas q)
     {
         if (extras.CustomizePlus is { } customize)

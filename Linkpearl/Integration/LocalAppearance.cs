@@ -295,12 +295,21 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     {
         var key = _moodlesKey();
 
-        return new CharacterExtras(
+        var cleaned = new CharacterExtras(
             raw.CustomizePlus,
             raw.Heels is { } heels ? HeelsSanitizer.Sanitize(heels) : null,
             raw.Honorific,
             raw.Moodles is { } moodles && key is not null ? MoodlesSanitizer.Sanitize(moodles, key) : null,
             raw.PetNicknames is { } pets ? PetNicknamesData.Neutralize(pets) : null);
+
+        // Ce que le receveur refuserait est omis ici, un par un : sinon un seul
+        // extra trop gros ferait rejeter notre apparence entière chez chacun.
+        var kept = ExtrasValidator.KeepValid(cleaned, Quotas.Default, out var dropped);
+
+        if (dropped.Count > 0)
+            _log.Warning($"Omis de l'apparence annoncée, hors des bornes de réception : {string.Join(", ", dropped)}.");
+
+        return kept;
     }
 
     private async Task StoreAsync(string source, BlobHash hash, long size, CancellationToken ct)

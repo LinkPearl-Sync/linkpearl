@@ -71,6 +71,29 @@ public class ExtrasValidatorTests
         }));
 
     [Fact]
+    public void A_l_envoi_un_extra_hors_plafond_est_omis_seul()
+    {
+        // Relevé en relecture : trente moodles aux longues descriptions dépassent le
+        // plafond de réception. Envoyés tels quels, ils feraient rejeter
+        // l'apparence entière chez chaque pair ; omis, seuls les moodles manquent.
+        var huge = MoodlesSanitizer.Sanitize(
+            Convert.ToBase64String(MoodlesCodec.Encode(Enumerable.Range(0, 30)
+                .Select(_ => new MoodleStatus(Guid.NewGuid(), 1, "t", new string('d', 500), "", 0, 0, 0, 1, 0, Guid.Empty, 0, "", ""))
+                .ToList())),
+            MoodlesSanitizer.KeyFor(RandomNumberGenerator.GetBytes(32)))!;
+
+        Assert.True(huge.Length > Q.MaxMoodlesChars);
+
+        var kept = ExtrasValidator.KeepValid(
+            new CharacterExtras(null, null, "{\"Title\":\"le Voyageur\"}", huge, null), Q, out var dropped);
+
+        Assert.Null(kept.Moodles);
+        Assert.Equal("{\"Title\":\"le Voyageur\"}", kept.Honorific);
+        Assert.Equal(["Moodles"], dropped);
+        Assert.True(ExtrasValidator.TryAccept(kept, Q, out _));
+    }
+
+    [Fact]
     public void Un_seul_champ_fautif_fait_refuser_le_manifeste_entier()
     {
         var manifest = new CharacterManifest(CharacterManifest.CurrentVersion, [], "", null,
