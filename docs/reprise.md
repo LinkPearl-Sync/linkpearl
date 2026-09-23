@@ -49,7 +49,9 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 ## Ce qui vient ensuite, dans l'ordre voulu par l'utilisateur
 
 1. **Les autres intégrations, comme le font les clients comparables** :
-   Customize+, SimpleHeels, Honorific, et le reste de ce qu'ils synchronisent.
+   Customize+, SimpleHeels, Honorific, Moodles et PetNicknames. Fait le 23
+   septembre, voir `superpowers/specs/2026-09-23-integrations-design.md` ;
+   à éprouver en jeu avec `essais-integrations.md`.
 2. **Les animations, les VFX et les sons**, avec un moyen d'en bloquer la
    synchronisation : un réglage global rapide, et un réglage par pair.
 3. **Les groupes**, plus tard. Ce sont eux qui porteront des codes (point 5).
@@ -117,6 +119,9 @@ fois et ne mesure pas le moteur.
 - **Un client d'avant les tronçons ne peut plus échanger** avec un client
   d'après. Le receveur le dit dans le journal, mais la version du protocole n'a
   pas été relevée : ses vecteurs figés servent à la relecture externe.
+- **SimpleHeels garde un décalage reçu** jusqu'à ce qu'on le désenregistre, ce
+  qui exige un personnage visible : un pair retiré hors de vue garde son
+  décalage chez nous jusqu'au rechargement de SimpleHeels.
 - **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
   rien n'a encore mesuré ce qu'il coûte au processeur.
 
@@ -146,6 +151,9 @@ fois et ne mesure pas le moteur.
   même sans le drapeau `Lock`. La documentation dit « to unlock or lock ».
 - `StateFinalized` de Glamourer ne se lève qu'à la fin d'un changement groupé :
   une retouche manuelle ne lève que `StateChanged`.
+- Moodles transporte « Nom@Monde » et des GUID identiques d'un personnage à
+  l'autre ; PetNicknames transporte nom, monde et ContentId. Les deux sont
+  nettoyés à l'envoi et vérifiés à la réception.
 - LiteNetLib ne garantit l'ordre qu'à l'intérieur d'un canal : un tronçon entier
   doit tenir sur un seul canal.
 - Sa file d'envoi n'est pas bornée : sans contre-pression, un transfert alloue
