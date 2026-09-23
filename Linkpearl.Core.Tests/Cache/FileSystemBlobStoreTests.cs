@@ -313,6 +313,12 @@ public sealed class FileSystemBlobStoreTests : IDisposable
     [Fact]
     public async Task Un_dossier_disparu_pendant_une_ecriture_n_est_pas_recree_a_la_publication()
     {
+        // Windows refuse de supprimer un dossier qui contient un fichier ouvert :
+        // le scénario n'y existe pas, et le Directory.Delete ci-dessous lèverait.
+        // La publication tourne sur un runner Windows, qui passe donc ce cas.
+        if (OperatingSystem.IsWindows())
+            return;
+
         var store = Store();
         var content = Bytes("écrit pendant qu'on vide le disque");
 
