@@ -44,6 +44,12 @@ internal static class Icons
     public const FontAwesomeIcon Discoverable = FontAwesomeIcon.Eye;
     public const FontAwesomeIcon Hidden      = FontAwesomeIcon.EyeSlash;
 
+    // ─── Animations, VFX et sons ───────────────────────────────────────────────
+    public const FontAwesomeIcon Animations = FontAwesomeIcon.Running;
+    public const FontAwesomeIcon Vfx        = FontAwesomeIcon.Magic;
+    public const FontAwesomeIcon Sounds     = FontAwesomeIcon.VolumeUp;
+    public const FontAwesomeIcon Effects    = FontAwesomeIcon.SlidersH;
+
     // ─── Actions ──────────────────────────────────────────────────────────────
     public const FontAwesomeIcon Invite  = FontAwesomeIcon.UserPlus;
     public const FontAwesomeIcon Accept  = FontAwesomeIcon.Check;
@@ -74,6 +80,7 @@ internal static class Icons
         Nearby, Pairs, Requests, Settings,
         Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
+        Animations, Vfx, Sounds, Effects,
         Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore,
         Warning, Info, Empty,
     ];

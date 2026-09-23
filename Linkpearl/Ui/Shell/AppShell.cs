@@ -1,6 +1,7 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility.Raii;
 using System.Numerics;
+using Linkpearl.Core.Safety;
 
 namespace Linkpearl.Ui.Shell;
 
@@ -37,6 +38,11 @@ internal sealed class AppShell
 
     public string ActiveId => _activeId;
 
+    /// <summary>Ce qu'on accepte de tous : animations, VFX, sons. Null pour ne pas montrer les bascules.</summary>
+    public Func<TransientCategories>? Receive { get; init; }
+
+    public Action<TransientCategories>? SetReceive { get; init; }
+
     public void Navigate(string pageId)
     {
         if (_pages.Exists(page => page.Id == pageId))
@@ -56,7 +62,7 @@ internal sealed class AppShell
     {
         var available = ImGui.GetContentRegionAvail();
 
-        closeRequested = TitleBar.Draw(available.X);
+        closeRequested = TitleBar.Draw(available.X, Receive?.Invoke(), SetReceive);
 
         var bodyHeight = available.Y
                        - Theme.S(Theme.TitleBarHeight)

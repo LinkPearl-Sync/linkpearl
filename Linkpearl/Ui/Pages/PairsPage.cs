@@ -3,6 +3,7 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Integration;
 using Linkpearl.Ui.Components;
@@ -22,7 +23,8 @@ namespace Linkpearl.Ui.Pages;
 /// </remarks>
 internal sealed class PairsPage(
     PairingService pairing, Func<IReadOnlyList<PeerStatus>> statuses,
-    Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair)
+    Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
+    Action<PeerId, TransientCategories> setReceive)
 {
     private string _filter = "";
 
@@ -108,7 +110,7 @@ internal sealed class PairsPage(
         ImGui.TableSetupColumn("état", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
         ImGui.TableSetupColumn("nom", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("statut", ImGuiTableColumnFlags.WidthFixed, Theme.S(190f));
-        ImGui.TableSetupColumn("actions", ImGuiTableColumnFlags.WidthFixed, (ImGui.GetFrameHeight() * 3f) + Theme.S(Theme.GapS * 2f));
+        ImGui.TableSetupColumn("actions", ImGuiTableColumnFlags.WidthFixed, (ImGui.GetFrameHeight() * 4f) + Theme.S(Theme.GapS * 3f));
 
         foreach (var pair in pairs)
         {
@@ -173,6 +175,10 @@ internal sealed class PairsPage(
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
+        DrawReceive(pair, id);
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
         // Retirer se confirme par un second clic : un carnet ne se vide pas
         // par un geste qui glisse.
         var confirming = _confirming is { } c && c.Id == pair.Id && c.Until > DateTime.UtcNow;
@@ -191,6 +197,41 @@ internal sealed class PairsPage(
                 _confirming = (pair.Id, DateTime.UtcNow.AddSeconds(4));
             }
         }
+    }
+
+    /// <summary>Le bouton des animations, VFX et sons de ce pair, et son menu.</summary>
+    /// <remarks>
+    /// Accentué dès qu'une catégorie est bloquée : sans cela, un pair dont on
+    /// a coupé les sons il y a un mois paraîtrait simplement cassé.
+    /// </remarks>
+    private void DrawReceive(PairRecord pair, string id)
+    {
+        var receive = pair.Receive;
+        var limited = receive != TransientCategories.All;
+
+        if (Btn.Icon(Icons.Effects, $"effects_{id}",
+                     tone: limited ? BtnTone.Secondary : BtnTone.Ghost,
+                     tooltip: limited ? "Animations, VFX et sons : certains sont bloqués pour ce pair"
+                                      : "Animations, VFX et sons reçus de ce pair"))
+            ImGui.OpenPopup($"effets_{id}");
+
+        using var popup = ImRaii.Popup($"effets_{id}");
+
+        if (popup.Success is false)
+            return;
+
+        Text.Small("Recevoir de ce pair :");
+
+        var animations = receive.Animations;
+        var vfx = receive.Vfx;
+        var sounds = receive.Sounds;
+
+        var changed = ImGui.Checkbox($"Animations##anim_{id}", ref animations);
+        changed |= ImGui.Checkbox($"VFX##vfx_{id}", ref vfx);
+        changed |= ImGui.Checkbox($"Sons##sons_{id}", ref sounds);
+
+        if (changed)
+            setReceive(pair.Id, new TransientCategories(animations, vfx, sounds));
     }
 
     /// <summary>Centre un texte d'une ligne sur la hauteur d'un bouton.</summary>

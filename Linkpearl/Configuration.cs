@@ -90,6 +90,18 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Plafond d'émission, en octets par seconde.</summary>
     public long UploadCeilingBytesPerSecond { get; set; } = 8 * 1024 * 1024;
 
+    /// <summary>Animations, VFX et sons reçus de tous les pairs, avant le réglage de chacun.</summary>
+    /// <remarks>
+    /// Tout par défaut : une idle ou une pose assise moddée est ce que les
+    /// joueurs visés veulent voir. Couper se fait d'un clic dans la barre du
+    /// haut, sans passer par les réglages.
+    /// </remarks>
+    public bool ReceiveAnimations { get; set; } = true;
+
+    public bool ReceiveVfx { get; set; } = true;
+
+    public bool ReceiveSounds { get; set; } = true;
+
     /// <summary>Le rappel de sauvegarder a été fait, ou une sauvegarde faite.</summary>
     /// <remarks>
     /// Une seule fois : un rappel qui revient à chaque connexion s'apprend à

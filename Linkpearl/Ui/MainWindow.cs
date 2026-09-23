@@ -1,6 +1,7 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
@@ -36,7 +37,10 @@ public sealed class MainWindow : ThemedWindow
         Action<RendezvousAddress> discover,
         Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline,
         Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
-        Action<bool> setUploadLimited, BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
+        Action<bool> setUploadLimited,
+        Func<TransientCategories> globalReceive, Action<TransientCategories> setGlobalReceive,
+        Action<PeerId, TransientCategories> setPairReceive,
+        BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -46,7 +50,7 @@ public sealed class MainWindow : ThemedWindow
         _statuses = statuses;
 
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
-        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair);
+        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair, setPairReceive);
         _backup = new BackupCard(backupState, backup, restore);
         var settings = new SettingsPage(configuration, discovery, discover, _backup, setUploadLimited);
 
@@ -73,7 +77,11 @@ public sealed class MainWindow : ThemedWindow
                 Id = "settings", Icon = Icons.Settings, Label = () => "Réglages", Draw = settings.Draw,
                 Pinned = true,
             },
-        ], "nearby");
+        ], "nearby")
+        {
+            Receive = globalReceive,
+            SetReceive = setGlobalReceive,
+        };
 
         LogicalSizeConstraints = new WindowSizeConstraints
         {

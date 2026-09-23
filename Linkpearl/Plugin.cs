@@ -161,6 +161,8 @@ public sealed class Plugin : IDalamudPlugin
         var engineSettings = new SyncEngineSettings
         {
             LimitUpload = _configuration.LimitUpload,
+            Receive = new TransientCategories(
+                _configuration.ReceiveAnimations, _configuration.ReceiveVfx, _configuration.ReceiveSounds),
             Limiter = new RateLimiterSettings
             {
                 CeilingBytesPerSecond = _configuration.UploadCeilingBytesPerSecond,
@@ -247,6 +249,9 @@ public sealed class Plugin : IDalamudPlugin
             id => { _engine?.Reapply(id); Report("réapplication demandée."); },
             id => Report(_pairing.Remove(id)),
             SetUploadLimited,
+            () => GlobalReceive,
+            SetGlobalReceive,
+            SetPairReceive,
             _backupState,
             (path, password) => RunSafely(() => BackupAsync(path, password)),
             (path, password) => RunSafely(() => RestoreAsync(path, password)));
@@ -695,6 +700,28 @@ public sealed class Plugin : IDalamudPlugin
     private void UpdateOverlay(IFramework framework)
         => _overlay.Update(
             _configuration.ShowTransferBadges, _engine?.Statuses ?? [], _state.Nearby, _pairing.Book);
+
+    private TransientCategories GlobalReceive => _engineSettings.Receive;
+
+    private void SetGlobalReceive(TransientCategories receive)
+    {
+        _configuration.ReceiveAnimations = receive.Animations;
+        _configuration.ReceiveVfx = receive.Vfx;
+        _configuration.ReceiveSounds = receive.Sounds;
+        _configuration.Save();
+
+        // Le moteur du personnage suivant naîtra avec le même réglage.
+        _engineSettings = _engineSettings with { Receive = receive };
+        _engine?.SetGlobalReceive(receive);
+    }
+
+    private void SetPairReceive(PeerId id, TransientCategories receive)
+    {
+        // Le moteur voit le changement au tic suivant et redemande le
+        // manifeste : rien d'autre à faire ici.
+        if (_pairing.SetReceive(id, receive) is { Length: > 0 } failure)
+            Report(failure);
+    }
 
     private void SetUploadLimited(bool limited)
     {

@@ -2,6 +2,7 @@ using Dalamud.Game.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using System.Numerics;
+using Linkpearl.Core.Safety;
 
 namespace Linkpearl.Ui.Shell;
 
@@ -16,7 +17,8 @@ namespace Linkpearl.Ui.Shell;
 internal static class TitleBar
 {
     /// <summary>Dessine la barre. Rend vrai si la fermeture est demandée.</summary>
-    public static bool Draw(float width)
+    /// <param name="receive">Animations, VFX et sons acceptés de tous ; null pour ne pas montrer les bascules.</param>
+    public static bool Draw(float width, TransientCategories? receive = null, Action<TransientCategories>? setReceive = null)
     {
         var height = Theme.S(Theme.TitleBarHeight);
         var origin = ImGui.GetCursorScreenPos();
@@ -43,9 +45,13 @@ internal static class TitleBar
         var side   = MathF.Round(height - margin * 2f);
         var closed = false;
 
+        // Les bascules, puis la croix : autant de carrés pris sur la zone de
+        // déplacement, qui sinon capterait leurs clics.
+        var buttons = receive is null ? 1 : 4;
+
         // ── Zone de déplacement ───────────────────────────────────────────────
         ImGui.SetCursorScreenPos(origin);
-        ImGui.InvisibleButton("##titledrag", new Vector2(Math.Max(1f, width - side - margin), height));
+        ImGui.InvisibleButton("##titledrag", new Vector2(Math.Max(1f, width - (side + margin) * buttons), height));
 
         if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left))
             ImGui.SetWindowPos(ImGui.GetWindowPos() + ImGui.GetIO().MouseDelta);
@@ -77,6 +83,30 @@ internal static class TitleBar
         if (IconButton(dl, position, side, Icons.Close, "shell_close"))
             closed = true;
 
+        // ── Bascules de réception ─────────────────────────────────────────────
+        // Dans la barre et non dans les réglages : couper les effets d'une
+        // foule doit se faire d'un clic, au moment où ils gênent.
+        if (receive is { } current && setReceive is not null)
+        {
+            (FontAwesomeIcon Icon, bool On, string What, Func<bool, TransientCategories> With)[] toggles =
+            [
+                (Icons.Sounds, current.Sounds, "les sons", on => current with { Sounds = on }),
+                (Icons.Vfx, current.Vfx, "les VFX", on => current with { Vfx = on }),
+                (Icons.Animations, current.Animations, "les animations", on => current with { Animations = on }),
+            ];
+
+            for (var i = 0; i < toggles.Length; i++)
+            {
+                var (icon, on, what, with) = toggles[i];
+                var at = new Vector2(MathF.Round(position.X - (side + margin) * (i + 1)), position.Y);
+
+                if (IconButton(dl, at, side, icon, $"shell_receive_{i}", struck: on is false,
+                               tooltip: on ? $"Reçoit {what} de vos pairs. Cliquer pour les bloquer."
+                                           : $"{char.ToUpperInvariant(what[0])}{what[1..]} de vos pairs sont bloqués. Cliquer pour les recevoir."))
+                    setReceive(with(on is false));
+            }
+        }
+
         ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + height));
         return closed;
     }
@@ -91,7 +121,7 @@ internal static class TitleBar
     /// glyphe centré sur son encombrement réel.
     /// </remarks>
     private static bool IconButton(ImDrawListPtr dl, Vector2 position, float side,
-                                   FontAwesomeIcon icon, string id)
+                                   FontAwesomeIcon icon, string id, bool struck = false, string? tooltip = null)
     {
         ImGui.SetCursorScreenPos(position);
 
@@ -105,16 +135,29 @@ internal static class TitleBar
                 Theme.S(Theme.RadiusFrame));
 
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+            if (tooltip is not null)
+                ImGui.SetTooltip(tooltip);
         }
 
         var glyph = icon.S();
         var size  = ImGui.CalcTextSize(glyph);
+        var color = ImGui.GetColorU32(struck ? Theme.Alpha(Theme.Text, 0.45f) : Theme.Text);
 
         dl.AddText(
             new Vector2(MathF.Round(position.X + (side - size.X) * 0.5f),
                         MathF.Round(position.Y + (side - size.Y) * 0.5f)),
-            ImGui.GetColorU32(Theme.Text),
+            color,
             glyph);
+
+        // Barré plutôt qu'éteint seul : une icône grisée se lit mal sur la
+        // nacre, un trait se voit d'un coup d'œil.
+        if (struck)
+        {
+            var inset = side * 0.22f;
+            dl.AddLine(position + new Vector2(inset, inset), position + new Vector2(side - inset, side - inset),
+                ImGui.GetColorU32(Theme.Danger), Theme.S(2f));
+        }
 
         return clicked;
     }

@@ -53,7 +53,9 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    septembre, voir `superpowers/specs/2026-09-23-integrations-design.md` ;
    à éprouver en jeu avec `essais-integrations.md`.
 2. **Les animations, les VFX et les sons**, avec un moyen d'en bloquer la
-   synchronisation : un réglage global rapide, et un réglage par pair.
+   synchronisation : un réglage global rapide, et un réglage par pair. Fait le
+   23 septembre, voir `superpowers/specs/2026-09-23-transitoires-design.md` ;
+   à éprouver en jeu avec la seconde partie de `essais-integrations.md`.
 3. **Les groupes**, plus tard. Ce sont eux qui porteront des codes (point 5).
 
 ## État des jalons
@@ -90,6 +92,17 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
   désormais écartée au lieu d'être écrasée en silence.
 - Interface : « Autour de vous » en listes, badges de transfert sous les pairs,
   symbole HQ dans la barre de statut et le titre.
+- **Animations, VFX et sons.** L'émetteur les capte à leur chargement
+  (`TransientCapture`, événement Penumbra), les retient par job
+  (`TransientMemory`, `transients.json` du personnage), les re-résout à chaque
+  construction et écarte les `.pap` qui animent des os que son squelette n'a
+  pas (`PapSkeletonCheck`). Le receveur contrôle la forme des fichiers
+  (`TransientFileCheck`, règles mesurées sur 5 109 `.pap`) et filtre avant tout
+  téléchargement selon le réglage global (barre du haut) et celui du pair
+  (bouton du carnet).
+- **Course du handshake corrigée** : un premier message scellé arrivé avant la
+  fin du handshake chez le répondeur était perdu, ce qui rendait les tests du
+  moteur intermittents.
 
 ### Ce que le faux pair mesure maintenant
 
@@ -125,6 +138,12 @@ fois et ne mesure pas le moteur.
 - **SimpleHeels garde un décalage reçu** jusqu'à ce qu'on le désenregistre, ce
   qui exige un personnage visible : un pair retiré hors de vue garde son
   décalage chez nous jusqu'au rechargement de SimpleHeels.
+- **Les échanges de fichiers de Penumbra ne partent pas.** Le classement les
+  reconnaît (`FileSwap`) mais le manifeste ne les porte pas : un mod de pose
+  fait d'un simple échange vers une animation du jeu ne se synchronise pas.
+- **Le contrôle de squelette n'a aucun test automatique** : il passe par le
+  chargeur Havok du jeu. À éprouver en jeu avec une animation d'un squelette
+  étendu.
 - **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
   rien n'a encore mesuré ce qu'il coûte au processeur.
 

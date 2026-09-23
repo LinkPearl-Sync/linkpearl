@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Integration;
@@ -314,6 +315,20 @@ public sealed class PairingService : IDisposable
         _book.SetPaused(id, paused);
         _bookStore.Save(_book);
         return paused ? $"{record.DisplayName} en pause." : $"{record.DisplayName} repris.";
+    }
+
+    /// <summary>Change les animations, VFX et sons acceptés de ce pair.</summary>
+    public string SetReceive(PeerId id, TransientCategories receive)
+    {
+        if (_bookStore is null)
+            return NoCharacter;
+
+        if (_book.Find(id) is null)
+            return "pair inconnu.";
+
+        _book.SetReceive(id, receive);
+        _bookStore.Save(_book);
+        return string.Empty;
     }
 
     /// <summary>Retire un pair du carnet.</summary>
