@@ -169,8 +169,10 @@ internal sealed class SettingsPage(
                 {
                     // Montré, pas seulement journalisé : le bouton et la
                     // taille resteraient sinon affichés comme si de rien
-                    // n'était, alors que rien n'a été supprimé.
-                    Plugin.Log.Warning(e, "Suppression de l'ancien cache en échec.");
+                    // n'était, alors que rien n'a été supprimé. Le journal ne
+                    // garde que le type d'exception ; l'interface, elle, peut
+                    // afficher le message complet.
+                    Plugin.Log.Warning($"Suppression de l'ancien cache en échec ({e.GetType().Name}).");
                     _deletePreviousError = $"échec de la suppression : {e.Message}";
                 }
                 finally

@@ -202,8 +202,21 @@ public sealed class CacheKeeper(
     /// <summary>Mesure l'ancien cache. Parcourt tout l'arbre : pool de threads.</summary>
     public void MeasurePrevious()
     {
-        if (PreviousRoot is { } previous)
+        if (PreviousRoot is not { } previous)
+            return;
+
+        try
+        {
             Interlocked.Exchange(ref _previousBytes, CacheLocation.Measure(previous));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Disparu ou devenu illisible entre-temps : une taille inconnue
+            // plutôt qu'un pool de threads qui plante, et le seul type
+            // d'exception au journal, jamais son message.
+            Interlocked.Exchange(ref _previousBytes, -1);
+            log.Warning($"mesure de l'ancien cache impossible ({e.GetType().Name}).");
+        }
     }
 
     /// <summary>Efface nos fichiers de l'ancien cache, et l'oublie. Pool de threads.</summary>
@@ -249,7 +262,10 @@ public sealed class CacheKeeper(
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                      or NotSupportedException or ArgumentException)
         {
-            log.Warning("ouverture du cache impossible.", e);
+            // Le seul type d'exception, jamais son message : IOException et
+            // consorts embarquent souvent le chemin complet, qui porte le nom
+            // du compte Windows.
+            log.Warning($"ouverture du cache impossible ({e.GetType().Name}).");
             MarkMissing(root);
             return;
         }
