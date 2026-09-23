@@ -49,8 +49,6 @@ internal sealed class CacheChooser(CacheKeeper keeper)
 
     private void DrawFolder(string shown)
     {
-        Text.Small("Dossier", Theme.TextMuted);
-
         var browse = Btn.Measure("Parcourir…", BtnSize.Small, Icons.Folder);
         var display = shown;
 
@@ -61,18 +59,23 @@ internal sealed class CacheChooser(CacheKeeper keeper)
         if (Btn.Draw("Parcourir…", BtnTone.Secondary, BtnSize.Small, Icons.Folder, disabled: _busy, id: "cache_browse"))
             _dialogs.OpenFolderDialog("Dossier du cache Linkpearl", OnChosen, StartFolder(shown), isModal: false);
 
+        // Le pourquoi (sous-dossier réservé, purge des plus anciennes) passe en
+        // infobulle : la ligne d'état qui suit (erreur, redémarrage en
+        // attente) est ce qui mérite de rester en clair, pas la répéter à
+        // chaque image.
+        Feedback.Hint(
+            $"Linkpearl n'écrit que dans le sous-dossier {CacheLocation.FolderName}. Les apparences reçues y "
+          + "sont gardées pour ne pas les retélécharger ; au-delà du quota, les plus anciennes partent, jamais "
+          + "celles à l'écran.");
+
         if (_error is { } error)
             Text.Small(error, Theme.Danger);
         else if (keeper.RestartPending)
             Text.Small("Le nouveau dossier servira au prochain chargement du plugin.", Theme.Idle);
-        else
-            Text.Small($"Linkpearl n'écrit que dans le sous-dossier {CacheLocation.FolderName}.", Theme.TextFaint);
     }
 
     private void DrawQuota(string shown)
     {
-        Text.Small("Taille maximale", Theme.TextMuted);
-
         var quota = ShownQuotaGiB;
 
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
@@ -90,9 +93,6 @@ internal sealed class CacheChooser(CacheKeeper keeper)
         if (ImGui.IsItemActive() is false)
             _dragging = null;
 
-        var appearances = (int)(ShownQuotaGiB * 1024f / 800f);
-        Text.Small($"De quoi garder environ {appearances} apparences de 800 Mo.", Theme.TextFaint);
-
         if (_freeFor != shown)
         {
             _freeFor = shown;
@@ -100,13 +100,15 @@ internal sealed class CacheChooser(CacheKeeper keeper)
         }
 
         var free = Interlocked.Read(ref _free);
+        var appearances = (int)(ShownQuotaGiB * 1024f / 800f);
 
-        if (free < 0)
-            return;
+        // Une seule ligne faible : la maquette resserre en une ligne les deux
+        // mesures (apparences, espace libre) qui tenaient chacune la leur.
+        Text.Small(free < 0
+            ? $"≈ {appearances} apparences"
+            : $"≈ {appearances} apparences · {Format(free)} libres", Theme.TextFaint);
 
-        Text.Small($"Espace libre sur ce disque : {Format(free)}.", Theme.TextFaint);
-
-        if (ShownQuotaGiB * CacheKeeper.GiB > free)
+        if (free >= 0 && ShownQuotaGiB * CacheKeeper.GiB > free)
             Text.Small("Le quota dépasse l'espace libre : le cache s'arrêtera avant, faute de place.", Theme.Idle);
     }
 

@@ -31,6 +31,48 @@ internal static class Feedback
             Tooltip(text);
     }
 
+    /// <summary>
+    /// Icône ⓘ sur la même ligne que l'élément précédent, avec l'explication
+    /// en infobulle.
+    /// </summary>
+    /// <remarks>
+    /// C'est elle qui porte, dans la page réglages, le paragraphe qu'on a
+    /// sorti de la carte : la case ou le champ reste seul visible, le pourquoi
+    /// n'apparaît qu'au survol.
+    /// </remarks>
+    public static void Hint(string text)
+    {
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        // Sans cet alignement, l'icône flotte au-dessus d'une case ou d'un
+        // champ, plus hauts qu'une ligne de texte nue.
+        ImGui.AlignTextToFramePadding();
+        Text.Icon(Icons.Info, Theme.TextFaint);
+        TooltipOnHover(text);
+    }
+
+    /// <summary>Comme <see cref="Hint(string)"/>, mais l'infobulle dessine un contenu libre.</summary>
+    /// <remarks>Sert la légende des glyphes, une liste de pastilles colorées, pas un simple texte replié.</remarks>
+    public static void Hint(Action content)
+    {
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        ImGui.AlignTextToFramePadding();
+        Text.Icon(Icons.Info, Theme.TextFaint);
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) is false)
+            return;
+
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Theme.S(Theme.GapL, Theme.GapM));
+        using var color = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.BgSurface);
+
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(Theme.S(320f));
+        content();
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
+    }
+
     /// <summary>Pastille colorée, avec un libellé facultatif.</summary>
     public static void StatusDot(Vector4 color, string? label = null)
     {

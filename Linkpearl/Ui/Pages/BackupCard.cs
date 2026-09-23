@@ -42,17 +42,6 @@ internal sealed class BackupCard(BackupState state, Action<string, string?> back
 
     public void Draw()
     {
-        using var card = Card.Begin("settings_backup");
-
-        Text.WithIcon(Icons.Backup, "Sauvegarde de l'identité", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        Text.Wrapped(
-            "Tous vos personnages et leurs pairs, dans un seul fichier. Après une réinstallation "
-          + "de Windows ou sur un autre PC, le restaurer évite de refaire chaque pairage.");
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
-
         if (state.AwaitingPassword is { } path)
             DrawPasswordPrompt(path);
         else
@@ -87,9 +76,8 @@ internal sealed class BackupCard(BackupState state, Action<string, string?> back
         else
         {
             // Dit avant le clic, pas après : ce fichier finira sur un nuage ou
-            // dans une conversation.
-            Text.Small("Sans mot de passe, quiconque obtient ce fichier peut se faire passer pour vous "
-                     + "auprès de vos pairs.", Theme.Idle);
+            // dans une conversation. Reste visible (sécurité), une ligne.
+            Text.Small("Sans mot de passe, ce fichier suffit pour se faire passer pour vous.", Theme.Idle);
         }
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
@@ -126,6 +114,12 @@ internal sealed class BackupCard(BackupState state, Action<string, string?> back
                 },
                 1, Documents(), isModal: false);
         }
+
+        // L'explication de ce que fait une sauvegarde, sortie de la carte :
+        // les deux boutons parlent d'eux-mêmes, le pourquoi attend le survol.
+        Feedback.Hint(
+            "Tous vos personnages et leurs pairs, dans un seul fichier. Après une réinstallation de "
+          + "Windows ou sur un autre PC, le restaurer évite de refaire chaque pairage.");
     }
 
     private void DrawPasswordPrompt(string path)

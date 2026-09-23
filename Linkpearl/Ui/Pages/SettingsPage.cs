@@ -56,62 +56,40 @@ internal sealed class SettingsPage(
         Text.Title("Réglages");
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
-        DrawDiscoverable();
-        DrawBadges();
+        DrawVisibility();
         DrawCache();
-        DrawUpload();
-        backup.Draw();
-        DrawServices();
+        DrawNetwork();
+        DrawIdentity();
         DrawDiscovery();
-        DrawOnboarding();
     }
 
-    private void DrawDiscoverable()
+    /// <summary>Visibilité : ce qui se voit de vous, et ce que ça coûte en vie privée.</summary>
+    private void DrawVisibility()
     {
-        using var card = Card.Begin("settings_discoverable");
+        using var card = Card.Begin("settings_visibility");
 
-        Text.WithIcon(Icons.Discoverable, "Se signaler aux autres joueurs", Theme.Accent);
+        Text.WithIcon(Icons.Discoverable, "Visibilité", Theme.Accent);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         var discoverable = configuration.Discoverable;
 
-        if (ImGui.Checkbox("Me signaler##discoverable", ref discoverable))
+        if (ImGui.Checkbox("Me signaler aux autres joueurs##discoverable", ref discoverable))
         {
             configuration.Discoverable = discoverable;
             configuration.Save();
         }
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        Feedback.Hint(
+            "Sans cela, personne ne peut vous reconnaître ni vous adresser une demande. Avec, "
+          + "l'opérateur de chaque service peut savoir que votre personnage est en ligne : pour "
+          + "qu'un inconnu puisse vous reconnaître, il faut bien que quelque chose soit calculable "
+          + "à partir de votre nom.");
 
-        Text.Wrapped(
-            "Sans cela, personne ne peut vous reconnaître ni vous adresser une demande. "
-          + "Avec, l'opérateur de chaque service peut savoir que votre personnage est en "
-          + "ligne : pour qu'un inconnu puisse vous reconnaître, il faut bien que quelque "
-          + "chose soit calculable à partir de votre nom.");
-    }
-
-    private void DrawBadges()
-    {
-        using var card = Card.Begin("settings_badges");
-
-        Text.WithIcon(Icons.Receiving, "Badges de transfert", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        var shown = configuration.ShowTransferBadges;
-
-        if (ImGui.Checkbox("Afficher sous les pairs##transfer_badges", ref shown))
-        {
-            configuration.ShowTransferBadges = shown;
-            configuration.Save();
-        }
+        // Exception voulue à la règle « tout en infobulle » : ce qui se paie
+        // en vie privée se lit avant de cocher, pas au survol d'une icône.
+        Text.Small("Le service sait alors que vous êtes en ligne.", Theme.TextFaint);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        Text.Wrapped(
-            "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
-          + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée.");
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
         var glyphs = configuration.ShowNameplateGlyphs;
 
@@ -121,24 +99,31 @@ internal sealed class SettingsPage(
             configuration.Save();
         }
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-        Text.Wrapped("Un glyphe coloré à droite du nom des joueurs qui utilisent Linkpearl :");
+        Feedback.Hint(NameplateLegend.Draw);
 
-        NameplateLegend.Draw();
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        var badges = configuration.ShowTransferBadges;
+
+        if (ImGui.Checkbox("Badges de transfert##transfer_badges", ref badges))
+        {
+            configuration.ShowTransferBadges = badges;
+            configuration.Save();
+        }
+
+        Feedback.Hint(
+            "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
+          + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée.");
     }
 
+    /// <summary>Cache : où les apparences reçues vivent sur le disque, et combien.</summary>
     private void DrawCache()
     {
         using var card = Card.Begin("settings_cache");
 
-        Text.WithIcon(Icons.Cache, "Cache des apparences", Theme.Accent);
+        Text.WithIcon(Icons.Cache, "Cache", Theme.Accent);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        Text.Wrapped(
-            "Les apparences reçues sont gardées sur le disque pour ne pas les retélécharger. "
-          + "Au-delà du quota, les plus anciennes partent, jamais celles à l'écran.");
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
         cacheChooser.Draw();
 
         if (cacheKeeper.PreviousRoot is not { } previous)
@@ -186,52 +171,33 @@ internal sealed class SettingsPage(
             Text.Small(error, Theme.Danger);
     }
 
-    private void DrawOnboarding()
+    /// <summary>Réseau : débit et services de rendez-vous.</summary>
+    private void DrawNetwork()
     {
-        using var card = Card.Begin("settings_onboarding");
+        using var card = Card.Begin("settings_network");
 
-        Text.WithIcon(Icons.Info, "Présentation", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-        Text.Wrapped("Le fonctionnement de Linkpearl en six écrans, comme au premier lancement.");
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        if (Btn.Draw("Revoir la présentation", BtnTone.Secondary, BtnSize.Small, Icons.Info, id: "settings_onboarding"))
-            showOnboarding();
-    }
-
-    private void DrawUpload()
-    {
-        using var card = Card.Begin("settings_upload");
-
-        Text.WithIcon(Icons.Receiving, "Débit d'envoi", Theme.Accent);
+        Text.WithIcon(Icons.Rendezvous, "Réseau", Theme.Accent);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         var limited = configuration.LimitUpload;
 
-        if (ImGui.Checkbox("Brider l'envoi pour préserver le ping##limit_upload", ref limited))
+        if (ImGui.Checkbox("Brider l'envoi##limit_upload", ref limited))
             setUploadLimited(limited);
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        Text.Wrapped(
-            "Bridé, l'envoi démarre lentement et recule dès que le ping gonfle : une tenue met "
-          + "des minutes à arriver, mais le jeu reste fluide en donjon. Libre, elle arrive en "
-          + "quelques secondes, au prix d'un ping plus haut pendant le transfert.");
-    }
-
-    private void DrawServices()
-    {
-        using var card = Card.Begin("settings_services");
-
-        Text.WithIcon(Icons.Rendezvous, "Services de rendez-vous", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        Text.Wrapped(
-            "Ils aident deux joueurs à se trouver et relaient quand la connexion directe "
-          + "échoue. Ils ne voient ni vos fichiers, ni vos apparences, ni vos clés. Vous ne "
-          + "verrez que les joueurs avec qui vous partagez au moins un service.");
+        Feedback.Hint(
+            "Bridé, l'envoi démarre lentement et recule dès que le ping gonfle : une tenue met des "
+          + "minutes à arriver, mais le jeu reste fluide en donjon. Libre, elle arrive en quelques "
+          + "secondes, au prix d'un ping plus haut pendant le transfert.");
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        Text.Body("Services de rendez-vous");
+        Feedback.Hint(
+            "Ils aident deux joueurs à se trouver et relaient quand la connexion directe échoue. "
+          + "Ils ne voient ni vos fichiers, ni vos apparences, ni vos clés. Vous ne verrez que les "
+          + "joueurs avec qui vous partagez au moins un service.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         for (var i = 0; i < configuration.Rendezvous.Count; i++)
             DrawService(i);
@@ -248,13 +214,26 @@ internal sealed class SettingsPage(
         if (Btn.Draw("Ajouter", BtnTone.Secondary, BtnSize.Small, Icons.Invite, id: "add_rdv"))
             Add(_newAddress);
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Feedback.Hint(
+            "Chaque service activé apprend que votre personnage est en ligne et qui se tient autour "
+          + "de vous. En ajouter augmente vos chances de voir du monde, et le nombre de personnes "
+          + "qui le savent.");
+    }
 
-        Text.Small(
-            "Chaque service activé apprend que votre personnage est en ligne et qui se "
-          + "tient autour de vous. En ajouter augmente vos chances de voir du monde, et le "
-          + "nombre de personnes qui le savent.",
-            Theme.TextFaint);
+    /// <summary>Identité : sauvegarde du personnage et de son carnet, et la présentation.</summary>
+    private void DrawIdentity()
+    {
+        using var card = Card.Begin("settings_identity");
+
+        Text.WithIcon(Icons.Backup, "Identité", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        backup.Draw();
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        if (Btn.Draw("Revoir la présentation", BtnTone.Ghost, BtnSize.Small, Icons.Info, id: "settings_onboarding"))
+            showOnboarding();
     }
 
     private void DrawService(int index)
