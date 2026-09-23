@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Integration;
@@ -30,12 +31,28 @@ public sealed class PairBookStore(string path)
     /// pour relire un carnet d'avant la fédération, qui ne portait qu'un hôte.
     /// <c>Rendezvous</c> vient en dernier et vaut null à l'absence, ce que la
     /// désérialisation d'un enregistrement positionnel donne naturellement.
+    /// <c>Receive</c> suit la même règle : absent d'un carnet ancien, il vaut
+    /// tout accepter, comme un pair qu'on vient d'ajouter.
     /// </remarks>
     private sealed record Dto(
         string Id, string? PublicKey, string PairSecret, string DisplayName, string? RendezvousHost,
         int Trust, int Permissions, int Policy, bool Paused,
         long PairedAt, long? LastSeenAt, string? PinnedFingerprint,
-        string[]? Rendezvous = null);
+        string[]? Rendezvous = null, int? Receive = null);
+
+    private const int ReceiveAnimations = 1;
+    private const int ReceiveVfx = 2;
+    private const int ReceiveSounds = 4;
+
+    private static int ToBits(TransientCategories receive)
+        => (receive.Animations ? ReceiveAnimations : 0)
+         | (receive.Vfx ? ReceiveVfx : 0)
+         | (receive.Sounds ? ReceiveSounds : 0);
+
+    private static TransientCategories FromBits(int? bits)
+        => bits is { } b
+            ? new TransientCategories((b & ReceiveAnimations) != 0, (b & ReceiveVfx) != 0, (b & ReceiveSounds) != 0)
+            : TransientCategories.All;
 
     public void Load(PairBook book)
     {
@@ -103,7 +120,8 @@ public sealed class PairBookStore(string path)
             record.PairedAt.ToUnixTimeSeconds(),
             record.LastSeenAt?.ToUnixTimeSeconds(),
             record.PinnedFingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null,
-            record.Rendezvous.Select(place => place.ToString()).ToArray()));
+            record.Rendezvous.Select(place => place.ToString()).ToArray(),
+            ToBits(record.Receive)));
 
         WritePlain(JsonSerializer.SerializeToUtf8Bytes(dtos.ToList()));
     }
@@ -131,6 +149,7 @@ public sealed class PairBookStore(string path)
                 Permissions = (PairPermissions)dto.Permissions,
                 Policy = (ConnectionPolicy)dto.Policy,
                 Paused = dto.Paused,
+                Receive = FromBits(dto.Receive),
                 PairedAt = DateTimeOffset.FromUnixTimeSeconds(dto.PairedAt),
                 LastSeenAt = dto.LastSeenAt is { } seen ? DateTimeOffset.FromUnixTimeSeconds(seen) : null,
                 PinnedFingerprint = dto.PinnedFingerprint is { } print

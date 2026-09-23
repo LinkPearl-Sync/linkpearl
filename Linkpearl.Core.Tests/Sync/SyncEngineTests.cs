@@ -6,6 +6,7 @@ using Linkpearl.Core.Cache;
 using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Core.Transport;
@@ -591,6 +592,57 @@ public sealed class SyncEngineTests : IDisposable
         Assert.True(applied, "l'application n'a pas repris une fois le jeu prêt");
     }
 
+    [Fact]
+    public async Task Des_animations_bloquees_pour_un_pair_ne_sont_ni_demandees_ni_posees()
+    {
+        await using var world = await TwoEnginesAsync(withAnimation: true);
+
+        world.BobBook.SetReceive(world.AliceId, TransientCategories.All with { Animations = false });
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        var first = Assert.Single(world.BobApplicator.Applied).Manifest;
+
+        Assert.DoesNotContain(IdlePath, first.Replacements.SelectMany(r => r.GamePaths));
+        Assert.True(world.BobStore.TryGetSize(world.Blob, out _));
+        Assert.False(world.BobStore.TryGetSize(world.AnimationBlob!.Value, out _), "l'animation bloquée a été téléchargée");
+
+        // Débloquer suffit : l'animation est demandée puis posée, sans rien
+        // attendre d'Alice, qui n'a rien changé.
+        world.BobBook.SetReceive(world.AliceId, TransientCategories.All);
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 1, [], sees),
+            "le déblocage n'a pas reposé l'apparence : " + world.Describe());
+
+        Assert.Contains(IdlePath, world.BobApplicator.Applied[^1].Manifest.Replacements.SelectMany(r => r.GamePaths));
+        Assert.True(world.BobStore.TryGetSize(world.AnimationBlob!.Value, out _));
+    }
+
+    [Fact]
+    public async Task Le_blocage_global_s_ajoute_a_celui_du_pair()
+    {
+        await using var world = await TwoEnginesAsync(withAnimation: true);
+
+        world.Bob.SetGlobalReceive(TransientCategories.All with { Animations = false });
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        Assert.DoesNotContain(IdlePath, world.BobApplicator.Applied[^1].Manifest.Replacements.SelectMany(r => r.GamePaths));
+
+        world.Bob.SetGlobalReceive(TransientCategories.All);
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 1, [], sees),
+            "le déblocage global n'a pas reposé l'apparence : " + world.Describe());
+
+        Assert.Contains(IdlePath, world.BobApplicator.Applied[^1].Manifest.Replacements.SelectMany(r => r.GamePaths));
+    }
+
     /// <summary>Un moteur seul, qui n'a personne à joindre. Pour les tentatives.</summary>
     private SyncEngine Solitary(IPeerDialer dialer)
     {
@@ -632,7 +684,9 @@ public sealed class SyncEngineTests : IDisposable
     private FileSystemBlobStore Store(string name)
         => new(Path.Combine(_root, name), new CacheSettings(), _clock, _ => long.MaxValue);
 
-    private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null)
+    private const string IdlePath = "chara/human/c0101/animation/a0001/bt_common/resident/idle.pap";
+
+    private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null, bool withAnimation = false)
     {
         var alice = CryptoPrimitives.GenerateIdentity();
         var bob = CryptoPrimitives.GenerateIdentity();
@@ -656,11 +710,26 @@ public sealed class SyncEngineTests : IDisposable
             await writer.CommitAsync(default);
         }
 
-        var manifest = new CharacterManifest(
-            CharacterManifest.CurrentVersion,
-            [new FileReplacement(["chara/equipment/e0001/model/c0101e0001_top.mdl"], hash, content.Length)],
-            string.Empty,
-            null);
+        List<FileReplacement> replacements =
+            [new FileReplacement(["chara/equipment/e0001/model/c0101e0001_top.mdl"], hash, content.Length)];
+
+        BlobHash? animation = null;
+
+        if (withAnimation)
+        {
+            var idle = Encoding.UTF8.GetBytes("une idle assise, en tout petit");
+            animation = BlobHash.OfContent(idle);
+
+            await using (var writer = await aliceStore.BeginWriteAsync(animation.Value, idle.Length, default))
+            {
+                await writer.WriteAsync(idle, default);
+                await writer.CommitAsync(default);
+            }
+
+            replacements.Add(new FileReplacement([IdlePath], animation.Value, idle.Length));
+        }
+
+        var manifest = new CharacterManifest(CharacterManifest.CurrentVersion, replacements, string.Empty, null);
 
         var aliceBook = new PairBook(_clock);
         aliceBook.Load([Accepted(bobId, bobKey)]);
@@ -685,14 +754,14 @@ public sealed class SyncEngineTests : IDisposable
 
         return new TwoEngines(
             aliceEngine, bobEngine, bobBook, bobApplicator, bobStore, aliceId, hash, content.Length,
-            aliceLog, bobLog, _clock, aliceBook, bobId, aliceAppearance);
+            aliceLog, bobLog, _clock, aliceBook, bobId, aliceAppearance, animation);
     }
 
     private sealed record TwoEngines(
         SyncEngine Alice, SyncEngine Bob, PairBook BobBook, RecordingApplicator BobApplicator,
         FileSystemBlobStore BobStore, PeerId AliceId, BlobHash Blob, long BlobSize,
         SilentLog AliceLog, SilentLog BobLog, MovableClock Clock, PairBook AliceBook, PeerId BobId,
-        FixedAppearance AliceAppearance)
+        FixedAppearance AliceAppearance, BlobHash? AnimationBlob)
         : IAsyncDisposable
     {
         public PeerStatus BobStatus() => Bob.Statuses.Single();

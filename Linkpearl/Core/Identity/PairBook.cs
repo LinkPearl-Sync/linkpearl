@@ -1,4 +1,5 @@
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Core.Identity;
@@ -80,6 +81,14 @@ public sealed record PairRecord
     public ConnectionPolicy Policy { get; init; } = ConnectionPolicy.Direct;
     public bool Paused { get; init; }
 
+    /// <summary>Les animations, VFX et sons qu'on accepte de ce pair.</summary>
+    /// <remarks>
+    /// Tout par défaut : c'est ce qui rend une idle ou une pose assise visibles
+    /// sans réglage. Un pair aux effets envahissants se coupe ici, sans toucher
+    /// à ses vêtements ni aux autres pairs.
+    /// </remarks>
+    public TransientCategories Receive { get; init; } = TransientCategories.All;
+
     /// <summary>
     /// Vrai quand les six mots ont été comparés de vive voix.
     /// </summary>
@@ -155,6 +164,9 @@ public sealed class PairBook(IClock clock)
 
     public void SetPermissions(PeerId id, PairPermissions permissions)
         => Update(id, record => record with { Permissions = permissions });
+
+    public void SetReceive(PeerId id, TransientCategories receive)
+        => Update(id, record => record with { Receive = receive });
 
     public void MarkVerified(PeerId id) => Update(id, record => record with { KeyVerified = true });
 

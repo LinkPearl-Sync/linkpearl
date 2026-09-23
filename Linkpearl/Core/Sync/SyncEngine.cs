@@ -82,6 +82,9 @@ public sealed record SyncEngineSettings
     public int BlockSize { get; init; } = 16 * 1024;
 
     public RateLimiterSettings Limiter { get; init; } = new();
+
+    /// <summary>Les animations, VFX et sons acceptés de tous, avant le réglage de chaque pair.</summary>
+    public TransientCategories Receive { get; init; } = TransientCategories.All;
 }
 
 /// <summary>L'état d'un pair, tel que l'interface l'affiche.</summary>
@@ -127,6 +130,10 @@ public sealed class SyncEngine : IAsyncDisposable
     private volatile bool _uploadLimited;
     private readonly Quotas _quotas;
 
+    /// <summary>Réglable à chaud depuis l'interface, lu par le tic et par les sessions.</summary>
+    private readonly Lock _receiveGate = new();
+    private TransientCategories _globalReceive;
+
     private readonly Dictionary<PeerId, Runtime> _runtimes = [];
     private readonly CancellationTokenSource _life = new();
 
@@ -157,6 +164,7 @@ public sealed class SyncEngine : IAsyncDisposable
         _clock = clock;
         _log = log;
         _settings = settings ?? SyncEngineSettings.Default;
+        _globalReceive = _settings.Receive;
         _uploadLimited = _settings.LimitUpload;
         _quotas = quotas ?? Quotas.Default;
     }
@@ -197,6 +205,7 @@ public sealed class SyncEngine : IAsyncDisposable
         {
             await ReconcileBookAsync(ct).ConfigureAwait(false);
             await ServeReapplyAsync(ct).ConfigureAwait(false);
+            await FollowReceiveChangesAsync(ct).ConfigureAwait(false);
             await AdoptFinishedDialsAsync(ct).ConfigureAwait(false);
             await DropDeadSessionsAsync().ConfigureAwait(false);
             StartDueDials();
@@ -216,6 +225,24 @@ public sealed class SyncEngine : IAsyncDisposable
 
     /// <summary>Embraye ou débraye le limiteur d'envoi, sessions ouvertes comprises.</summary>
     public void SetUploadLimited(bool limited) => _uploadLimited = limited;
+
+    /// <summary>Change ce qu'on accepte de tous ; les apparences posées suivent au tic suivant.</summary>
+    public void SetGlobalReceive(TransientCategories receive)
+    {
+        lock (_receiveGate)
+            _globalReceive = receive;
+    }
+
+    private TransientCategories GlobalReceive
+    {
+        get
+        {
+            lock (_receiveGate)
+                return _globalReceive;
+        }
+    }
+
+    private TransientCategories EffectiveReceive(Runtime runtime) => GlobalReceive.And(runtime.Pair.Receive);
 
     /// <summary>Même chose, pour le personnage visible qui porte cette empreinte.</summary>
     public void Reapply(PlayerFingerprint fingerprint) => _reapply.Enqueue((null, fingerprint));
@@ -249,6 +276,39 @@ public sealed class SyncEngine : IAsyncDisposable
                 {
                     _log.Warning($"{runtime.Pair.DisplayName} : redemande du manifeste en échec.", e);
                 }
+            }
+        }
+    }
+
+    /// <summary>Redemande le manifeste d'un pair dont le réglage de réception a changé.</summary>
+    /// <remarks>
+    /// Le manifeste revient filtré selon le nouveau réglage. S'il diffère de ce
+    /// qui est posé, il est reposé dès que ses blobs sont là, comme n'importe
+    /// quel changement d'apparence ; sinon rien ne bouge. Ce qui est posé reste
+    /// en place d'ici là : l'effacer ferait clignoter le pair pour rien.
+    /// </remarks>
+    private async Task FollowReceiveChangesAsync(CancellationToken ct)
+    {
+        foreach (var runtime in _runtimes.Values)
+        {
+            var effective = EffectiveReceive(runtime);
+
+            if (effective == runtime.Receive)
+                continue;
+
+            runtime.Receive = effective;
+
+            if (runtime.Exchange is not { } exchange || runtime.Session is null)
+                continue;
+
+            try
+            {
+                await exchange.RefreshAsync(ct).ConfigureAwait(false);
+                _log.Info($"{runtime.Pair.DisplayName} : réception changée ({effective}), manifeste redemandé.");
+            }
+            catch (Exception e)
+            {
+                _log.Warning($"{runtime.Pair.DisplayName} : redemande du manifeste en échec.", e);
             }
         }
     }
@@ -321,7 +381,10 @@ public sealed class SyncEngine : IAsyncDisposable
         var limiter = new RateLimiter(_clock, _settings.Limiter);
 
         var exchange = new PeerExchange(
-            session, _store, _local, limiter, _settings.DataChannels, _settings.BlockSize, _quotas, _log);
+            session, _store, _local, limiter, _settings.DataChannels, _settings.BlockSize, _quotas, _log,
+            () => runtime.Receive);
+
+        runtime.Receive = EffectiveReceive(runtime);
 
         runtime.Session = session;
         runtime.SessionSince = _clock.UtcNow;
@@ -804,6 +867,16 @@ public sealed class SyncEngine : IAsyncDisposable
         public CharacterManifest? AppliedValue { get; set; }
 
         public bool Disputed { get; set; }
+
+        /// <summary>
+        /// Ce qu'on accepte de ce pair, global et pair confondus.
+        /// </summary>
+        /// <remarks>
+        /// Écrit par le tic, lu par la session à chaque manifeste reçu. L'écriture
+        /// précède toujours la redemande du manifeste, et la réponse ne peut
+        /// arriver qu'après : la session lit donc la valeur à jour.
+        /// </remarks>
+        public TransientCategories Receive { get; set; } = TransientCategories.All;
 
         public bool Busy => Work is { IsCompleted: false };
     }

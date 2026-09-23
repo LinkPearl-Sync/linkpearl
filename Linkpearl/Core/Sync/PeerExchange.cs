@@ -37,6 +37,7 @@ public sealed class PeerExchange : IAsyncDisposable
     private readonly ILogSink _log;
     private readonly Quotas _quotas;
     private readonly int _blockSize;
+    private readonly Func<TransientCategories> _receive;
 
     /// <summary>
     /// Paquets qu'on laisse s'accumuler dans la file d'un canal avant d'attendre.
@@ -55,9 +56,18 @@ public sealed class PeerExchange : IAsyncDisposable
     private TransferPlan? _plan;
     private long _received;
 
+    /// <summary>Le hash du manifeste tel que le pair l'a envoyé, avant filtrage.</summary>
+    /// <remarks>
+    /// C'est lui que le pair annonce. Comparer l'annonce au manifeste filtré
+    /// ferait redemander le manifeste à chaque présence dès qu'une catégorie
+    /// est bloquée.
+    /// </remarks>
+    private BlobHash? _receivedHash;
+
     public PeerExchange(
         PeerSession session, IBlobStore store, ILocalAppearance local,
-        RateLimiter limiter, int dataChannels, int blockSize, Quotas quotas, ILogSink log)
+        RateLimiter limiter, int dataChannels, int blockSize, Quotas quotas, ILogSink log,
+        Func<TransientCategories>? receive = null)
     {
         _session = session;
         _store = store;
@@ -67,6 +77,7 @@ public sealed class PeerExchange : IAsyncDisposable
         _blockSize = blockSize;
         _quotas = quotas;
         _log = log;
+        _receive = receive ?? (() => TransientCategories.All);
     }
 
     public PeerView View { get; private set; } = new(null, null, null, 0, 0, false);
@@ -134,7 +145,7 @@ public sealed class PeerExchange : IAsyncDisposable
 
         // Rien ne change : inutile de redemander un manifeste identique, et
         // c'est tout l'intérêt de l'adressage par contenu.
-        if (View.Manifest is not null && ManifestCodec.HashOf(View.Manifest) == announced)
+        if (View.Manifest is not null && _receivedHash == announced)
             return;
 
         await _session.SendAsync(ChannelPlan.ControlChannel, MessageKind.ManifestRequest, ReadOnlyMemory<byte>.Empty, ct)
@@ -176,7 +187,18 @@ public sealed class PeerExchange : IAsyncDisposable
             return;
         }
 
-        var plan = BlobRequestPlanner.Plan(manifest!, _store);
+        _receivedHash = ManifestCodec.HashOf(manifest!);
+
+        // Avant le plan : ce qu'on a bloqué n'est ni téléchargé ni posé.
+        var allowed = _receive();
+        var kept = TransientPolicy.Filter(manifest!, allowed);
+
+        if (ReferenceEquals(kept, manifest) is false)
+            _log.Info($"Manifeste filtré : {manifest!.Replacements.Count - kept.Replacements.Count} entrées écartées ({allowed}).");
+
+        manifest = kept;
+
+        var plan = BlobRequestPlanner.Plan(manifest, _store);
         _plan = plan;
         _received = 0;
 
