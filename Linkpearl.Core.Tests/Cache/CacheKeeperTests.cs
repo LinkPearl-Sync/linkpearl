@@ -259,6 +259,67 @@ public sealed class CacheKeeperTests : IDisposable
     }
 
     [Fact]
+    public void Un_cache_etabli_dont_la_racine_existe_mais_est_vide_bloque_au_chargement()
+    {
+        _configuration.OnboardingSeen = true;
+        _configuration.CacheEstablished = true;
+        _configuration.CacheDirectory = Path.Combine(_root, "vide", "LinkpearlCache");
+        Directory.CreateDirectory(_configuration.CacheDirectory); // racine seule, sans blobs/ ni incoming/
+
+        var keeper = Keeper();
+        var lost = 0;
+        keeper.Lost += () => lost++;
+        keeper.Start();
+
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+        Assert.Equal(1, lost);
+    }
+
+    [Fact]
+    public void Un_dossier_vide_sans_etre_supprime_est_vu_au_sondage()
+    {
+        _configuration.OnboardingSeen = true;
+        var keeper = Keeper();
+        var lost = 0;
+        keeper.Lost += () => lost++;
+        keeper.Start();
+
+        Directory.Delete(Path.Combine(DefaultRoot, "blobs"), recursive: true);
+        Directory.Delete(Path.Combine(DefaultRoot, "incoming"), recursive: true);
+        keeper.Check();
+
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+        Assert.Equal(1, lost);
+    }
+
+    [Fact]
+    public void Rechoisir_le_meme_dossier_vide_en_etat_manquant_le_rouvre()
+    {
+        _configuration.OnboardingSeen = true;
+        _configuration.CacheEstablished = true;
+        var cacheRoot = Path.Combine(_root, "mien", "LinkpearlCache");
+        _configuration.CacheDirectory = cacheRoot;
+        Directory.CreateDirectory(cacheRoot); // racine seule, vidée : pas de blobs/ ni incoming/
+
+        var keeper = Keeper();
+        var opened = 0;
+        keeper.Opened += () => opened++;
+        keeper.Start();
+
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+
+        // Un choix explicite garde le droit de recréer les sous-dossiers,
+        // même sur le même chemin que celui qui vient de bloquer.
+        Assert.Null(keeper.Choose(Path.Combine(_root, "mien")));
+
+        Assert.Equal(CacheGateState.Open, keeper.State);
+        Assert.Equal(cacheRoot, keeper.ActiveRoot);
+        Assert.True(Directory.Exists(Path.Combine(cacheRoot, "blobs")));
+        Assert.True(Directory.Exists(Path.Combine(cacheRoot, "incoming")));
+        Assert.Equal(1, opened);
+    }
+
+    [Fact]
     public void Un_dossier_inutilisable_est_refuse_et_rien_ne_change()
     {
         _configuration.OnboardingSeen = true;

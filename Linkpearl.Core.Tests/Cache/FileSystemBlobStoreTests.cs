@@ -355,6 +355,24 @@ public sealed class FileSystemBlobStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Un_dossier_vide_sans_etre_supprime_refuse_d_ecrire_sans_recreer_les_sous_dossiers()
+    {
+        var store = Store();
+        var lost = 0;
+        store.RootLost += () => lost++;
+
+        Directory.Delete(Path.Combine(_root, "blobs"), recursive: true);
+        Directory.Delete(Path.Combine(_root, "incoming"), recursive: true);
+
+        var result = await PutAsync(store, Bytes("après le vidage"));
+
+        Assert.False(result.Accepted);
+        Assert.True(lost > 0);
+        Assert.False(Directory.Exists(Path.Combine(_root, "blobs")));
+        Assert.False(Directory.Exists(Path.Combine(_root, "incoming")));
+    }
+
+    [Fact]
     public async Task L_index_ne_fait_pas_perdre_un_blob_publie_apres_la_derniere_eviction()
     {
         // EvictToAsync écrit l'index même sans rien évincer. Tout ce qui est

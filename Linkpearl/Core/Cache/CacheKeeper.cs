@@ -154,7 +154,11 @@ public sealed class CacheKeeper(
             case CacheGateState.Missing:
                 configuration.CacheDirectory = root;
                 configuration.Save();
-                OpenConfigured();
+
+                // explicitChoice : un choix explicite garde le droit de
+                // recréer blobs/ et incoming/, même sur le chemin qui vient
+                // de bloquer (vidé sans être supprimé).
+                OpenConfigured(explicitChoice: true);
                 return _state is CacheGateState.Open ? null : "ce dossier n'a pas pu être ouvert.";
 
             default:
@@ -219,11 +223,18 @@ public sealed class CacheKeeper(
         return deleted;
     }
 
-    private void OpenConfigured()
+    /// <param name="explicitChoice">
+    /// Vrai pour un choix explicite de l'utilisateur (Choose depuis Missing) :
+    /// il garde le droit de recréer blobs/ et incoming/ même sur un dossier
+    /// déjà établi mais vidé. Faux à l'ouverture automatique (Start), où un
+    /// dossier établi mais incomplet doit bloquer plutôt que se recréer tout
+    /// seul.
+    /// </param>
+    private void OpenConfigured(bool explicitChoice = false)
     {
         var root = ConfiguredRoot;
 
-        if (configuration.CacheEstablished && Directory.Exists(root) is false)
+        if (explicitChoice is false && configuration.CacheEstablished && FileSystemBlobStore.IsIntact(root) is false)
         {
             MarkMissing(root);
             return;

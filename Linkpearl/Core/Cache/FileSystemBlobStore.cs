@@ -53,8 +53,22 @@ public sealed class FileSystemBlobStore : IBlobStore
     /// <summary>Le dossier du cache, tel qu'il a été ouvert.</summary>
     public string Root => _root;
 
-    /// <summary>Faux si quelqu'un a supprimé le dossier depuis l'ouverture.</summary>
-    public bool RootExists => Directory.Exists(_root);
+    /// <summary>
+    /// Vrai si la racine et ses deux sous-dossiers sont là.
+    /// </summary>
+    /// <remarks>
+    /// Un dossier vidé sans être supprimé garde une racine qui existe : sans
+    /// vérifier aussi <c>blobs/</c> et <c>incoming/</c>, chaque écriture
+    /// buterait sur un <see cref="DirectoryNotFoundException"/> sans jamais
+    /// déclencher le blocage.
+    /// </remarks>
+    public static bool IsIntact(string root)
+        => Directory.Exists(root)
+        && Directory.Exists(Path.Combine(root, "blobs"))
+        && Directory.Exists(Path.Combine(root, "incoming"));
+
+    /// <summary>Faux si quelqu'un a supprimé ou vidé le dossier depuis l'ouverture.</summary>
+    public bool RootExists => IsIntact(_root);
 
     /// <summary>
     /// Levé quand une écriture trouve le dossier disparu.
@@ -148,7 +162,19 @@ public sealed class FileSystemBlobStore : IBlobStore
                 $"blob plus gros que le quota entier ({expectedSize} octets pour un quota de {_settings.QuotaBytes})"));
 
         var part = Path.Combine(IncomingDirectory, Guid.NewGuid().ToString("N") + ".part");
-        return Task.FromResult<IBlobWriter>(new BlobWriter(this, expected, expectedSize, part));
+
+        try
+        {
+            return Task.FromResult<IBlobWriter>(new BlobWriter(this, expected, expectedSize, part));
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Le dossier a pu être vidé (sans être supprimé) entre la
+            // vérification ci-dessus et l'ouverture du fichier temporaire :
+            // même traitement qu'une racine perdue, sans rien recréer.
+            RootLost?.Invoke();
+            return Task.FromResult<IBlobWriter>(new RefusedBlobWriter(RootMissing));
+        }
     }
 
     public Task<IBlobAssembly> BeginAssemblyAsync(BlobHash expected, long expectedSize, CancellationToken ct)
@@ -165,7 +191,18 @@ public sealed class FileSystemBlobStore : IBlobStore
                 $"blob plus gros que le quota entier ({expectedSize} octets pour un quota de {_settings.QuotaBytes})"));
 
         var part = Path.Combine(IncomingDirectory, Guid.NewGuid().ToString("N") + ".part");
-        return Task.FromResult<IBlobAssembly>(new BlobAssembly(this, expected, expectedSize, part));
+
+        try
+        {
+            return Task.FromResult<IBlobAssembly>(new BlobAssembly(this, expected, expectedSize, part));
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Même situation que dans BeginWriteAsync : le dossier a pu être
+            // vidé entre-temps.
+            RootLost?.Invoke();
+            return Task.FromResult<IBlobAssembly>(new RefusedBlobAssembly(RootMissing));
+        }
     }
 
     public async Task EvictToAsync(long targetBytes, IReadOnlySet<BlobHash> pinned, CancellationToken ct)
