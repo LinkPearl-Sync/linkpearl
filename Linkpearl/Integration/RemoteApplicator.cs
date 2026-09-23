@@ -6,6 +6,7 @@ using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
+using Linkpearl.Integration.Extras;
 
 namespace Linkpearl.Integration;
 
@@ -26,6 +27,7 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
 {
     private readonly PenumbraIpc _penumbra;
     private readonly GlamourerIpc _glamourer;
+    private readonly ExtrasIpc _extras;
     private readonly IFramework _framework;
     private readonly IObjectTable _objects;
     private readonly IClientState _clientState;
@@ -43,12 +45,13 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
     private int _sinceProbe;
 
     public RemoteApplicator(
-        PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
+        PenumbraIpc penumbra, GlamourerIpc glamourer, ExtrasIpc extras, IFramework framework, IObjectTable objects,
         IClientState clientState, ICondition condition, IBlobStore store, Quotas quotas,
         string root, IPluginLog log)
     {
         _penumbra = penumbra;
         _glamourer = glamourer;
+        _extras = extras;
         _framework = framework;
         _objects = objects;
         _clientState = clientState;
@@ -105,24 +108,56 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
             Remember(peer, applied => applied with { Object = target });
         }).ConfigureAwait(false);
 
-        if (plan!.GlamourerState is not { } state)
-            return;
-
-        // Après le redessin, jamais avant. Verrouillé sous notre clé, pour que
-        // l'automation de Glamourer chez nous n'écrase pas ce que le pair a
-        // choisi de montrer.
-        await _framework.RunOnFrameworkThread(() =>
+        if (plan!.GlamourerState is { } state)
         {
-            if (Resolve(target) is false)
-                return;
+            // Après le redessin, jamais avant. Verrouillé sous notre clé, pour que
+            // l'automation de Glamourer chez nous n'écrase pas ce que le pair a
+            // choisi de montrer.
+            await _framework.RunOnFrameworkThread(() =>
+            {
+                if (Resolve(target) is false)
+                    return;
 
-            _glamourer.ApplyStateLocked(state, target.ObjectIndex);
-            Remember(peer, applied => applied with { GlamourerTouched = true });
-        }).ConfigureAwait(false);
+                _glamourer.ApplyStateLocked(state, target.ObjectIndex);
+                Remember(peer, applied => applied with { GlamourerTouched = true });
+            }).ConfigureAwait(false);
+        }
+
+        // Les extras en dernier, sur un personnage entièrement chargé : Moodles
+        // ignore en silence celui qu'il n'a pas encore vu s'afficher.
+        await ApplyExtrasAsync(peer, target, manifest.ExtrasOrNone, ExtrasChange.All, ct).ConfigureAwait(false);
     }
 
-    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
-        => Task.CompletedTask;   // remplacé en tâche 9, quand les IPC des plugins voisins existent
+    public async Task ApplyExtrasAsync(
+        PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+    {
+        if (change.Any is false)
+            return;
+
+        // Dix secondes au plus, comme pour notre propre personnage.
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            var done = await _framework.RunOnFrameworkThread(() =>
+            {
+                if (Resolve(target) is false)
+                    return true;   // parti : rien à poser, et rien à attendre
+
+                if (_objects[target.ObjectIndex] is not { } found || DrawReadiness.IsReady(found) is false)
+                    return false;
+
+                _extras.Apply(found, extras, change);
+                Remember(peer, applied => applied with { ExtrasTouched = true });
+                return true;
+            }).ConfigureAwait(false);
+
+            if (done)
+                return;
+
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+
+        _log.Debug("Extras non posés : le personnage n'a pas fini de se charger en dix secondes.");
+    }
 
     public async Task RemoveAsync(PeerId peer, CancellationToken ct)
     {
@@ -144,6 +179,9 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
             // on rendrait à son état normal un personnage auquel nous n'avons
             // jamais touché.
             var stillThere = applied.Object is { } target && Resolve(target);
+
+            if (stillThere && applied.ExtrasTouched && _objects[applied.Object!.Value.ObjectIndex] is { } found)
+                Try(() => _extras.Clear(found), "retrait des extras");
 
             if (stillThere && applied.GlamourerTouched)
                 Try(() => _glamourer.Release(applied.Object!.Value.ObjectIndex), "relâchement Glamourer");
@@ -314,5 +352,5 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
     }
 
     /// <summary>Ce que nous avons posé pour un pair, et sur quoi.</summary>
-    private sealed record AppliedPeer(Guid Collection, GameObjectRef? Object, bool GlamourerTouched);
+    private sealed record AppliedPeer(Guid Collection, GameObjectRef? Object, bool GlamourerTouched, bool ExtrasTouched = false);
 }

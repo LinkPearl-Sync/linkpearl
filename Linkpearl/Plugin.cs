@@ -199,8 +199,19 @@ public sealed class Plugin : IDalamudPlugin
         // statuts, proportions. La rafale passe par le même anti-rebond.
         _extras.Changed += _appearanceChanged.Signal;
 
+        // Honorific, Moodles ou PetNicknames qui redémarrent ont oublié ce
+        // que nous avions posé chez eux : on repose chaque pair affiché.
+        _extras.Ready += () =>
+        {
+            foreach (var status in _engine?.Statuses ?? [])
+            {
+                if (status.Applied)
+                    _engine?.Reapply(status.Peer);
+            }
+        };
+
         _applicator = new RemoteApplicator(
-            penumbra, glamourer, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
+            penumbra, glamourer, _extras, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
 
         _engineSettings = engineSettings;
 
