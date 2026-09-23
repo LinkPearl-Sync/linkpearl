@@ -60,6 +60,9 @@ public sealed class PresenceService : IDisposable
 
         public PlayerFingerprint? OpenedFor { get; set; }
 
+        /// <summary>La fenêtre sous laquelle les boîtes ont été ouvertes.</summary>
+        public long OpenedWindow { get; set; }
+
         public string? Failure { get; set; }
 
         public DateTimeOffset NextAttempt { get; set; }
@@ -147,6 +150,13 @@ public sealed class PresenceService : IDisposable
             if (session.Client is not null && session.OpenedFor != fingerprint)
                 Close(session);
 
+            // Les adresses tournent toutes les trente minutes. Une boîte
+            // ouverte une fois pour toutes cesse d'être trouvable dès que la
+            // fenêtre suivante commence, et plus rien ne le dit : la détection
+            // s'arrête en silence sur une connexion qui a l'air en bonne santé.
+            if (session.Client is { } open && session.OpenedWindow != MailboxAddress.IndexAt(_clock.UtcNow))
+                await ReopenAsync(session, open, fingerprint, ct).ConfigureAwait(false);
+
             if (session.Client is not null || _clock.UtcNow < session.NextAttempt)
                 continue;
 
@@ -187,11 +197,9 @@ public sealed class PresenceService : IDisposable
 
             client.Delivered += OnDelivered;
 
-            var addresses = MailboxAddress.Around(fingerprint, _clock.UtcNow)
-                .Select(a => a.ToBytes())
-                .ToList();
+            var window = MailboxAddress.IndexAt(_clock.UtcNow);
 
-            await client.OpenMailboxesAsync(addresses, ct).ConfigureAwait(false);
+            await client.OpenMailboxesAsync(Addresses(fingerprint), ct).ConfigureAwait(false);
 
             var life = new CancellationTokenSource();
 
@@ -200,6 +208,7 @@ public sealed class PresenceService : IDisposable
                 session.Client = client;
                 session.Life = life;
                 session.OpenedFor = fingerprint;
+                session.OpenedWindow = window;
                 session.Failure = null;
             }
 
@@ -219,6 +228,40 @@ public sealed class PresenceService : IDisposable
             _log.Warning(e, $"Ouverture des boîtes en échec sur {session.At}.");
         }
     }
+
+    /// <summary>
+    /// Rouvre les boîtes sous la fenêtre courante, sur la connexion en place.
+    /// </summary>
+    /// <remarks>
+    /// Sans reconnexion : le service garde les anciennes adresses liées à cette
+    /// session jusqu'à sa fermeture, et en ajouter n'en retire aucune. Celui
+    /// qui nous cherchait sous l'ancienne nous trouve donc encore, et celui qui
+    /// arrive nous trouve sous la nouvelle.
+    /// </remarks>
+    private async Task ReopenAsync(
+        Session session, RendezvousClient client, PlayerFingerprint fingerprint, CancellationToken ct)
+    {
+        var window = MailboxAddress.IndexAt(_clock.UtcNow);
+
+        try
+        {
+            await client.OpenMailboxesAsync(Addresses(fingerprint), ct).ConfigureAwait(false);
+
+            lock (_gate)
+                session.OpenedWindow = window;
+        }
+        catch (Exception e)
+        {
+            // La connexion est peut-être morte sans qu'on l'ait vu : on la
+            // ferme, et la même ronde la rouvrira proprement.
+            _log.Warning(e, $"Réouverture des boîtes en échec sur {session.At}.");
+            Close(session);
+        }
+    }
+
+    /// <summary>Les adresses à ouvrir : la fenêtre courante et la suivante.</summary>
+    private List<byte[]> Addresses(PlayerFingerprint fingerprint)
+        => [.. MailboxAddress.Around(fingerprint, _clock.UtcNow).Select(address => address.ToBytes())];
 
     /// <summary>
     /// Demande à tous les services lesquels de ces joueurs utilisent le plugin.

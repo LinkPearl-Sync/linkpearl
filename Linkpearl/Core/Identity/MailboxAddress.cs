@@ -33,9 +33,16 @@ public readonly record struct MailboxAddress
 
     private MailboxAddress(ulong value) => _value = value;
 
+    /// <summary>La fenêtre en cours à cet instant.</summary>
+    /// <remarks>
+    /// Publique parce que celui qui tient une boîte ouverte doit savoir quand
+    /// son adresse a cessé d'être celle que les autres calculent.
+    /// </remarks>
+    public static long IndexAt(DateTimeOffset now) => now.ToUnixTimeSeconds() / (long)Window.TotalSeconds;
+
     public static MailboxAddress Of(PlayerFingerprint fingerprint, DateTimeOffset now, int windowOffset = 0)
     {
-        var index = (now.ToUnixTimeSeconds() / (long)Window.TotalSeconds) + windowOffset;
+        var index = IndexAt(now) + windowOffset;
 
         Span<byte> input = stackalloc byte[Context.Length + PlayerFingerprint.SizeInBytes + sizeof(long)];
         Context.CopyTo(input);
