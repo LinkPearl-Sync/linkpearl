@@ -16,7 +16,8 @@ namespace Linkpearl.Harness;
 
 public sealed record FakePeerSettings(
     string SourceCacheRoot, string ManifestPath, bool SynthesizeFromCache,
-    int DataChannels, int BlockSize, bool RateLimited, int TimeoutSeconds);
+    int DataChannels, int BlockSize, bool RateLimited, int TimeoutSeconds,
+    int LatencyMs = 0, double LossPercent = 0);
 
 /// <summary>Un journal qui parle sur la console.</summary>
 internal sealed class ConsoleLog(string who) : ILogSink
@@ -152,7 +153,28 @@ internal sealed class LoopbackDialer : IPeerDialer
 /// </remarks>
 public static class FakePeerRun
 {
+    /// <remarks>
+    /// Le cache de destination est supprimé à la fin, quoi qu'il arrive. Sous
+    /// WSL, /tmp vit en mémoire : chaque essai y laissait quatre cents
+    /// mégaoctets, et une série de mesures finissait par le remplir, faussant
+    /// les suivantes (un passage à seize canaux a pris 89 s au lieu de 12).
+    /// </remarks>
     public static async Task<bool> ExecuteAsync(FakePeerSettings settings, CancellationToken ct)
+    {
+        var destinationRoot = Path.Combine(Path.GetTempPath(), "linkpearl-faux-pair-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            return await RunAsync(settings, destinationRoot, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (Directory.Exists(destinationRoot))
+                Directory.Delete(destinationRoot, recursive: true);
+        }
+    }
+
+    private static async Task<bool> RunAsync(FakePeerSettings settings, string destinationRoot, CancellationToken ct)
     {
         var clock = new RealClock();
 
@@ -167,7 +189,6 @@ public static class FakePeerRun
         var source = new FileSystemBlobStore(
             settings.SourceCacheRoot, new CacheSettings(), clock, _ => long.MaxValue);
 
-        var destinationRoot = Path.Combine(Path.GetTempPath(), "linkpearl-faux-pair-" + Guid.NewGuid().ToString("N"));
         var destination = new FileSystemBlobStore(
             destinationRoot, new CacheSettings(), clock, _ => long.MaxValue);
 
@@ -201,6 +222,14 @@ public static class FakePeerRun
         using var aliceLinks = new PeerLinkFactory(channels, new ConsoleLog("Alice"));
         using var bobLinks = new PeerLinkFactory(channels, new ConsoleLog("Bob"));
 
+        // Un relais qui retarde et perd, entre Bob et Alice, pour mesurer le
+        // moteur tel qu'il vivra entre deux foyers et non sur une seule machine.
+        using var proxy = settings.LatencyMs > 0 || settings.LossPercent > 0
+            ? new ImpairmentProxy(
+                new IPEndPoint(IPAddress.Loopback, aliceLinks.LocalPort),
+                settings.LatencyMs, 0, settings.LossPercent, seed: 7)
+            : null;
+
         using var polling = new CancellationTokenSource();
         var pumps = new[] { Poll(aliceLinks, polling.Token), Poll(bobLinks, polling.Token) };
 
@@ -228,7 +257,7 @@ public static class FakePeerRun
             source, aliceId, aliceIdentity, clock, new ConsoleLog("Alice"), engineSettings);
 
         await using var bob = new SyncEngine(
-            bobBook, new LoopbackDialer(bobLinks, aliceLinks.LocalPort),
+            bobBook, new LoopbackDialer(bobLinks, proxy?.Port ?? aliceLinks.LocalPort),
             new StaticAppearance(null, bobPrint), narrator,
             destination, bobId, bobIdentity, clock, new ConsoleLog("Bob"), engineSettings);
 

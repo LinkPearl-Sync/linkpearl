@@ -43,6 +43,16 @@ public sealed class PeerLinkFactory : IDisposable
             AutoRecycle = true,
             DisconnectTimeout = 20_000,
             UnsyncedEvents = false,
+
+            // Les accusés de réception partent à ce rythme, et la fenêtre fiable
+            // de soixante-quatre paquets par canal ne se libère qu'avec eux. Au
+            // défaut de 15 ms, le faux pair plafonnait à 12,5 Mo/s en boucle
+            // locale sur une apparence réelle de 405 Mo ; à 1 ms, 36 Mo/s.
+            UpdateTime = 1,
+
+            // Des paquets plus grands portent plus par fenêtre. Mesuré à 20 ms
+            // de latence et huit canaux : 5,5 Mo/s sans, 7,7 Mo/s avec.
+            MtuDiscovery = true,
         };
 
         _listener.ConnectionRequestEvent += OnConnectionRequest;

@@ -92,7 +92,9 @@ if (args.Length > 0 && args[0] == "fakepeer")
             DataChannels: Arg("--channels", 24),
             BlockSize: Arg("--block", 16) * 1024,
             RateLimited: Array.IndexOf(args, "--no-limit") < 0,
-            TimeoutSeconds: Arg("--timeout", 180)),
+            TimeoutSeconds: Arg("--timeout", 180),
+            LatencyMs: Arg("--latency", 0),
+            LossPercent: Arg("--loss", 0)),
         CancellationToken.None) ? 0 : 1;
     return;
 }
