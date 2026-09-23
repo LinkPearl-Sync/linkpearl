@@ -36,7 +36,7 @@ public sealed class MainWindow : ThemedWindow
         Action<RendezvousAddress> discover,
         Action<NearbyPlayer> requestPair, Action<IncomingRequest> accept, Action<IncomingRequest> decline,
         Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
-        BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
+        Action<bool> setUploadLimited, BackupState backupState, Action<string, string?> backup, Action<string, string?> restore)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -48,7 +48,7 @@ public sealed class MainWindow : ThemedWindow
         var nearby = new NearbyPage(state, presence, pairing, requestPair);
         var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair);
         _backup = new BackupCard(backupState, backup, restore);
-        var settings = new SettingsPage(configuration, discovery, discover, _backup);
+        var settings = new SettingsPage(configuration, discovery, discover, _backup, setUploadLimited);
 
         _requests = new RequestsPage(state, presence, accept, decline);
 

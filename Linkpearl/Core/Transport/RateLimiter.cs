@@ -32,6 +32,18 @@ public sealed record RateLimiterSettings
     /// </remarks>
     public double PingInflationThreshold { get; init; } = 1.30;
 
+    /// <summary>
+    /// Gonflement absolu en deçà duquel un ping n'est jamais une congestion.
+    /// </summary>
+    /// <remarks>
+    /// Le seuil relatif seul ne tient pas sur un lien local : vu en jeu entre
+    /// deux clients du même poste, un aller-retour de 2 ms qui passait à 4
+    /// suffisait à faire tomber le débit au plancher en dix secondes. Le
+    /// bufferbloat qui gêne le jeu se compte en dizaines de millisecondes : au
+    /// jalon 2, 60 ms devenaient 145.
+    /// </remarks>
+    public int PingInflationMarginMs { get; init; } = 20;
+
     /// <summary>Profondeur du seau, en secondes de débit.</summary>
     public double BurstSeconds { get; init; } = 0.25;
 }
@@ -60,6 +72,17 @@ public sealed class RateLimiter(IClock clock, RateLimiterSettings settings)
     private bool _paused;
 
     public long BytesPerSecond => _rate;
+
+    /// <summary>
+    /// Débrayé : tout passe, sauf pendant une pause.
+    /// </summary>
+    /// <remarks>
+    /// Au choix de l'utilisateur. Des rôlistes posés dans une taverne n'ont que
+    /// faire de quelques millisecondes de ping, et préfèrent voir une tenue
+    /// arriver en secondes plutôt qu'en minutes. La contre-pression par canal
+    /// reste, elle, et c'est elle qui borne la mémoire.
+    /// </remarks>
+    public bool Bypassed { get; set; }
 
     public bool IsPaused
     {
@@ -96,6 +119,9 @@ public sealed class RateLimiter(IClock clock, RateLimiterSettings settings)
             if (_paused)
                 return false;
 
+            if (Bypassed)
+                return true;
+
             Refill();
 
             if (_tokens < bytes)
@@ -122,7 +148,8 @@ public sealed class RateLimiter(IClock clock, RateLimiterSettings settings)
 
         var congested = lossPercent > settings.LossThresholdPercent
                      || (_minimumPingMs < int.MaxValue
-                         && pingMs > _minimumPingMs * settings.PingInflationThreshold);
+                         && pingMs > _minimumPingMs * settings.PingInflationThreshold
+                         && pingMs > _minimumPingMs + settings.PingInflationMarginMs);
 
         var now = clock.UtcNow;
 

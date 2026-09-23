@@ -74,6 +74,16 @@ public sealed class Configuration : IPluginConfiguration
 
     public long CacheQuotaBytes { get; set; } = 20L * 1024 * 1024 * 1024;
 
+    /// <summary>
+    /// Brider l'envoi pour préserver le ping.
+    /// </summary>
+    /// <remarks>
+    /// Désactivé par défaut : les joueurs visés font du jeu de rôle, pas du
+    /// donjon, et quelques millisecondes de ping leur coûtent moins qu'une tenue
+    /// qui met des minutes à arriver.
+    /// </remarks>
+    public bool LimitUpload { get; set; }
+
     /// <summary>Plafond d'émission, en octets par seconde.</summary>
     public long UploadCeilingBytesPerSecond { get; set; } = 8 * 1024 * 1024;
 

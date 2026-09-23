@@ -109,6 +109,40 @@ public class RateLimiterTests
     }
 
     [Fact]
+    public void Debraye_le_limiteur_laisse_tout_passer_sauf_en_pause()
+    {
+        var clock = new FakeClock();
+        var limiter = new RateLimiter(clock, Settings) { Bypassed = true };
+
+        // Bien plus que le seau n'en contient : rien ne retient l'envoi.
+        for (var i = 0; i < 1000; i++)
+            Assert.True(limiter.TryConsume(16 * 1024));
+
+        // La pause, elle, tient toujours : c'est elle qui protège un combat.
+        limiter.IsPaused = true;
+        Assert.False(limiter.TryConsume(1));
+    }
+
+    [Fact]
+    public void Quelques_millisecondes_sur_un_lien_local_ne_sont_pas_une_congestion()
+    {
+        // Vu en jeu entre deux clients du même poste : un aller-retour de 2 ms
+        // qui passe à 4 fait cent pour cent de plus. Sans marge absolue, le
+        // débit tombait au plancher en dix secondes et y restait, et la
+        // réception affichait zéro pendant de longues secondes.
+        var clock = new FakeClock();
+        var limiter = new RateLimiter(clock, Settings);
+
+        for (var i = 0; i < 10; i++)
+        {
+            limiter.Observe(lossPercent: 0, pingMs: i % 2 == 0 ? 2 : 6);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.True(limiter.BytesPerSecond > 512 * 1024, $"débit tombé à {limiter.BytesPerSecond} o/s");
+    }
+
+    [Fact]
     public void Un_ping_qui_gonfle_fait_chuter_le_debit_meme_sans_perte()
     {
         // C'est le cas observé au jalon 2 : aucune perte rapportée, et un ping

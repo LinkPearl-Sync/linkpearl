@@ -39,7 +39,8 @@ public sealed class DiscoveryState
 /// se paie en vie privée doit se lire avant d'être coché, pas après.
 /// </remarks>
 internal sealed class SettingsPage(
-    Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover, BackupCard backup)
+    Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover, BackupCard backup,
+    Action<bool> setUploadLimited)
 {
     private string _newAddress = "";
 
@@ -49,6 +50,7 @@ internal sealed class SettingsPage(
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
         DrawDiscoverable();
+        DrawUpload();
         backup.Draw();
         DrawServices();
         DrawDiscovery();
@@ -76,6 +78,26 @@ internal sealed class SettingsPage(
           + "Avec, l'opérateur de chaque service peut savoir que votre personnage est en "
           + "ligne : pour qu'un inconnu puisse vous reconnaître, il faut bien que quelque "
           + "chose soit calculable à partir de votre nom.");
+    }
+
+    private void DrawUpload()
+    {
+        using var card = Card.Begin("settings_upload");
+
+        Text.WithIcon(Icons.Receiving, "Débit d'envoi", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        var limited = configuration.LimitUpload;
+
+        if (ImGui.Checkbox("Brider l'envoi pour préserver le ping##limit_upload", ref limited))
+            setUploadLimited(limited);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        Text.Wrapped(
+            "Bridé, l'envoi démarre lentement et recule dès que le ping gonfle : une tenue met "
+          + "des minutes à arriver, mais le jeu reste fluide en donjon. Libre, elle arrive en "
+          + "quelques secondes, au prix d'un ping plus haut pendant le transfert.");
     }
 
     private void DrawServices()

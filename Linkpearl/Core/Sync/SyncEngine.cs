@@ -51,6 +51,9 @@ public sealed record SyncEngineSettings
     /// </remarks>
     public TimeSpan StableSession { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Faux pour débrayer le limiteur d'envoi, voir <see cref="RateLimiter.Bypassed"/>.</summary>
+    public bool LimitUpload { get; init; } = true;
+
     /// <summary>
     /// Blobs servis de front, un par canal.
     /// </summary>
@@ -112,6 +115,9 @@ public sealed class SyncEngine : IAsyncDisposable
     private readonly IClock _clock;
     private readonly ILogSink _log;
     private readonly SyncEngineSettings _settings;
+
+    /// <summary>Réglable à chaud : relu par chaque session au tic suivant.</summary>
+    private volatile bool _uploadLimited;
     private readonly Quotas _quotas;
 
     private readonly Dictionary<PeerId, Runtime> _runtimes = [];
@@ -144,6 +150,7 @@ public sealed class SyncEngine : IAsyncDisposable
         _clock = clock;
         _log = log;
         _settings = settings ?? SyncEngineSettings.Default;
+        _uploadLimited = _settings.LimitUpload;
         _quotas = quotas ?? Quotas.Default;
     }
 
@@ -199,6 +206,9 @@ public sealed class SyncEngine : IAsyncDisposable
     /// <summary>Aligne les runtimes sur le carnet : un pair actif, un runtime.</summary>
     /// <summary>Redemande et repose l'apparence de ce pair.</summary>
     public void Reapply(PeerId id) => _reapply.Enqueue((id, null));
+
+    /// <summary>Embraye ou débraye le limiteur d'envoi, sessions ouvertes comprises.</summary>
+    public void SetUploadLimited(bool limited) => _uploadLimited = limited;
 
     /// <summary>Même chose, pour le personnage visible qui porte cette empreinte.</summary>
     public void Reapply(PlayerFingerprint fingerprint) => _reapply.Enqueue((null, fingerprint));
@@ -309,6 +319,7 @@ public sealed class SyncEngine : IAsyncDisposable
         runtime.SessionSince = _clock.UtcNow;
         runtime.Exchange = exchange;
         runtime.Limiter = limiter;
+        limiter.Bypassed = _uploadLimited is false;
         runtime.Failures = 0;
         runtime.LastFailure = null;
         runtime.Life = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
@@ -404,8 +415,11 @@ public sealed class SyncEngine : IAsyncDisposable
     {
         foreach (var runtime in _runtimes.Values)
         {
-            if (runtime is { Session: { } session, Limiter: { } limiter })
-                limiter.Observe(session.Link.PacketLossPercent, session.Link.RoundTripMs);
+            if (runtime is not { Session: { } session, Limiter: { } limiter })
+                continue;
+
+            limiter.Bypassed = _uploadLimited is false;
+            limiter.Observe(session.Link.PacketLossPercent, session.Link.RoundTripMs);
         }
     }
 

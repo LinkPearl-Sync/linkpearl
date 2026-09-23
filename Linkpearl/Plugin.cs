@@ -154,6 +154,7 @@ public sealed class Plugin : IDalamudPlugin
         // qui aura percé le NAT.
         var engineSettings = new SyncEngineSettings
         {
+            LimitUpload = _configuration.LimitUpload,
             Limiter = new RateLimiterSettings
             {
                 CeilingBytesPerSecond = _configuration.UploadCeilingBytesPerSecond,
@@ -217,6 +218,7 @@ public sealed class Plugin : IDalamudPlugin
             (id, paused) => Report(_pairing.SetPaused(id, paused)),
             id => { _engine?.Reapply(id); Report("réapplication demandée."); },
             id => Report(_pairing.Remove(id)),
+            SetUploadLimited,
             _backupState,
             (path, password) => RunSafely(() => BackupAsync(path, password)),
             (path, password) => RunSafely(() => RestoreAsync(path, password)));
@@ -639,6 +641,16 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private string CharactersRoot => Path.Combine(_root, "characters");
+
+    private void SetUploadLimited(bool limited)
+    {
+        _configuration.LimitUpload = limited;
+        _configuration.Save();
+
+        // Le moteur du personnage suivant naîtra avec le même réglage.
+        _engineSettings = _engineSettings with { LimitUpload = limited };
+        _engine?.SetUploadLimited(limited);
+    }
 
     private async Task BackupAsync(string destination, string? password)
     {
