@@ -96,10 +96,14 @@ moteur ne démarre pas à la connexion. À la fermeture de la présentation, par
 « C'est parti » ou par la croix, le magasin est construit avec le dossier et
 le quota affichés, puis tout démarre comme aujourd'hui.
 
-`LocalAppearance` et `RemoteApplicator` reçoivent le magasin à leur
-construction : elles sont donc construites avec lui, après la barrière, et non
-plus dans le constructeur de `Plugin`. Le nettoyage des collections d'une
-session précédente ne dépend pas du cache et reste au chargement.
+`LocalAppearance` et `RemoteApplicator` reçoivent un magasin commutable
+(`SwitchableBlobStore`, dans le noyau) : un `IBlobStore` qui délègue au
+`FileSystemBlobStore` qu'on lui attache, et refuse tout tant qu'il n'en a
+aucun. Elles restent construites au chargement ; seul le magasin réel arrive
+après la barrière, et repart si le dossier disparaît. Le moteur, lui, n'est
+construit qu'une fois le magasin attaché. Toute la décision (attendre, ouvrir,
+bloquer, rechoisir) vit dans `Core/Cache/CacheKeeper`, testé sous Linux ;
+`Configuration` lui fournit ses réglages par une interface du noyau.
 
 Une installation déjà configurée, qui voit la présentation après la mise à
 jour, attend de la même façon : son dossier actuel est proposé, et le garder
@@ -146,8 +150,8 @@ débrancher ou de vider exprès, ou pire un chemin qui n'est plus le sien.
   capture de notre apparence s'arrête, et le magasin est abandonné.
 - **Ce que voit l'utilisateur.** La fenêtre principale s'ouvre sur une page
   « Dossier du cache introuvable » qui remplace toutes les autres : le chemin
-  disparu, `CacheChooser`, et rien d'autre à faire. La barre de statut passe au
-  rouge avec « Cache introuvable ». Une notification Dalamud le dit une fois,
+  disparu, `CacheChooser`, et rien d'autre à faire. La barre de statut affiche
+  « cache introuvable ». Une notification Dalamud le dit une fois,
   pour le joueur qui a la fenêtre fermée.
 - **La reprise.** Un dossier valide choisi, le magasin est reconstruit dedans
   et tout redémarre, sans rechargement : rien ne pointe plus sur l'ancien,
@@ -164,8 +168,9 @@ Rien n'appelle `EvictToAsync` aujourd'hui : le quota refuse un blob plus gros
 que lui, mais le cache grossit sans fin. Un quota qu'on demande à
 l'utilisateur doit être tenu.
 
-La boucle de synchronisation vérifie `NeedsEviction` après chaque apparence
-reçue ou reconstruite, et au plus une fois par minute sinon. L'éviction descend
+Le moteur vérifie `NeedsEviction` à la fin de son tic, au plus toutes les
+trente secondes : sommer la taille de dizaines de milliers de blobs à chaque
+seconde serait du calcul pour rien. L'éviction descend
 à `EvictionTarget` et épargne les blobs des apparences actuellement posées sur
 des pairs et ceux de notre propre apparence : les retirer casserait ce qui est
 à l'écran. La collecte de cet ensemble épinglé se fait dans le noyau, testée
