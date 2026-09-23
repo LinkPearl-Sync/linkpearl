@@ -9,11 +9,13 @@ using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
 using Linkpearl.Core.Identity;
+using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport;
 using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
+using Linkpearl.Integration.Extras;
 using Linkpearl.Ui;
 using Linkpearl.Ui.Pages;
 
@@ -100,6 +102,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly MainWindow _window;
     private readonly StatusBarEntry _statusBar;
     private readonly TransferOverlay _overlay;
+    private readonly ExtrasIpc _extras;
     private long _statusBarDueAt;
     private readonly Configuration _configuration;
     private readonly SystemClock _clock = new();
@@ -170,7 +173,9 @@ public sealed class Plugin : IDalamudPlugin
             path => new DriveInfo(Path.GetPathRoot(path) ?? "/").AvailableFreeSpace);
 
         _links = new PeerLinkFactory(engineSettings.DataChannels + 1, new PluginLogSink(Log, "transport"));
-        _appearance = new LocalAppearance(penumbra, glamourer, Framework, Objects, _cache, Log);
+        _extras = new ExtrasIpc(PluginInterface, Objects, Log);
+        _appearance = new LocalAppearance(
+            penumbra, glamourer, Framework, Objects, _extras, MoodlesKey, _cache, Log);
 
         // Tout changement de mod affectant le personnage produit un redessin, et
         // Glamourer signale chaque changement d'état. Les deux sont levés
@@ -189,6 +194,10 @@ public sealed class Plugin : IDalamudPlugin
             if (address == Objects.LocalPlayer?.Address)
                 _appearanceChanged.Signal();
         };
+
+        // Les plugins voisins signalent eux-mêmes nos changements : titre,
+        // statuts, proportions. La rafale passe par le même anti-rebond.
+        _extras.Changed += _appearanceChanged.Signal;
 
         _applicator = new RemoteApplicator(
             penumbra, glamourer, Framework, Objects, ClientState, Condition, _cache, Quotas.Default, root, Log);
@@ -647,6 +656,18 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private string CharactersRoot => Path.Combine(_root, "characters");
+
+    /// <summary>
+    /// La clé qui renomme nos GUID Moodles, propre au personnage connecté.
+    /// </summary>
+    /// <remarks>
+    /// Dérivée de l'identité du personnage : deux personnages d'une même
+    /// personne donnent des GUID qu'on ne peut pas relier.
+    /// </remarks>
+    private byte[]? MoodlesKey()
+        => _pairing.Identity is { } identity
+            ? MoodlesSanitizer.KeyFor(identity.Key.ExportParameters(includePrivateParameters: true).D!)
+            : null;
 
     /// <summary>
     /// Place les badges de transfert, à chaque image : le personnage bouge, la
@@ -1137,6 +1158,7 @@ public sealed class Plugin : IDalamudPlugin
         _engine?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         _applicator.Dispose();
         _appearance.Dispose();
+        _extras.Dispose();
         _penumbra.Dispose();
         _glamourer.Dispose();
         _links.Dispose();

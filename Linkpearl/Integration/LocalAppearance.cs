@@ -4,6 +4,7 @@ using Linkpearl.Core.Cache;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
+using Linkpearl.Integration.Extras;
 
 namespace Linkpearl.Integration;
 
@@ -29,6 +30,8 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private readonly GlamourerIpc _glamourer;
     private readonly IFramework _framework;
     private readonly IObjectTable _objects;
+    private readonly ExtrasIpc _extras;
+    private readonly Func<byte[]?> _moodlesKey;
     private readonly IBlobStore _store;
     private readonly IPluginLog _log;
     private readonly CancellationTokenSource _life = new();
@@ -43,12 +46,14 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
     public LocalAppearance(
         PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
-        IBlobStore store, IPluginLog log)
+        ExtrasIpc extras, Func<byte[]?> moodlesKey, IBlobStore store, IPluginLog log)
     {
         _penumbra = penumbra;
         _glamourer = glamourer;
         _framework = framework;
         _objects = objects;
+        _extras = extras;
+        _moodlesKey = moodlesKey;
         _store = store;
         _log = log;
     }
@@ -149,7 +154,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
             return;
         }
 
-        var (resources, meta, glamourer) = snapshot.Value;
+        var (resources, meta, glamourer, rawExtras) = snapshot.Value;
 
         if (resources is null)
         {
@@ -210,12 +215,19 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
         var build = ManifestBuilder.Build(resolved, meta, glamourer, Quotas.Default);
 
+        // Nettoyés ici, hors du thread du jeu, avant de rien annoncer : un
+        // nom, un ContentId ou un GUID qui relie nos personnages ne quitte pas
+        // cette machine. Un extra qui ne se nettoie pas est omis plutôt
+        // qu'envoyé tel quel.
+        var extras = Clean(rawExtras);
+        var manifest = build.Manifest with { Extras = extras.IsEmpty ? null : extras };
+
         // Une apparence vide remplacerait la précédente, et reviendrait à
         // annoncer aux pairs qu'on n'a plus aucun mod. Le cas arrive pour de
         // bon : il suffit d'avoir désactivé sa collection Penumbra le temps
         // d'un essai. On garde la précédente plutôt que de laisser
         // l'utilisateur le découvrir en se voyant nu chez les autres.
-        if (build.Manifest.Replacements.Count == 0 && _current is { Replacements.Count: > 0 })
+        if (manifest.Replacements.Count == 0 && _current is { Replacements.Count: > 0 })
         {
             Description = "aucune ressource moddée trouvée, l'apparence précédente est conservée";
             _log.Warning(Description);
@@ -226,16 +238,16 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         // Rendre une instance neuve à chaque reconstruction ferait réannoncer à
         // tous les pairs à chaque changement de zone, et chacun redemanderait
         // le manifeste : une tempête pour une apparence identique.
-        if (_current is { } previous && ManifestCodec.HashOf(previous) == ManifestCodec.HashOf(build.Manifest))
+        if (_current is { } previous && ManifestCodec.HashOf(previous) == ManifestCodec.HashOf(manifest))
         {
             Description = $"inchangée, {hashed} fichier(s) rehaché(s)";
             return;
         }
 
-        _current = build.Manifest;
+        _current = manifest;
 
-        Description = $"{build.Manifest.Replacements.Count} fichiers, "
-                    + $"{build.Manifest.Replacements.Sum(r => r.GamePaths.Count)} chemins de jeu, "
+        Description = $"{manifest.Replacements.Count} fichiers, "
+                    + $"{manifest.Replacements.Sum(r => r.GamePaths.Count)} chemins de jeu, "
                     + $"{known.Values.Sum(e => e.Size) / 1024 / 1024} Mo, {hashed} haché(s)"
                     + $"{(build.Skipped.Count > 0 ? $", {build.Skipped.Count} écartés" : "")}";
 
@@ -256,17 +268,18 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     /// Le contrôle et la lecture se font dans le même passage sur le thread du
     /// framework : entre les deux, un redessin pourrait sinon recommencer.
     /// </remarks>
-    private async Task<(IReadOnlyDictionary<string, HashSet<string>>? Resources, string Meta, string? Glamourer)?>
+    private async Task<(IReadOnlyDictionary<string, HashSet<string>>? Resources, string Meta, string? Glamourer, CharacterExtras Extras)?>
         ReadWhenDrawnAsync(CancellationToken ct)
     {
         for (var attempt = 0; attempt < 40; attempt++)
         {
             var snapshot = await _framework.RunOnFrameworkThread(() =>
-                DrawReadiness.IsReady(_objects[PlayerIndex])
-                    ? ((IReadOnlyDictionary<string, HashSet<string>>?, string, string?)?)(
+                _objects[PlayerIndex] is { } local && DrawReadiness.IsReady(local)
+                    ? ((IReadOnlyDictionary<string, HashSet<string>>?, string, string?, CharacterExtras)?)(
                         _penumbra.ResourcePathsOf(PlayerIndex),
                         _penumbra.MetaManipulations(),
-                        _glamourer.StateOf(PlayerIndex))
+                        _glamourer.StateOf(PlayerIndex),
+                        _extras.ReadLocal(local))
                     : null).ConfigureAwait(false);
 
             if (snapshot is not null)
@@ -276,6 +289,18 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         }
 
         return null;
+    }
+
+    private CharacterExtras Clean(CharacterExtras raw)
+    {
+        var key = _moodlesKey();
+
+        return new CharacterExtras(
+            raw.CustomizePlus,
+            raw.Heels is { } heels ? HeelsSanitizer.Sanitize(heels) : null,
+            raw.Honorific,
+            raw.Moodles is { } moodles && key is not null ? MoodlesSanitizer.Sanitize(moodles, key) : null,
+            raw.PetNicknames is { } pets ? PetNicknamesData.Neutralize(pets) : null);
     }
 
     private async Task StoreAsync(string source, BlobHash hash, long size, CancellationToken ct)
