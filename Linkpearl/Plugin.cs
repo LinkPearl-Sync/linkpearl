@@ -173,7 +173,7 @@ public sealed class Plugin : IDalamudPlugin
         _appearance = new LocalAppearance(penumbra, glamourer, Framework, _cache, Log);
 
         // Tout changement de mod affectant le personnage produit un redessin, et
-        // Glamourer signale la fin d'une application d'état. Les deux sont levés
+        // Glamourer signale chaque changement d'état. Les deux sont levés
         // depuis le thread du jeu : on ne fait que signaler, la reconstruction
         // part de la boucle de synchronisation.
         penumbra.SettingsChanged += _appearanceChanged.Signal;
@@ -184,7 +184,7 @@ public sealed class Plugin : IDalamudPlugin
                 _appearanceChanged.Signal();
         };
 
-        glamourer.Finalized += address =>
+        glamourer.Changed += address =>
         {
             if (address == Objects.LocalPlayer?.Address)
                 _appearanceChanged.Signal();

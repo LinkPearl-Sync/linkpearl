@@ -33,6 +33,7 @@ public sealed class GlamourerIpc : IDisposable
     private readonly UnlockState _unlockState;
     private readonly UnlockAll _unlockAll;
     private readonly IDisposable _finalized;
+    private readonly IDisposable _changed;
 
     public GlamourerIpc(IDalamudPluginInterface pi)
     {
@@ -43,17 +44,25 @@ public sealed class GlamourerIpc : IDisposable
         _unlockState = new UnlockState(pi);
         _unlockAll   = new UnlockAll(pi);
 
-        // StateFinalized plutôt que StateChanged : il se déclenche une fois à
-        // la fin d'une application, là où l'autre se déclenche à chaque
-        // retouche et noierait l'anti-rebond.
-        _finalized = StateFinalized.Subscriber(pi, (address, _) => Finalized?.Invoke(address));
+        // Les deux, et non StateFinalized seul : il ne se lève qu'à la fin d'un
+        // changement groupé (design, retour aux valeurs du jeu). Une retouche
+        // faite à la main dans Glamourer, une teinture ou une pièce, s'applique
+        // en direct sans redessin et ne lève que StateChanged. Vu en jeu : sans
+        // lui, rien ne suivait tant qu'on ne forçait pas un redessin. La rafale
+        // qu'il produit est précisément ce qu'absorbe l'anti-rebond.
+        _finalized = StateFinalized.Subscriber(pi, (address, _) => Changed?.Invoke(address));
+        _changed   = StateChanged.Subscriber(pi, address => Changed?.Invoke(address));
     }
 
-    /// <summary>Une application d'état vient de s'achever, avec l'adresse de l'objet.</summary>
-    /// <remarks>Levé depuis le thread du jeu : ne rien faire de long ici.</remarks>
-    public event Action<nint>? Finalized;
+    /// <summary>L'état d'un objet a changé, avec son adresse.</summary>
+    /// <remarks>Levé depuis le thread du jeu, parfois en rafale : ne rien faire de long ici.</remarks>
+    public event Action<nint>? Changed;
 
-    public void Dispose() => _finalized.Dispose();
+    public void Dispose()
+    {
+        _finalized.Dispose();
+        _changed.Dispose();
+    }
 
     public (int Major, int Minor)? TryGetVersion()
     {
