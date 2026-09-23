@@ -25,6 +25,12 @@
     <EmbeddedResource Include="Assets\Fonts\Inter-SemiBold.ttf" LogicalName="Fonts.Inter-SemiBold.ttf" />
   </ItemGroup>
 
+  <!-- La bannière de la présentation. Deux fois la largeur logique de la
+       fenêtre, pour rester nette à 200 %. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Images\banner.png" LogicalName="Images.banner.png" />
+  </ItemGroup>
+
   <Import Project="..\build\Core.Deps.props" />
 
 </Project>

@@ -17,7 +17,9 @@ using Linkpearl.Core.Transport.Rendezvous;
 using Linkpearl.Integration;
 using Linkpearl.Integration.Extras;
 using Linkpearl.Ui;
+using Linkpearl.Ui.Onboarding;
 using Linkpearl.Ui.Pages;
+using System.Reflection;
 
 namespace Linkpearl;
 
@@ -54,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static INamePlateGui           NamePlates      { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
     [PluginService] internal static INotificationManager    Notifications   { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider        Textures        { get; private set; } = null!;
 
     private readonly PenumbraIpc _penumbra;
     private readonly GlamourerIpc _glamourer;
@@ -111,6 +114,19 @@ public sealed class Plugin : IDalamudPlugin
         new(new SystemClock(), TimeSpan.FromMilliseconds(750), TimeSpan.FromSeconds(5));
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
+    /// <summary>
+    /// Assignée plus loin dans le constructeur, après <see cref="_window"/> :
+    /// initialisée à <c>null!</c> parce qu'une fermeture capturée plus haut
+    /// (le bouchon de <see cref="MainWindow"/> qui la rouvre) la référence
+    /// avant cette affectation, sans jamais l'appeler avant elle.
+    /// </summary>
+    private readonly OnboardingWindow _onboarding = null!;
+
+    /// <summary>L'état des dépendances, relevé par IPC hors du dessin.</summary>
+    private volatile bool _penumbraReady;
+    private volatile bool _glamourerReady;
+    private long _prerequisitesDueAt;
+
     private readonly StatusBarEntry _statusBar;
     private readonly TransferOverlay _overlay;
     private readonly NameplateGlyphs _nameplates;
@@ -270,7 +286,7 @@ public sealed class Plugin : IDalamudPlugin
             (path, password) => RunSafely(() => BackupAsync(path, password)),
             (path, password) => RunSafely(() => RestoreAsync(path, password)),
             _cacheKeeper,
-            () => { });
+            () => _onboarding.Show());
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -280,6 +296,16 @@ public sealed class Plugin : IDalamudPlugin
         _windows.AddWindow(_window);
         _windows.AddWindow(new RequestToasts(
             _presence, _state, () => _window.ShowsRequests, _window.OpenRequests, Accept, Decline));
+
+        _onboarding = new OnboardingWindow(
+            Textures.GetFromManifestResource(Assembly.GetExecutingAssembly(), "Images.banner.png"),
+            new CacheChooser(_cacheKeeper),
+            () => _penumbraReady,
+            () => _glamourerReady,
+            started: _window.OpenNearby,
+            closed: OnOnboardingClosed);
+        _windows.AddWindow(_onboarding);
+        Framework.Update += UpdatePrerequisites;
 
         _statusBar = new StatusBarEntry(DtrBar, Open);
         Framework.Update += UpdateStatusBar;
@@ -321,6 +347,9 @@ public sealed class Plugin : IDalamudPlugin
             if (left > 0)
                 Log.Information($"{left} collection(s) de pair d'une session précédente ont été retirées.");
         });
+
+        if (_configuration.OnboardingSeen is false)
+            _onboarding.Show();
 
         // En dernier : l'ouverture peut lever Lost, qui ouvre la fenêtre, et la
         // fenêtre doit exister.
@@ -603,6 +632,45 @@ public sealed class Plugin : IDalamudPlugin
                 Type = NotificationType.Error,
             });
         });
+    }
+
+    /// <summary>
+    /// La présentation se ferme. La première fois, le cache peut enfin naître,
+    /// dans le dossier choisi.
+    /// </summary>
+    /// <remarks>
+    /// Sur le pool de threads : ouvrir le cache relit son index, voire tout
+    /// son arbre.
+    /// </remarks>
+    private void OnOnboardingClosed()
+    {
+        if (_configuration.OnboardingSeen)
+            return;
+
+        RunSafely(() => Task.Run(_cacheKeeper.FinishOnboarding));
+    }
+
+    /// <summary>
+    /// Relève Penumbra et Glamourer toutes les deux secondes, seulement tant
+    /// que la présentation est ouverte.
+    /// </summary>
+    /// <remarks>
+    /// Le dessin ne doit rien interroger : un appel IPC à chaque image, pour
+    /// une réponse qui ne change qu'au chargement d'un plugin, serait du gâchis.
+    /// </remarks>
+    private void UpdatePrerequisites(IFramework framework)
+    {
+        if (_onboarding.IsOpen is false)
+            return;
+
+        var now = Environment.TickCount64;
+
+        if (now < _prerequisitesDueAt)
+            return;
+
+        _prerequisitesDueAt = now + 2000;
+        _penumbraReady = _penumbra.TryGetVersion() is not null;
+        _glamourerReady = _glamourer.TryGetVersion() is not null;
     }
 
     private static string Describe((int Major, int Minor)? version)
@@ -1093,6 +1161,7 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update -= UpdateStatusBar;
         Framework.Update -= UpdateOverlay;
         Framework.Update -= UpdateNameplates;
+        Framework.Update -= UpdatePrerequisites;
         PluginInterface.UiBuilder.Draw -= _overlay.Draw;
         _nameplates.Dispose();
         _statusBar.Dispose();
