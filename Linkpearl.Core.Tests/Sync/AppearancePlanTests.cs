@@ -35,6 +35,9 @@ internal sealed class FakeBlobStore : IBlobStore
     public Task<IBlobWriter> BeginWriteAsync(BlobHash expected, long expectedSize, CancellationToken ct)
         => throw new NotSupportedException();
 
+    public Task<IBlobAssembly> BeginAssemblyAsync(BlobHash expected, long expectedSize, CancellationToken ct)
+        => throw new NotSupportedException();
+
     public Task EvictToAsync(long targetBytes, IReadOnlySet<BlobHash> pinned, CancellationToken ct)
         => throw new NotSupportedException();
 }

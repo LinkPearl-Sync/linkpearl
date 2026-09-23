@@ -266,32 +266,49 @@ public sealed class PeerExchange : IAsyncDisposable
         // quel que soit le nombre de canaux ouverts. Mesuré sur une apparence
         // réelle de 405 Mo en boucle locale : 3,3 Mo/s à un canal comme à
         // vingt-quatre, tant que le service restait séquentiel.
+        //
+        // Et par tronçons plutôt que par blobs : un blob de 85 Mo tenant sur un
+        // seul canal en devenait la traîne, vingt secondes sur trente-huit à
+        // 20 ms de latence. Découpé, il occupe tous les canaux libres.
+        var segments = new List<(BlobHash Hash, long Offset, long Length)>();
+
+        foreach (var hash in wanted)
+        {
+            if (_store.TryGetSize(hash, out var size) is false)
+            {
+                _log.Warning($"Blob demandé mais absent de notre cache : {hash}");
+                continue;
+            }
+
+            foreach (var (offset, length) in BlobSegments.Of(size))
+                segments.Add((hash, offset, length));
+        }
+
         await Parallel.ForEachAsync(
-            wanted,
+            segments,
             new ParallelOptions { MaxDegreeOfParallelism = _channels.DataChannels, CancellationToken = ct },
-            async (hash, token) => await ServeOneAsync(sender, hash, token).ConfigureAwait(false))
+            async (segment, token) => await ServeSegmentAsync(sender, segment, token).ConfigureAwait(false))
             .ConfigureAwait(false);
     }
 
-    /// <summary>Envoie un blob, entier, sur un seul canal.</summary>
+    /// <summary>Envoie un tronçon, entier, sur un seul canal.</summary>
     /// <remarks>
     /// Sur un seul canal parce que le transport ne garantit l'ordre qu'à
     /// l'intérieur d'un canal, et parce que le receveur refuse un second
-    /// transfert sur un canal déjà occupé.
+    /// tronçon sur un canal déjà occupé.
     /// </remarks>
-    private async Task ServeOneAsync(BlobSender sender, BlobHash hash, CancellationToken ct)
+    private async Task ServeSegmentAsync(
+        BlobSender sender, (BlobHash Hash, long Offset, long Length) segment, CancellationToken ct)
     {
-        if (_store.TryGetSize(hash, out var size) is false)
-        {
-            _log.Warning($"Blob demandé mais absent de notre cache : {hash}");
-            return;
-        }
-
-        var channel = _channels.Next((int)size);
+        // Au moins un octet imputé : un tronçon vide laisserait sinon son canal
+        // paraître libre, et un second y partirait en même temps.
+        var weight = (int)Math.Max(1, segment.Length);
+        var channel = _channels.Next(weight);
 
         try
         {
-            await foreach (var frame in sender.FramesFor(hash, ct).ConfigureAwait(false))
+            await foreach (var frame in sender.FramesFor(segment.Hash, segment.Offset, segment.Length, ct)
+                                              .ConfigureAwait(false))
             {
                 // Deux freins, et ils ne retiennent pas la même chose. Le
                 // limiteur borne ce que l'on prend de la liaison montante, pour
@@ -314,7 +331,7 @@ public sealed class PeerExchange : IAsyncDisposable
         }
         finally
         {
-            _channels.Completed(channel, (int)size);
+            _channels.Completed(channel, weight);
         }
     }
 

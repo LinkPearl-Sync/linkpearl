@@ -21,6 +21,7 @@ public class BlobRequestPlannerTests
         public void Touch(BlobHash hash) { }
         public Task<Stream> OpenReadAsync(BlobHash hash, CancellationToken ct) => throw new NotSupportedException();
         public Task<IBlobWriter> BeginWriteAsync(BlobHash e, long s, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IBlobAssembly> BeginAssemblyAsync(BlobHash e, long s, CancellationToken ct) => throw new NotSupportedException();
         public Task EvictToAsync(long target, IReadOnlySet<BlobHash> pinned, CancellationToken ct) => Task.CompletedTask;
     }
 

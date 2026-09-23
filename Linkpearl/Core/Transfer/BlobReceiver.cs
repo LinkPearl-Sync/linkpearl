@@ -16,15 +16,16 @@ public sealed record ReceiveOutcome(
 }
 
 /// <summary>
-/// Reçoit les blobs d'un pair.
+/// Reçoit les blobs d'un pair, par tronçons.
 /// </summary>
 /// <remarks>
-/// L'état est tenu <em>par canal</em>, et c'est une contrainte du transport et
-/// non un choix : LiteNetLib ne garantit l'ordre qu'à l'intérieur d'un canal.
-/// Un blob dont l'annonce, les blocs et la clôture voyageraient sur des canaux
-/// différents verrait sa clôture arriver avant son dernier bloc. Un blob
-/// entier tient donc sur un seul canal, et le parallélisme vient de plusieurs
-/// blobs en vol sur des canaux différents.
+/// L'état d'un tronçon est tenu <em>par canal</em>, et c'est une contrainte du
+/// transport et non un choix : LiteNetLib ne garantit l'ordre qu'à l'intérieur
+/// d'un canal. L'annonce, les blocs et la clôture d'un tronçon voyagent donc
+/// ensemble. Les tronçons d'un même blob, eux, arrivent par des canaux
+/// différents et dans n'importe quel ordre : ils se rejoignent dans un
+/// assemblage, qui n'est validé qu'une fois tous présents (voir
+/// <see cref="BlobSegments"/>).
 ///
 /// C'est aussi l'endroit où atterrit tout ce qu'un pair envoie, donc l'endroit
 /// où l'on dit non :
@@ -32,25 +33,47 @@ public sealed record ReceiveOutcome(
 /// <list type="number">
 /// <item>seul ce que notre plan a demandé est accepté : un pair ne décide pas de
 /// ce que l'on stocke ;</item>
-/// <item>un transfert à la fois par canal, et un nombre total plafonné, sinon un
+/// <item>un tronçon à la fois par canal, et un nombre total plafonné, sinon un
 /// pair ouvre mille écritures et épuise la mémoire et les descripteurs ;</item>
-/// <item>tout ce qui dépasse la taille annoncée est refusé, sinon annoncer un
+/// <item>un tronçon n'est accepté que s'il est exactement l'un de ceux du
+/// découpage, une seule fois, et pour une taille de blob constante : aucune
+/// zone ne peut être écrite deux fois ;</item>
+/// <item>tout ce qui dépasse la longueur annoncée est refusé, sinon annoncer un
 /// octet et en envoyer un gigaoctet remplirait le disque.</item>
 /// </list>
+///
+/// Une faute sur un tronçon abandonne le blob entier : jamais d'apparence
+/// partielle, ni de fichier à moitié juste.
 /// </remarks>
 public sealed class BlobReceiver(
     IBlobStore store, Quotas quotas, IReadOnlySet<BlobHash> requested, int maxConcurrent = 64)
     : IAsyncDisposable
 {
-    private sealed class Incoming
+    private sealed class Assembly
     {
-        public required IBlobWriter Writer { get; init; }
+        public required IBlobAssembly Target { get; init; }
         public required BlobHash Hash { get; init; }
-        public required long Announced { get; init; }
+        public required long Size { get; init; }
+        public required bool[] Done { get; init; }
+        public HashSet<int> InFlight { get; } = [];
+        public int Remaining { get; set; }
+    }
+
+    private sealed class Segment
+    {
+        public required BlobHash Hash { get; init; }
+        public required long Offset { get; init; }
+        public required long Length { get; init; }
+        public required int Index { get; init; }
+
+        /// <summary>Null quand le blob est déjà là ou a été abandonné : les blocs sont alors ignorés.</summary>
+        public Assembly? Into { get; set; }
+
         public long Received { get; set; }
     }
 
-    private readonly Dictionary<byte, Incoming> _byChannel = [];
+    private readonly Dictionary<byte, Segment> _byChannel = [];
+    private readonly Dictionary<BlobHash, Assembly> _assemblies = [];
 
     public int ActiveTransfers => _byChannel.Count;
 
@@ -66,7 +89,12 @@ public sealed class BlobReceiver(
 
     private async ValueTask<ReceiveOutcome> StartAsync(byte channel, ReadOnlyMemory<byte> payload, CancellationToken ct)
     {
-        if (payload.Length != BlobHash.SizeInBytes + sizeof(long))
+        // Le pair tourne une version d'avant les tronçons : le dire, plutôt
+        // qu'un « malformé » que personne ne saurait relier à une mise à jour.
+        if (payload.Length == BlobSegments.LegacyStartLength)
+            return ReceiveOutcome.Refused("annonce d'un format antérieur : ce pair doit mettre Linkpearl à jour");
+
+        if (payload.Length != BlobSegments.StartLength)
             return ReceiveOutcome.Refused("annonce de blob malformée");
 
         if (_byChannel.ContainsKey(channel))
@@ -75,8 +103,7 @@ public sealed class BlobReceiver(
         if (_byChannel.Count >= maxConcurrent)
             return ReceiveOutcome.Refused($"trop de transferts simultanés (plafond {maxConcurrent})");
 
-        var hash = BlobHash.FromBytes(payload.Span[..BlobHash.SizeInBytes]);
-        var size = BinaryPrimitives.ReadInt64BigEndian(payload.Span[BlobHash.SizeInBytes..]);
+        var (hash, size, offset, length) = BlobSegments.ReadStart(payload.Span);
 
         if (requested.Contains(hash) is false)
             return ReceiveOutcome.Refused($"blob non demandé : {hash}");
@@ -84,17 +111,51 @@ public sealed class BlobReceiver(
         if (size < 0 || size > quotas.MaxBlobBytes)
             return ReceiveOutcome.Refused($"taille hors plafond ({size}, plafond {quotas.MaxBlobBytes})");
 
-        // Déjà en cache : il n'y a rien à écrire, et le dire évite au pair de
-        // nous envoyer des mégaoctets pour rien.
-        if (store.TryGetSize(hash, out _))
-            return new ReceiveOutcome(true, AlreadyPresent: true, Hash: hash);
+        if (BlobSegments.IsValid(size, offset, length) is false)
+            return ReceiveOutcome.Refused($"tronçon hors découpage ({offset}+{length} pour {size} octets)");
 
-        _byChannel[channel] = new Incoming
+        var index = (int)(offset / BlobSegments.SegmentSize);
+
+        // Déjà en cache : il n'y a rien à écrire. Le tronçon est suivi pour que
+        // ses blocs soient ignorés sans bruit, et le dire évite au pair de nous
+        // envoyer le reste pour rien.
+        if (store.TryGetSize(hash, out _))
         {
-            Writer = await store.BeginWriteAsync(hash, size, ct).ConfigureAwait(false),
-            Hash = hash,
-            Announced = size,
-        };
+            _byChannel[channel] = new Segment { Hash = hash, Offset = offset, Length = length, Index = index };
+            return new ReceiveOutcome(true, AlreadyPresent: true, Hash: hash);
+        }
+
+        if (_assemblies.TryGetValue(hash, out var assembly))
+        {
+            if (assembly.Size != size)
+            {
+                await AbandonAsync(assembly).ConfigureAwait(false);
+                return ReceiveOutcome.Refused($"taille annoncée changeante pour {hash} ({size} après {assembly.Size})");
+            }
+        }
+        else
+        {
+            if (_assemblies.Count >= maxConcurrent)
+                return ReceiveOutcome.Refused($"trop de blobs en cours d'assemblage (plafond {maxConcurrent})");
+
+            var count = BlobSegments.CountFor(size);
+
+            assembly = new Assembly
+            {
+                Target = await store.BeginAssemblyAsync(hash, size, ct).ConfigureAwait(false),
+                Hash = hash,
+                Size = size,
+                Done = new bool[count],
+                Remaining = count,
+            };
+
+            _assemblies[hash] = assembly;
+        }
+
+        if (assembly.Done[index] || assembly.InFlight.Add(index) is false)
+            return ReceiveOutcome.Refused($"tronçon {index} de {hash} déjà reçu ou en cours");
+
+        _byChannel[channel] = new Segment { Hash = hash, Offset = offset, Length = length, Index = index, Into = assembly };
 
         return ReceiveOutcome.Ok;
     }
@@ -104,20 +165,26 @@ public sealed class BlobReceiver(
         if (payload.Length < sizeof(uint))
             return ReceiveOutcome.Refused("bloc malformé");
 
-        if (_byChannel.TryGetValue(channel, out var incoming) is false)
+        if (_byChannel.TryGetValue(channel, out var segment) is false)
             return ReceiveOutcome.Refused($"bloc reçu sans annonce préalable sur le canal {channel}");
 
         var data = payload[sizeof(uint)..];
 
-        if (incoming.Received + data.Length > incoming.Announced)
+        if (segment.Received + data.Length > segment.Length)
         {
-            await DiscardAsync(channel).ConfigureAwait(false);
+            _byChannel.Remove(channel);
+
+            if (segment.Into is { } overflowing)
+                await AbandonAsync(overflowing).ConfigureAwait(false);
+
             return ReceiveOutcome.Refused(
-                $"envoi au-delà de la taille annoncée ({incoming.Received + data.Length} pour {incoming.Announced})");
+                $"envoi au-delà de la taille annoncée ({segment.Received + data.Length} pour {segment.Length})");
         }
 
-        await incoming.Writer.WriteAsync(data, ct).ConfigureAwait(false);
-        incoming.Received += data.Length;
+        if (segment.Into is { } assembly)
+            await assembly.Target.WriteAtAsync(segment.Offset + segment.Received, data, ct).ConfigureAwait(false);
+
+        segment.Received += data.Length;
 
         return ReceiveOutcome.Ok;
     }
@@ -127,41 +194,71 @@ public sealed class BlobReceiver(
         if (payload.Length != BlobHash.SizeInBytes)
             return ReceiveOutcome.Refused("clôture de blob malformée");
 
-        if (_byChannel.TryGetValue(channel, out var incoming) is false)
+        if (_byChannel.Remove(channel, out var segment) is false)
             return ReceiveOutcome.Refused($"clôture reçue sans annonce préalable sur le canal {channel}");
 
         var hash = BlobHash.FromBytes(payload.Span);
 
-        if (hash != incoming.Hash)
+        if (hash != segment.Hash)
         {
-            await DiscardAsync(channel).ConfigureAwait(false);
+            if (segment.Into is { } mismatched)
+                await AbandonAsync(mismatched).ConfigureAwait(false);
+
             return ReceiveOutcome.Refused("clôture portant une autre empreinte que l'annonce");
         }
 
-        _byChannel.Remove(channel);
+        // Déjà en cache, ou abandonné en route : rien à valider.
+        if (segment.Into is not { } assembly)
+            return ReceiveOutcome.Ok;
 
-        // C'est le cache qui vérifie l'empreinte, pendant l'écriture : un blob
+        if (segment.Received != segment.Length)
+        {
+            await AbandonAsync(assembly).ConfigureAwait(false);
+            return ReceiveOutcome.Refused($"tronçon incomplet ({segment.Received} octets pour {segment.Length})");
+        }
+
+        assembly.InFlight.Remove(segment.Index);
+        assembly.Done[segment.Index] = true;
+        assembly.Remaining--;
+
+        if (assembly.Remaining > 0)
+            return ReceiveOutcome.Ok;
+
+        _assemblies.Remove(hash);
+
+        // C'est le cache qui vérifie l'empreinte du fichier complet : un blob
         // n'est publié que s'il correspond à ce qui était annoncé.
-        var result = await incoming.Writer.CommitAsync(ct).ConfigureAwait(false);
-        await incoming.Writer.DisposeAsync().ConfigureAwait(false);
+        var result = await assembly.Target.CommitAsync(ct).ConfigureAwait(false);
+        await assembly.Target.DisposeAsync().ConfigureAwait(false);
 
         return result.Accepted
             ? new ReceiveOutcome(true, BlobCompleted: true, Hash: hash)
             : ReceiveOutcome.Refused(result.Rejection!);
     }
 
-    private async ValueTask DiscardAsync(byte channel)
+    /// <summary>
+    /// Abandonne un blob entier. Ses autres tronçons en vol restent suivis, sans
+    /// cible : leurs blocs sont ignorés au lieu de produire un refus chacun.
+    /// </summary>
+    private async ValueTask AbandonAsync(Assembly assembly)
     {
-        if (_byChannel.Remove(channel, out var incoming) is false)
-            return;
+        _assemblies.Remove(assembly.Hash);
 
-        incoming.Writer.Abort();
-        await incoming.Writer.DisposeAsync().ConfigureAwait(false);
+        foreach (var segment in _byChannel.Values)
+        {
+            if (ReferenceEquals(segment.Into, assembly))
+                segment.Into = null;
+        }
+
+        assembly.Target.Abort();
+        await assembly.Target.DisposeAsync().ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var channel in _byChannel.Keys.ToList())
-            await DiscardAsync(channel).ConfigureAwait(false);
+        foreach (var assembly in _assemblies.Values.ToList())
+            await AbandonAsync(assembly).ConfigureAwait(false);
+
+        _byChannel.Clear();
     }
 }

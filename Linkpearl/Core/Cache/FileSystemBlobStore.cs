@@ -104,6 +104,20 @@ public sealed class FileSystemBlobStore : IBlobStore
         return Task.FromResult<IBlobWriter>(new BlobWriter(this, expected, expectedSize, part));
     }
 
+    public Task<IBlobAssembly> BeginAssemblyAsync(BlobHash expected, long expectedSize, CancellationToken ct)
+    {
+        if (IsReadOnly)
+            return Task.FromResult<IBlobAssembly>(new RefusedAssembly(
+                $"espace libre insuffisant sur le volume du cache (moins de {_settings.MinimumFreeBytes} octets)"));
+
+        if (expectedSize > _settings.QuotaBytes)
+            return Task.FromResult<IBlobAssembly>(new RefusedAssembly(
+                $"blob plus gros que le quota entier ({expectedSize} octets pour un quota de {_settings.QuotaBytes})"));
+
+        var part = Path.Combine(IncomingDirectory, Guid.NewGuid().ToString("N") + ".part");
+        return Task.FromResult<IBlobAssembly>(new BlobAssembly(this, expected, expectedSize, part));
+    }
+
     public async Task EvictToAsync(long targetBytes, IReadOnlySet<BlobHash> pinned, CancellationToken ct)
     {
         var candidates = _entries
@@ -237,6 +251,160 @@ public sealed class FileSystemBlobStore : IBlobStore
         public void Abort() { }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RefusedAssembly(string reason) : IBlobAssembly
+    {
+        public ValueTask WriteAtAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct) => ValueTask.CompletedTask;
+
+        public ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct)
+            => ValueTask.FromResult(BlobCommitResult.Refused(reason));
+
+        public void Abort() { }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Un blob écrit par morceaux placés.
+    /// </summary>
+    /// <remarks>
+    /// L'empreinte se calcule au fil de l'écriture tant que les morceaux
+    /// arrivent dans l'ordre, et seule la partie arrivée en désordre est relue
+    /// à la validation. Un petit blob, qui tient en un tronçon, n'est donc
+    /// jamais relu ; un gros ne l'est qu'à partir du premier trou.
+    ///
+    /// Pas de préallocation : un pair pourrait sinon faire réserver d'un coup
+    /// la taille maximale d'un blob, autant de fois qu'il ouvre d'assemblages.
+    /// </remarks>
+    private sealed class BlobAssembly(FileSystemBlobStore store, BlobHash expected, long expectedSize, string partPath)
+        : IBlobAssembly
+    {
+        private const int ReadBackBlock = 1024 * 1024;
+
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        private readonly Microsoft.Win32.SafeHandles.SafeFileHandle _handle = File.OpenHandle(
+            partPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, FileOptions.Asynchronous);
+
+        private long _hashedUpTo;
+        private bool _aborted;
+        private bool _committed;
+        private bool _closed;
+
+        public async ValueTask WriteAtAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct)
+        {
+            await RandomAccess.WriteAsync(_handle, data, offset, ct).ConfigureAwait(false);
+
+            if (offset == _hashedUpTo)
+            {
+                _hash.AppendData(data.Span);
+                _hashedUpTo += data.Length;
+            }
+        }
+
+        public async ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct)
+        {
+            var length = RandomAccess.GetLength(_handle);
+
+            if (length != expectedSize)
+            {
+                Close();
+                Discard();
+                return BlobCommitResult.Refused($"taille reçue {length}, annoncée {expectedSize}");
+            }
+
+            await HashRemainderAsync(ct).ConfigureAwait(false);
+            Close();
+
+            var actual = BlobHash.FromBytes(_hash.GetHashAndReset());
+
+            if (actual != expected)
+            {
+                Discard();
+                return BlobCommitResult.Refused($"empreinte reçue {actual}, annoncée {expected}");
+            }
+
+            var destination = store.PathFor(expected);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+            try
+            {
+                File.Move(partPath, destination, overwrite: false);
+            }
+            catch (IOException) when (File.Exists(destination))
+            {
+                Discard();
+            }
+
+            store.Publish(expected, expectedSize);
+            _committed = true;
+            return BlobCommitResult.Ok;
+        }
+
+        /// <summary>Relit ce qui n'a pas été haché au fil de l'eau, par blocs empruntés.</summary>
+        private async Task HashRemainderAsync(CancellationToken ct)
+        {
+            if (_hashedUpTo >= expectedSize)
+                return;
+
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(ReadBackBlock);
+
+            try
+            {
+                while (_hashedUpTo < expectedSize)
+                {
+                    var wanted = (int)Math.Min(ReadBackBlock, expectedSize - _hashedUpTo);
+                    var read = await RandomAccess.ReadAsync(_handle, buffer.AsMemory(0, wanted), _hashedUpTo, ct)
+                                                 .ConfigureAwait(false);
+
+                    if (read == 0)
+                        break;
+
+                    _hash.AppendData(buffer, 0, read);
+                    _hashedUpTo += read;
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        public void Abort() => _aborted = true;
+
+        public ValueTask DisposeAsync()
+        {
+            _hash.Dispose();
+            Close();
+
+            if (_committed is false && (_aborted || File.Exists(partPath)))
+                Discard();
+
+            return ValueTask.CompletedTask;
+        }
+
+        private void Close()
+        {
+            if (_closed)
+                return;
+
+            _closed = true;
+            _handle.Dispose();
+        }
+
+        private void Discard()
+        {
+            try
+            {
+                if (File.Exists(partPath))
+                    File.Delete(partPath);
+            }
+            catch (IOException)
+            {
+                // sans conséquence : la reconstruction nettoiera
+            }
+        }
     }
 
     private sealed class BlobWriter(FileSystemBlobStore store, BlobHash expected, long expectedSize, string partPath)

@@ -55,22 +55,29 @@ public sealed record SyncEngineSettings
     public bool LimitUpload { get; init; } = true;
 
     /// <summary>
-    /// Blobs servis de front, un par canal.
+    /// Tronçons servis de front, un par canal.
     /// </summary>
     /// <remarks>
-    /// Mesuré par le faux pair sur une apparence réelle de 405 Mo en boucle
-    /// locale : 3,3 Mo/s à un canal, 5,8 à deux, 8,9 à quatre, 12,7 à huit,
-    /// 15,5 à seize, puis 4,9 à vingt-quatre, où un passage n'a même pas abouti
-    /// en cinq minutes. Le gain s'inverse donc, et ce n'est plus le réseau qui
-    /// décide mais la localité des lectures et des écritures : vingt-quatre
-    /// blobs ouverts des deux côtés à la fois font bien plus de va-et-vient
-    /// qu'ils ne gagnent en fenêtres.
+    /// Mesuré par le faux pair sur une apparence réelle de 405 Mo, avec des
+    /// tronçons de 4 Mio, des accusés à la milliseconde et un relais qui
+    /// retarde les paquets :
     ///
-    /// Huit plutôt que seize, pour rester loin du bord : c'est vingt pour cent
-    /// sous le meilleur mesuré, et trois fois moins de mémoire retenue dans le
-    /// processus du jeu.
+    /// | canaux | 0 ms      | 20 ms     | 60 ms     |
+    /// |--------|-----------|-----------|-----------|
+    /// | 8      | 57,5 Mo/s | 14,0 Mo/s |           |
+    /// | 16     |           | 21,0 Mo/s | 9,6 Mo/s  |
+    /// | 32     | 53,8 Mo/s | 33,0 Mo/s | 17,5 Mo/s |
+    /// | 48     |           | 37,0 Mo/s | 3,6 Mo/s  |
+    ///
+    /// Entre deux foyers, c'est la fenêtre fiable de chaque canal qui décide,
+    /// et le débit suit le nombre de canaux. Jusqu'à trente-deux, et pas
+    /// au-delà : à quarante-huit, un passage à 60 ms s'est effondré.
+    ///
+    /// Les anciennes mesures, qui plafonnaient vers seize canaux et
+    /// s'effondraient à vingt-quatre, venaient d'un /tmp saturé par le banc
+    /// lui-même, pas du transport.
     /// </remarks>
-    public int DataChannels { get; init; } = 8;
+    public int DataChannels { get; init; } = 32;
 
     public int BlockSize { get; init; } = 16 * 1024;
 

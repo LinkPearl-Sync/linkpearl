@@ -9,6 +9,9 @@ public interface IBlobStore
 
     Task<IBlobWriter> BeginWriteAsync(BlobHash expected, long expectedSize, CancellationToken ct);
 
+    /// <summary>Un blob reçu par tronçons, dans le désordre.</summary>
+    Task<IBlobAssembly> BeginAssemblyAsync(BlobHash expected, long expectedSize, CancellationToken ct);
+
     /// <summary>Chemin du blob, tel qu'on le donne à Penumbra.</summary>
     string PathFor(BlobHash hash);
 
@@ -34,6 +37,24 @@ public interface IBlobStore
 public interface IBlobWriter : IAsyncDisposable
 {
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct);
+
+    ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct);
+
+    void Abort();
+}
+
+/// <summary>
+/// Écriture d'un blob par morceaux placés, dans n'importe quel ordre.
+/// </summary>
+/// <remarks>
+/// Mêmes garanties que <see cref="IBlobWriter"/> : rien n'est publié avant que
+/// la taille et l'empreinte du fichier complet aient été vérifiées. Savoir si
+/// chaque zone a bien été écrite une fois, et une seule, reste l'affaire de
+/// l'appelant, qui connaît le découpage.
+/// </remarks>
+public interface IBlobAssembly : IAsyncDisposable
+{
+    ValueTask WriteAtAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct);
 
     ValueTask<BlobCommitResult> CommitAsync(CancellationToken ct);
 
