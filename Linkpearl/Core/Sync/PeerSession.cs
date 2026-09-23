@@ -41,6 +41,11 @@ public sealed class PeerSession : IAsyncDisposable
     private readonly Channel<PeerMessage> _incoming = Channel.CreateUnbounded<PeerMessage>();
     private readonly Channel<byte[]> _rawIncoming = Channel.CreateUnbounded<byte[]>();
 
+    /// <summary>
+    /// Tient ensemble le passage au mode scellé et le rangement d'une trame reçue.
+    /// </summary>
+    private readonly Lock _sealing = new();
+
     private SecureChannel? _secure;
 
     private PeerSession(IPeerLink link, PairRecord pair, ILogSink log)
@@ -93,7 +98,7 @@ public sealed class PeerSession : IAsyncDisposable
                 return null;
             }
 
-            session._secure = new SecureChannel(keys.SendKey, keys.ReceiveKey, keys.SessionId);
+            session.Seal(new SecureChannel(keys.SendKey, keys.ReceiveKey, keys.SessionId));
             session.SessionId = keys.SessionId;
             session.State = PeerSessionState.Connected;
 
@@ -197,14 +202,48 @@ public sealed class PeerSession : IAsyncDisposable
     private void OnReceived(byte channel, byte[] payload)
     {
         // Avant l'établissement, les trames sont celles du handshake et passent
-        // en clair ; après, tout est scellé.
-        if (_secure is null)
+        // en clair ; après, tout est scellé. Le test et le rangement se font sous
+        // le même verrou que le passage au mode scellé : sinon une trame lue
+        // « avant » pourrait être rangée « après », dans une file que plus
+        // personne ne lit.
+        lock (_sealing)
         {
-            _rawIncoming.Writer.TryWrite(payload);
-            return;
-        }
+            if (_secure is null)
+            {
+                _rawIncoming.Writer.TryWrite(payload);
+                return;
+            }
 
-        if (_secure.TryOpen(payload, out var kind, out var fromChannel, out var plain, out var rejection) is false)
+            Open(_secure, payload);
+        }
+    }
+
+    /// <summary>
+    /// Passe au mode scellé, et reprend ce qui est arrivé trop tôt.
+    /// </summary>
+    /// <remarks>
+    /// L'initiateur termine le handshake dès son dernier message envoyé et
+    /// envoie aussitôt son premier message scellé. Chez le répondeur, ce message
+    /// peut arriver avant la vérification du dernier message du handshake : il
+    /// était alors rangé avec les trames du handshake, que plus personne ne lit,
+    /// et le répondeur ne recevait jamais l'identité de l'autre ni son
+    /// manifeste. Vu dans les tests du moteur sous charge, une fois sur trois ;
+    /// reproduit à coup sûr par PeerSessionTests.
+    /// </remarks>
+    private void Seal(SecureChannel secure)
+    {
+        lock (_sealing)
+        {
+            _secure = secure;
+
+            while (_rawIncoming.Reader.TryRead(out var early))
+                Open(secure, early);
+        }
+    }
+
+    private void Open(SecureChannel secure, byte[] payload)
+    {
+        if (secure.TryOpen(payload, out var kind, out var fromChannel, out var plain, out var rejection) is false)
         {
             _log.Warning($"{Pair.DisplayName} : trame refusée, {rejection}");
             return;
