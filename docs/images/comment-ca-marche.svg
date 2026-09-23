@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 608 176" width="608" height="176" font-family="Inter,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13">
+  <!-- Redessin de OnboardingArt.HowItWorks : mêmes proportions et couleurs que dans le plugin. -->
+  <rect x="0.5" y="0.5" width="607" height="175" rx="12" fill="#1F222A" stroke="#3C414E"/>
+  <g transform="translate(24,24)">
+    <!-- Le rendez-vous, à l'écart et en pointillé : il aide à se trouver, rien ne passe par lui. -->
+    <g stroke="#7E8492" stroke-opacity="0.6" stroke-width="1.5" stroke-dasharray="5 5">
+      <line x1="280" y1="24" x2="100.8" y2="93"/>
+      <line x1="280" y1="24" x2="459.2" y2="93"/>
+    </g>
+    <circle cx="280" cy="24" r="16" fill="#1F222A" stroke="#7E8492" stroke-width="1.5"/>
+    <g fill="none" stroke="#7E8492" stroke-width="1.6" stroke-linecap="round">
+      <path d="M277 20.5 A6.5 6.5 0 0 1 283.5 27"/>
+      <path d="M277 16.5 A10.5 10.5 0 0 1 287.5 27"/>
+    </g>
+    <circle cx="277" cy="27" r="2.2" fill="#7E8492"/>
+    <text x="280" y="50" text-anchor="middle" dominant-baseline="central" fill="#7E8492">rendez-vous</text>
+
+    <!-- Le lien direct, chiffré. -->
+    <line x1="100.8" y1="93" x2="459.2" y2="93" stroke="#A8C0E8" stroke-width="3"/>
+    <circle cx="280" cy="93" r="14" fill="#2A2E38" stroke="#A8C0E8" stroke-width="2"/>
+    <path d="M276.5 91 V88 A3.5 3.5 0 0 1 283.5 88 V91" fill="none" stroke="#A8C0E8" stroke-width="1.8"/>
+    <rect x="274" y="90.5" width="12" height="8.5" rx="1.5" fill="#A8C0E8"/>
+    <text x="280" y="119" text-anchor="middle" dominant-baseline="central" fill="#A8C0E8">chiffré, de joueur à joueur</text>
+
+    <!-- Les deux joueurs. -->
+    <circle cx="100.8" cy="49" r="11" fill="#5BCF9A"/>
+    <path d="M85.8 93 V73 A10 10 0 0 1 95.8 63 H105.8 A10 10 0 0 1 115.8 73 V93 Z" fill="#5BCF9A"/>
+    <text x="100.8" y="107" text-anchor="middle" dominant-baseline="central" fill="#AFB4C0">vous</text>
+
+    <circle cx="459.2" cy="49" r="11" fill="#6FB6F2"/>
+    <path d="M444.2 93 V73 A10 10 0 0 1 454.2 63 H464.2 A10 10 0 0 1 474.2 73 V93 Z" fill="#6FB6F2"/>
+    <text x="459.2" y="107" text-anchor="middle" dominant-baseline="central" fill="#AFB4C0">votre ami</text>
+  </g>
+</svg>

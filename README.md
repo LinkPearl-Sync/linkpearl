@@ -27,6 +27,10 @@ Cliquez sur **+**, puis sur **Enregistrer**. Ouvrez ensuite `/xlplugins`, cherch
 
 Vous vous pairez avec un ami, en jeu, en deux clics. Dès lors, chacun voit l'autre tel qu'il s'est habillé : mods Penumbra, état Glamourer, et ce que montrent les plugins voisins.
 
+<p align="center">
+  <img src="docs/images/comment-ca-marche.svg" alt="Deux joueurs reliés directement par un lien chiffré, le service de rendez-vous à l'écart" width="608">
+</p>
+
 - **De joueur à joueur.** Vos fichiers passent directement de votre jeu à celui de votre ami, chiffrés de bout en bout. Aucun serveur ne les stocke ni ne les redistribue.
 - **Seulement avec qui vous avez choisi.** Rien ne s'échange sans l'accord des deux.
 - **Au-delà des tenues.** Animations, effets visuels et sons moddés, et ce que montrent Customize+, SimpleHeels, Honorific, Moodles et PetNicknames.
@@ -42,6 +46,10 @@ Une courte présentation s'ouvre et vous fait choisir **où ranger le cache** (l
 La fenêtre du plugin s'ouvre avec `/lpearl`, ou en cliquant sur l'entrée Linkpearl de la barre de statut du jeu.
 
 ### Se pairer
+
+<p align="center">
+  <img src="docs/images/se-pairer.svg" alt="Un glyphe orange à côté du nom, le clic droit « Linkpearl : demander le pairage », puis la demande acceptée par l'autre" width="608">
+</p>
 
 1. Approchez-vous de votre ami. Un **glyphe orange** à côté de son nom signale qu'il utilise Linkpearl.
 2. **Clic droit** sur son personnage, puis **Linkpearl : demander le pairage**. Vous pouvez aussi passer par la page **Autour** de la fenêtre.
@@ -62,6 +70,10 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 ---
 
 ## Au quotidien
+
+<p align="center">
+  <img src="docs/images/garder-la-main.svg" alt="Une ligne de pair avec les bascules animations, effets, sons et pause" width="608">
+</p>
 
 - **Réappliquer** une apparence qui s'est mal posée : clic droit sur le personnage, **Linkpearl : réappliquer**.
 - **Mettre un pair en pause** : page **Pairs**, bouton pause. La connexion se ferme et son apparence est retirée.

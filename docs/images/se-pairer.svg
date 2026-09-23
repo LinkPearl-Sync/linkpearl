@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 608 142" width="608" height="142" font-family="Inter,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13">
+  <!-- Redessin de OnboardingArt.Pairing : la plaque, le clic droit, la demande chez l'autre. -->
+  <rect x="0.5" y="0.5" width="607" height="141" rx="12" fill="#1F222A" stroke="#3C414E"/>
+  <g transform="translate(24,24)">
+    <!-- 1. La plaque de nom, glyphe orange à droite. -->
+    <rect x="0" y="34" width="151.2" height="30" rx="6" fill="#000000" fill-opacity="0.55"/>
+    <text x="10" y="49" dominant-baseline="central" fill="#E9EAEF">Alys Fenwood</text>
+    <circle cx="139.2" cy="49" r="5" fill="#F2A65A"/>
+    <text x="0" y="80" dominant-baseline="central" font-size="12" fill="#7E8492">1. un glyphe orange</text>
+
+    <!-- 2. Le menu clic droit. -->
+    <rect x="161.2" y="0" width="237.6" height="74" rx="6" fill="#2A2E38" stroke="#3C414E"/>
+    <text x="171.2" y="15" dominant-baseline="central" fill="#AFB4C0">Examiner</text>
+    <text x="171.2" y="37" dominant-baseline="central" fill="#AFB4C0">Envoyer un message</text>
+    <rect x="165.2" y="48" width="229.6" height="22" rx="4" fill="#3E4E6B"/>
+    <text x="171.2" y="59" dominant-baseline="central" fill="#E9EAEF">Linkpearl : demander le pairage</text>
+    <text x="161.2" y="90" dominant-baseline="central" font-size="12" fill="#7E8492">2. clic droit sur le joueur</text>
+
+    <!-- 3. La demande, chez l'autre. -->
+    <rect x="408.8" y="18" width="151.2" height="56" rx="8" fill="#2A2E38"/>
+    <clipPath id="toast"><rect x="408.8" y="18" width="151.2" height="56" rx="8"/></clipPath>
+    <rect x="408.8" y="18" width="3" height="56" fill="#A8C0E8" clip-path="url(#toast)"/>
+    <text x="418.8" y="33" dominant-baseline="central" font-size="12" fill="#E9EAEF">Demande de pairage</text>
+    <path d="M419 55 L423 59 L430 51" fill="none" stroke="#5BCF9A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M442 51 L450 59 M450 51 L442 59" fill="none" stroke="#E8666B" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="408.8" y="90" dominant-baseline="central" font-size="12" fill="#7E8492">3. l'autre accepte</text>
+  </g>
+</svg>

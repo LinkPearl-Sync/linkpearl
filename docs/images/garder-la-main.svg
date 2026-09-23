@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 608 104" width="608" height="104" font-family="Inter,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13">
+  <!-- Redessin de OnboardingArt.Controls : une ligne de pair, sa pause et ses trois bascules. -->
+  <rect x="0.5" y="0.5" width="607" height="103" rx="12" fill="#1F222A" stroke="#3C414E"/>
+  <g transform="translate(24,24)">
+    <rect x="0" y="0" width="560" height="44" rx="8" fill="#2A2E38"/>
+    <circle cx="18" cy="22" r="5" fill="#5BCF9A"/>
+    <text x="32" y="22" dominant-baseline="central" fill="#E9EAEF">Alys Fenwood</text>
+
+    <!-- Animations, actives. -->
+    <rect x="410" y="8" width="28" height="28" rx="6" fill="#3E4E6B"/>
+    <g fill="none" stroke="#A8C0E8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M425 19 L423 24 M419 21 L424 19 L428 22 M423 24 L419.5 29 M423 24 L427 26 L427 29"/>
+    </g>
+    <circle cx="426" cy="15.5" r="2" fill="#A8C0E8"/>
+
+    <!-- Effets visuels, actifs. -->
+    <rect x="444" y="8" width="28" height="28" rx="6" fill="#3E4E6B"/>
+    <path d="M457 14 Q457 22 465 22 Q457 22 457 30 Q457 22 449 22 Q457 22 457 14 Z" fill="#A8C0E8"/>
+    <path d="M464 12.5 Q464 15.5 467 15.5 Q464 15.5 464 18.5 Q464 15.5 461 15.5 Q464 15.5 464 12.5 Z" fill="#A8C0E8"/>
+
+    <!-- Sons, coupés : on peut bloquer une seule catégorie. -->
+    <rect x="478" y="8" width="28" height="28" rx="6" fill="#1A1C22"/>
+    <path d="M485.5 19.5 H488.5 L492.5 16 V28 L488.5 24.5 H485.5 Z" fill="#7E8492"/>
+    <path d="M495 18.5 A5 5 0 0 1 495 25.5" fill="none" stroke="#7E8492" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="484" y1="14" x2="500" y2="30" stroke="#E8666B" stroke-width="2"/>
+
+    <!-- Pause. -->
+    <rect x="524" y="8" width="28" height="28" rx="6" fill="#3E4E6B"/>
+    <rect x="532.5" y="16.5" width="3.5" height="11" rx="1" fill="#A8C0E8"/>
+    <rect x="540" y="16.5" width="3.5" height="11" rx="1" fill="#A8C0E8"/>
+
+    <g font-size="10" fill="#7E8492" text-anchor="middle">
+      <text x="424" y="60">anim.</text>
+      <text x="458" y="60">effets</text>
+      <text x="492" y="60">sons</text>
+      <text x="538" y="60">pause</text>
+    </g>
+  </g>
+</svg>
