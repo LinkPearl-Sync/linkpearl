@@ -40,6 +40,16 @@ public sealed class CacheKeeper(
     private volatile bool _restartPending;
     private long _previousBytes = -1;
 
+    /// <summary>
+    /// Vrai dès que Lost a été levé pour la perte en cours.
+    /// </summary>
+    /// <remarks>
+    /// Un rechoix raté en état Missing rappelle MarkMissing sans qu'il y ait
+    /// une nouvelle perte : sans ce jeton, ce serait une seconde notification
+    /// pour le même incident. Remis à faux à la prochaine ouverture réussie.
+    /// </remarks>
+    private volatile bool _lostNotified;
+
     /// <summary>Le cache tel que le voient l'apparence locale, l'applicateur et le moteur.</summary>
     public SwitchableBlobStore Store { get; } = new();
 
@@ -133,48 +143,63 @@ public sealed class CacheKeeper(
         if (prepared.Root is not { } root)
             return prepared.Error;
 
-        switch (_state)
+        // Les mutations d'état sont sérialisées sous _gate, comme
+        // OpenConfigured et Lose : deux choix simultanés (présentation et
+        // fenêtre principale) ne doivent pas se marcher dessus. Le verrou est
+        // relâché avant d'appeler OpenConfigured, qui lève Opened/Lost lui-même
+        // une fois le sien relâché.
+        lock (_gate)
         {
-            case CacheGateState.Open:
-                if (SamePath(root, ActiveRoot))
-                {
-                    configuration.PreviousCacheDirectory = "";
+            switch (_state)
+            {
+                case CacheGateState.Open:
+                    if (SamePath(root, ActiveRoot))
+                    {
+                        configuration.PreviousCacheDirectory = "";
+                        _restartPending = false;
+                    }
+                    else
+                    {
+                        configuration.PreviousCacheDirectory = ActiveRoot ?? "";
+                        _restartPending = true;
+                    }
+
+                    configuration.CacheDirectory = root;
+                    configuration.Save();
+                    return null;
+
+                case CacheGateState.Missing:
+                    // Un dossier disparu ne s'offre pas à la suppression, et un
+                    // changement en attente d'avant la perte n'a plus lieu
+                    // d'être : ce choix-ci le remplace.
                     _restartPending = false;
-                }
-                else
-                {
-                    configuration.PreviousCacheDirectory = ActiveRoot ?? "";
-                    _restartPending = true;
-                }
+                    configuration.PreviousCacheDirectory = "";
+                    configuration.CacheDirectory = root;
+                    configuration.Save();
+                    break;
 
-                configuration.CacheDirectory = root;
-                configuration.Save();
-                return null;
+                default:
+                    // AwaitingOnboarding : un utilisateur d'avant l'onboarding
+                    // a pu avoir un cache au dossier par défaut. En choisir un
+                    // autre ne doit pas l'abandonner en silence : il doit
+                    // rester proposable à la suppression une fois le nouveau
+                    // ouvert.
+                    var priorRoot = ConfiguredRoot;
 
-            case CacheGateState.Missing:
-                configuration.CacheDirectory = root;
-                configuration.Save();
+                    if (Directory.Exists(priorRoot))
+                        configuration.PreviousCacheDirectory = SamePath(root, priorRoot) ? "" : priorRoot;
 
-                // explicitChoice : un choix explicite garde le droit de
-                // recréer blobs/ et incoming/, même sur le chemin qui vient
-                // de bloquer (vidé sans être supprimé).
-                OpenConfigured(explicitChoice: true);
-                return _state is CacheGateState.Open ? null : "ce dossier n'a pas pu être ouvert.";
-
-            default:
-                // AwaitingOnboarding : un utilisateur d'avant l'onboarding a
-                // pu avoir un cache au dossier par défaut. En choisir un
-                // autre ne doit pas l'abandonner en silence : il doit rester
-                // proposable à la suppression une fois le nouveau ouvert.
-                var priorRoot = ConfiguredRoot;
-
-                if (Directory.Exists(priorRoot))
-                    configuration.PreviousCacheDirectory = SamePath(root, priorRoot) ? "" : priorRoot;
-
-                configuration.CacheDirectory = root;
-                configuration.Save();
-                return null;
+                    configuration.CacheDirectory = root;
+                    configuration.Save();
+                    return null;
+            }
         }
+
+        // explicitChoice : un choix explicite garde le droit de recréer
+        // blobs/ et incoming/, même sur le chemin qui vient de bloquer (vidé
+        // sans être supprimé).
+        OpenConfigured(explicitChoice: true);
+        return _state is CacheGateState.Open ? null : "ce dossier n'a pas pu être ouvert.";
     }
 
     /// <summary>Le quota, en gigaoctets, borné et appliqué tout de suite.</summary>
@@ -255,43 +280,75 @@ public sealed class CacheKeeper(
     private void OpenConfigured(bool explicitChoice = false)
     {
         var root = ConfiguredRoot;
+        var raiseOpened = false;
+        var raiseLost = false;
+        FileSystemBlobStore? orphan = null;
 
-        if (explicitChoice is false && configuration.CacheEstablished && FileSystemBlobStore.IsIntact(root) is false)
+        // Les changements d'état sont sérialisés sous _gate ; Opened/Lost ne
+        // sont levés qu'après l'avoir relâché, plus bas.
+        lock (_gate)
         {
-            MarkMissing(root);
-            return;
+            // Une ouverture déjà en cours (ou tout juste finie) sur ce même
+            // dossier n'a rien de plus à faire : deux appels simultanés
+            // (présentation et fenêtre principale) ne doivent pas attacher
+            // deux magasins.
+            if (_state is CacheGateState.Open && SamePath(ActiveRoot, root))
+                return;
+
+            if (explicitChoice is false && configuration.CacheEstablished && FileSystemBlobStore.IsIntact(root) is false)
+            {
+                raiseLost = MarkMissingLocked(root);
+            }
+            else
+            {
+                FileSystemBlobStore? store;
+
+                try
+                {
+                    store = new FileSystemBlobStore(root, new CacheSettings { QuotaBytes = QuotaGiB * GiB }, clock, freeSpace);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                             or NotSupportedException or ArgumentException)
+                {
+                    // Le seul type d'exception, jamais son message :
+                    // IOException et consorts embarquent souvent le chemin
+                    // complet, qui porte le nom du compte Windows.
+                    log.Warning($"ouverture du cache impossible ({e.GetType().Name}).");
+                    raiseLost = MarkMissingLocked(root);
+                    store = null;
+                }
+
+                if (store is not null)
+                {
+                    store.RootLost += Lose;
+                    orphan = Store.Attach(store);
+
+                    if (configuration.CacheEstablished is false)
+                    {
+                        configuration.CacheEstablished = true;
+                        configuration.Save();
+                    }
+
+                    _lostRoot = null;
+                    _lostNotified = false;
+                    _state = CacheGateState.Open;
+                    log.Info("cache ouvert.");
+                    raiseOpened = true;
+                }
+            }
         }
 
-        FileSystemBlobStore store;
+        // Un magasin qu'on vient de remplacer sans qu'il ait jamais été le
+        // courant (course perdue par un appel concurrent) : plus personne ne
+        // le référence, mais son abonnement à RootLost, lui, doit partir.
+        if (orphan is not null)
+            orphan.RootLost -= Lose;
 
-        try
-        {
-            store = new FileSystemBlobStore(root, new CacheSettings { QuotaBytes = QuotaGiB * GiB }, clock, freeSpace);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                     or NotSupportedException or ArgumentException)
-        {
-            // Le seul type d'exception, jamais son message : IOException et
-            // consorts embarquent souvent le chemin complet, qui porte le nom
-            // du compte Windows.
-            log.Warning($"ouverture du cache impossible ({e.GetType().Name}).");
-            MarkMissing(root);
-            return;
-        }
+        if (raiseOpened)
+            Opened?.Invoke();
 
-        store.RootLost += Lose;
-        Store.Attach(store);
-
-        if (configuration.CacheEstablished is false)
-        {
-            configuration.CacheEstablished = true;
-            configuration.Save();
-        }
-
-        _lostRoot = null;
-        _state = CacheGateState.Open;
-        log.Info("cache ouvert.");
-        Opened?.Invoke();
+        if (raiseLost)
+            Lost?.Invoke();
     }
 
     /// <summary>
@@ -304,28 +361,41 @@ public sealed class CacheKeeper(
     private void Lose()
     {
         FileSystemBlobStore? lost;
+        var raiseLost = false;
 
         lock (_gate)
         {
             if (_state is not CacheGateState.Open)
                 return;
 
-            _state = CacheGateState.Missing;
             lost = Store.Detach();
+            raiseLost = MarkMissingLocked(lost?.Root ?? ConfiguredRoot);
         }
 
         if (lost is not null)
             lost.RootLost -= Lose;
 
-        MarkMissing(lost?.Root ?? ConfiguredRoot);
+        if (raiseLost)
+            Lost?.Invoke();
     }
 
-    private void MarkMissing(string root)
+    /// <summary>Mute l'état en Missing. À appeler sous _gate.</summary>
+    /// <returns>
+    /// Vrai si Lost doit être levé après avoir relâché le verrou : une seule
+    /// fois par perte, jamais pour un rechoix raté qui retombe dans le même
+    /// état.
+    /// </returns>
+    private bool MarkMissingLocked(string root)
     {
         _lostRoot = root;
         _state = CacheGateState.Missing;
         log.Warning("dossier du cache introuvable : synchronisation suspendue.");
-        Lost?.Invoke();
+
+        if (_lostNotified)
+            return false;
+
+        _lostNotified = true;
+        return true;
     }
 
     private static bool SamePath(string? a, string? b)

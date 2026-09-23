@@ -183,6 +183,57 @@ public sealed class CacheKeeperTests : IDisposable
     }
 
     [Fact]
+    public void Choisir_un_dossier_apres_la_perte_efface_le_changement_en_attente_et_n_offre_pas_le_disparu()
+    {
+        _configuration.OnboardingSeen = true;
+        var keeper = Keeper();
+        keeper.Start();
+
+        // Un changement était en attente avant la perte.
+        Assert.Null(keeper.Choose(Chosen("ailleurs")));
+        Assert.True(keeper.RestartPending);
+
+        Directory.Delete(DefaultRoot, recursive: true);
+        keeper.Check();
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+
+        Assert.Null(keeper.Choose(Chosen("nouveau")));
+
+        Assert.False(keeper.RestartPending);
+        Assert.Null(keeper.PreviousRoot);
+        Assert.Equal(CacheGateState.Open, keeper.State);
+        Assert.Equal(Path.Combine(_root, "nouveau", "LinkpearlCache"), keeper.ActiveRoot);
+    }
+
+    [Fact]
+    public void Un_rechoix_rate_en_etat_manquant_ne_releve_pas_lost_une_seconde_fois()
+    {
+        _configuration.OnboardingSeen = true;
+        var keeper = Keeper();
+        var lost = 0;
+        keeper.Lost += () => lost++;
+        keeper.Start();
+
+        Directory.Delete(DefaultRoot, recursive: true);
+        keeper.Check();
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+        Assert.Equal(1, lost);
+
+        // Un dossier où "blobs" est déjà un fichier : la construction du
+        // magasin échoue, et le rechoix rate.
+        var brokenParent = Path.Combine(_root, "casse");
+        var brokenCache = Path.Combine(brokenParent, "LinkpearlCache");
+        Directory.CreateDirectory(brokenCache);
+        File.WriteAllBytes(Path.Combine(brokenCache, "blobs"), [1]);
+
+        var error = keeper.Choose(brokenParent);
+
+        Assert.NotNull(error);
+        Assert.Equal(CacheGateState.Missing, keeper.State);
+        Assert.Equal(1, lost);
+    }
+
+    [Fact]
     public void Changer_de_dossier_cache_ouvert_attend_le_prochain_chargement()
     {
         _configuration.OnboardingSeen = true;

@@ -20,7 +20,8 @@ public sealed class SwitchableBlobStore : IBlobStore
 
     public bool IsAvailable => Current is not null;
 
-    public void Attach(FileSystemBlobStore store) => Volatile.Write(ref _inner, store);
+    /// <returns>Le magasin qu'il remplace, s'il y en avait un : à désabonner.</returns>
+    public FileSystemBlobStore? Attach(FileSystemBlobStore store) => Interlocked.Exchange(ref _inner, store);
 
     /// <summary>Retire le cache, et le rend à qui doit s'en désabonner.</summary>
     public FileSystemBlobStore? Detach() => Interlocked.Exchange(ref _inner, null);

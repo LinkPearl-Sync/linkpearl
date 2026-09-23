@@ -166,6 +166,22 @@ internal sealed class BlockingAppearance(PlayerFingerprint? fingerprint) : ILoca
     }
 }
 
+/// <summary>Rend un premier manifeste, puis un second à partir du deuxième appel.</summary>
+/// <remarks>
+/// Simule _current qui change entre l'appel d'AnnounceIfChangedAsync et celui
+/// d'EvictIfDueAsync, au milieu d'un même tic : une reconstruction locale
+/// tourne sur sa propre tâche, sans rien devoir au moteur.
+/// </remarks>
+internal sealed class SwappingAppearance(CharacterManifest? first, CharacterManifest? second, PlayerFingerprint? fingerprint) : ILocalAppearance
+{
+    private int _calls;
+
+    public PlayerFingerprint? Fingerprint { get; } = fingerprint;
+
+    public Task<CharacterManifest?> CurrentAsync(CancellationToken ct)
+        => Task.FromResult(Interlocked.Increment(ref _calls) == 1 ? first : second);
+}
+
 internal sealed class RecordingApplicator : IRemoteApplicator
 {
     public List<(PeerId Peer, GameObjectRef Target, CharacterManifest Manifest)> Applied { get; } = [];
@@ -810,6 +826,44 @@ public sealed class SyncEngineTests : IDisposable
         await engine.TickAsync([], default);
 
         Assert.True(store.TryGetSize(ours, out _));
+        Assert.False(store.TryGetSize(stale, out _));
+    }
+
+    [Fact]
+    public async Task L_eviction_epargne_aussi_le_dernier_manifeste_annonce()
+    {
+        var store = Store("annonce");
+
+        var contentV1 = Encoding.UTF8.GetBytes(new string('v', 100));
+        var hashV1 = await PutAsync(store, contentV1);
+        var manifestV1 = new CharacterManifest(
+            CharacterManifest.CurrentVersion,
+            [new FileReplacement(["chara/equipment/e0001/model/c0101e0001_top.mdl"], hashV1, contentV1.Length)],
+            string.Empty, null);
+
+        _clock.Advance(TimeSpan.FromHours(1));
+        var stale = await PutAsync(store, Encoding.UTF8.GetBytes(new string('s', 100)));
+
+        // Le premier appel à CurrentAsync (AnnounceIfChangedAsync) rend
+        // encore manifestV1 ; le second (EvictIfDueAsync), plus rien : c'est
+        // ce qui peut arriver si une reconstruction locale change _current
+        // entre les deux, au milieu du même tic.
+        var appearance = new SwappingAppearance(manifestV1, null, AlicePrint);
+
+        var identity = CryptoPrimitives.GenerateIdentity();
+        _disposables.Add(identity);
+
+        await using var engine = new SyncEngine(
+            new PairBook(_clock), new FailingDialer(peerWasAbsent: true), appearance,
+            new RecordingApplicator(), store, PeerId.Of(CryptoPrimitives.ExportPublicPoint(identity)), identity,
+            _clock, new SilentLog());
+
+        store.SetQuota(contentV1.Length + 10);
+        await engine.TickAsync([], default);
+
+        // hashV1 est le plus ancien : sans l'épingle sur le dernier manifeste
+        // annoncé, c'est lui qui partirait le premier.
+        Assert.True(store.TryGetSize(hashV1, out _));
         Assert.False(store.TryGetSize(stale, out _));
     }
 

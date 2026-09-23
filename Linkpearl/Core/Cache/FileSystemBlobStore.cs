@@ -110,7 +110,22 @@ public sealed class FileSystemBlobStore : IBlobStore
 
     public int Count => _entries.Count;
 
-    public bool IsReadOnly => _freeSpace(_root) < _settings.MinimumFreeBytes;
+    public bool IsReadOnly
+    {
+        get
+        {
+            try
+            {
+                return _freeSpace(_root) < _settings.MinimumFreeBytes;
+            }
+            catch (Exception e) when (e is IOException or ArgumentException or UnauthorizedAccessException)
+            {
+                // Un chemin UNC où DriveInfo échoue, par exemple : l'espace
+                // est inconnu, ce qui ne doit pas bloquer chaque écriture.
+                return false;
+            }
+        }
+    }
 
     public string PathFor(BlobHash hash)
         => Path.Combine(BlobsDirectory, hash.CacheLevel1, hash.CacheLevel2, hash.ToHex());

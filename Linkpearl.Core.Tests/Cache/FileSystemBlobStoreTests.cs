@@ -373,6 +373,21 @@ public sealed class FileSystemBlobStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Un_espace_libre_illisible_ne_bloque_pas_les_ecritures()
+    {
+        // Un chemin UNC où DriveInfo échoue ne doit pas faire échouer chaque
+        // écriture : l'espace inconnu ne bloque pas, il ne se contente que de
+        // ne rien afficher.
+        var store = new FileSystemBlobStore(
+            _root, new CacheSettings(), new FakeClock(), _ => throw new IOException("chemin illisible"));
+
+        Assert.False(store.IsReadOnly);
+
+        var result = await PutAsync(store, Bytes("ça passe quand même"));
+        Assert.True(result.Accepted);
+    }
+
+    [Fact]
     public async Task L_index_ne_fait_pas_perdre_un_blob_publie_apres_la_derniere_eviction()
     {
         // EvictToAsync écrit l'index même sans rien évincer. Tout ce qui est

@@ -282,15 +282,23 @@ public sealed class SyncEngine : IAsyncDisposable
 
         var ours = await _local.CurrentAsync(ct).ConfigureAwait(false);
 
+        // Notre apparence peut changer entre cet appel et celui qui a
+        // annoncé _announcedManifest : un pair peut encore être en train
+        // d'en télécharger les blobs, épinglés ici pour ne pas les lui
+        // couper sous le pied.
         var pinned = PinnedBlobs.Of(
             _runtimes.Values
                 .SelectMany(runtime => new[] { runtime.AppliedValue, runtime.Exchange?.View.Manifest })
-                .Append(ours));
+                .Append(ours)
+                .Append(_announcedManifest));
 
         var before = _store.TotalBytes;
         await _store.EvictToAsync(_store.EvictionTarget, pinned, ct).ConfigureAwait(false);
 
-        _log.Info($"cache au-delà du quota : {(before - _store.TotalBytes) / (1024 * 1024)} Mo libérés.");
+        var freed = before - _store.TotalBytes;
+
+        if (freed > 0)
+            _log.Info($"cache au-delà du quota : {freed / (1024 * 1024)} Mo libérés.");
     }
 
     /// <summary>Aligne les runtimes sur le carnet : un pair actif, un runtime.</summary>
