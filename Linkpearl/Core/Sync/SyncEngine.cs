@@ -555,7 +555,7 @@ public sealed class SyncEngine : IAsyncDisposable
     {
         try
         {
-            var extrasPosed = await _applicator.ApplyAsync(id, target, manifest, _life.Token).ConfigureAwait(false);
+            var extrasPosed = await _applicator.ApplyAsync(id, target, manifest, SessionToken(runtime)).ConfigureAwait(false);
 
             runtime.AppliedOn = target;
             RecordApplied(runtime, manifest, hash, extrasPosed);
@@ -596,7 +596,7 @@ public sealed class SyncEngine : IAsyncDisposable
     {
         try
         {
-            var extrasPosed = await _applicator.ApplyExtrasAsync(id, target, manifest.ExtrasOrNone, change, _life.Token).ConfigureAwait(false);
+            var extrasPosed = await _applicator.ApplyExtrasAsync(id, target, manifest.ExtrasOrNone, change, SessionToken(runtime)).ConfigureAwait(false);
 
             RecordApplied(runtime, manifest, hash, extrasPosed);
 
@@ -655,11 +655,43 @@ public sealed class SyncEngine : IAsyncDisposable
     }
 
     /// <summary>Referme tout ce qui concerne un pair, y compris ce qui est à l'écran.</summary>
+    /// <summary>
+    /// Le jeton d'une application : celui de la session, pas celui du moteur.
+    /// </summary>
+    /// <remarks>
+    /// Une application peut attendre jusqu'à dix secondes qu'un personnage
+    /// finisse de se charger. Une pause dans cette fenêtre doit l'interrompre,
+    /// et c'est la session qu'une pause ferme.
+    /// </remarks>
+    private CancellationToken SessionToken(Runtime runtime) => runtime.Life?.Token ?? _life.Token;
+
     private async Task TearDownAsync(PeerId id, Runtime runtime, CancellationToken ct)
     {
+        // Relevé avant d'annuler, et non après : l'annulation exécute sur-le-champ
+        // la suite de l'application, qui aurait l'air achevée au moment de
+        // vérifier. Vu par le test de pause.
+        var interrupted = runtime.Work is { IsCompleted: false };
+
         runtime.Life?.Cancel();
 
-        if (runtime.AppliedOn is not null)
+        // Une application en cours est annulée par ce qui précède, puis
+        // attendue : sans cela, elle finissait après le démontage, sur un pair
+        // oublié, et ce qu'elle posait restait jusqu'au déchargement du plugin.
+        // Elle a pu poser une partie avant l'annulation, d'où le retrait même
+        // si rien n'est noté comme posé.
+        if (interrupted)
+        {
+            try
+            {
+                await runtime.Work!.ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // Déjà journalisé par la tâche elle-même.
+            }
+        }
+
+        if (runtime.AppliedOn is not null || interrupted)
         {
             try
             {

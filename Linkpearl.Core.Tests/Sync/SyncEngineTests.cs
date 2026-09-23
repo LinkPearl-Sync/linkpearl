@@ -161,10 +161,17 @@ internal sealed class RecordingApplicator : IRemoteApplicator
     /// <summary>Faux pour simuler un personnage qui ne finit pas de se charger à temps.</summary>
     public bool ExtrasSucceed { get; set; } = true;
 
-    public Task<bool> ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
+    /// <summary>Tant qu'elle n'est pas levée, une application reste en cours, comme une cible qui charge.</summary>
+    public TaskCompletionSource? Hold { get; set; }
+
+    public async Task<bool> ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct)
     {
         Applied.Add((peer, target, manifest));
-        return Task.FromResult(ExtrasSucceed);
+
+        if (Hold is { } hold)
+            await hold.Task.WaitAsync(ct);
+
+        return ExtrasSucceed;
     }
 
     public List<(PeerId Peer, CharacterExtras Extras, ExtrasChange Change)> ExtrasApplied { get; } = [];
@@ -488,6 +495,32 @@ public sealed class SyncEngineTests : IDisposable
         Assert.Single(world.BobApplicator.Applied);
         Assert.True(world.BobApplicator.ExtrasApplied[0].Change.Honorific);
         Assert.False(world.BobApplicator.ExtrasApplied[0].Change.CustomizePlus);
+    }
+
+    [Fact]
+    public async Task Une_pause_pendant_une_application_retire_ce_qui_se_posait()
+    {
+        // Relevé en relecture : l'application attend désormais que le personnage
+        // soit chargé, jusqu'à dix secondes. Une pause dans cette fenêtre ne
+        // retirait rien, et l'apparence restait jusqu'au déchargement du plugin.
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        world.BobApplicator.Hold = new TaskCompletionSource();
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'application n'a jamais commencé : " + world.Describe());
+
+        world.BobBook.SetPaused(world.AliceId, true);
+
+        for (var i = 0; i < 5 && world.BobApplicator.Removed.Count == 0; i++)
+        {
+            await world.TickAsync([], sees);
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(world.AliceId, Assert.Single(world.BobApplicator.Removed));
     }
 
     [Fact]
