@@ -55,7 +55,7 @@ internal sealed class NearbyPage(
         // Épinglée à la première rencontre, l'empreinte est ce qui relie un
         // joueur visible à une entrée du carnet. Un pair jamais rencontré n'en a
         // pas encore : on proposera le pairage, et le carnet refusera le doublon.
-        var known = pairing.Book.All
+        var known = pairing.Book.Listed
             .Where(pair => pair.PinnedFingerprint is not null)
             .Select(pair => pair.PinnedFingerprint!.Value)
             .ToHashSet();

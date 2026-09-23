@@ -31,7 +31,7 @@ internal sealed class PairsPage(
     /// <summary>Le pair dont le retrait attend un second clic, et jusqu'à quand.</summary>
     private (PeerId Id, DateTime Until)? _confirming;
 
-    public int Count => pairing.Book.All.Count;
+    public int Count => pairing.Book.Listed.Count;
 
     public void Draw()
     {
@@ -39,7 +39,7 @@ internal sealed class PairsPage(
         Text.Small("Ce que chacun vous montre, et où en est le transfert.");
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-        var pairs = pairing.Book.All.ToList();
+        var pairs = pairing.Book.Listed;
 
         if (pairs.Count == 0)
         {

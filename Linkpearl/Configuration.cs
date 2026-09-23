@@ -77,6 +77,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Un badge aux pieds des pairs dont l'apparence arrive ou se fait attendre.</summary>
     public bool ShowTransferBadges { get; set; } = true;
 
+    /// <summary>Un glyphe coloré à droite du nom des joueurs qui utilisent Linkpearl.</summary>
+    public bool ShowNameplateGlyphs { get; set; } = true;
+
     /// <summary>
     /// Brider l'envoi pour préserver le ping.
     /// </summary>

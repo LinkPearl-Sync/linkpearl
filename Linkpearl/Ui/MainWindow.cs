@@ -90,6 +90,16 @@ public sealed class MainWindow : ThemedWindow
         };
     }
 
+    /// <summary>Vrai quand la page des demandes est à l'écran.</summary>
+    public bool ShowsRequests => IsOpen && _shell.ActiveId == "requests";
+
+    /// <summary>Ouvre la fenêtre sur la page des demandes.</summary>
+    public void OpenRequests()
+    {
+        IsOpen = true;
+        _shell.Navigate("requests");
+    }
+
     /// <summary>Le shell peint bord à bord, sans marge de fenêtre.</summary>
     protected override bool Chromeless => true;
 

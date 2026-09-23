@@ -32,13 +32,14 @@ public sealed class PairBookStore(string path)
     /// <c>Rendezvous</c> vient en dernier et vaut null à l'absence, ce que la
     /// désérialisation d'un enregistrement positionnel donne naturellement.
     /// <c>Receive</c> suit la même règle : absent d'un carnet ancien, il vaut
-    /// tout accepter, comme un pair qu'on vient d'ajouter.
+    /// tout accepter, comme un pair qu'on vient d'ajouter. <c>RevokedAt</c>
+    /// aussi : un carnet ancien n'a aucun retrait en attente.
     /// </remarks>
     private sealed record Dto(
         string Id, string? PublicKey, string PairSecret, string DisplayName, string? RendezvousHost,
         int Trust, int Permissions, int Policy, bool Paused,
         long PairedAt, long? LastSeenAt, string? PinnedFingerprint,
-        string[]? Rendezvous = null, int? Receive = null);
+        string[]? Rendezvous = null, int? Receive = null, long? RevokedAt = null);
 
     private const int ReceiveAnimations = 1;
     private const int ReceiveVfx = 2;
@@ -121,7 +122,8 @@ public sealed class PairBookStore(string path)
             record.LastSeenAt?.ToUnixTimeSeconds(),
             record.PinnedFingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null,
             record.Rendezvous.Select(place => place.ToString()).ToArray(),
-            ToBits(record.Receive)));
+            ToBits(record.Receive),
+            record.RevokedAt?.ToUnixTimeSeconds()));
 
         WritePlain(JsonSerializer.SerializeToUtf8Bytes(dtos.ToList()));
     }
@@ -152,6 +154,7 @@ public sealed class PairBookStore(string path)
                 Receive = FromBits(dto.Receive),
                 PairedAt = DateTimeOffset.FromUnixTimeSeconds(dto.PairedAt),
                 LastSeenAt = dto.LastSeenAt is { } seen ? DateTimeOffset.FromUnixTimeSeconds(seen) : null,
+                RevokedAt = dto.RevokedAt is { } revoked ? DateTimeOffset.FromUnixTimeSeconds(revoked) : null,
                 PinnedFingerprint = dto.PinnedFingerprint is { } print
                     ? PlayerFingerprint.FromBytes(Convert.FromHexString(print))
                     : null,

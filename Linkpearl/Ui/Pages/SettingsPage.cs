@@ -101,6 +101,32 @@ internal sealed class SettingsPage(
         Text.Wrapped(
             "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
           + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        var glyphs = configuration.ShowNameplateGlyphs;
+
+        if (ImGui.Checkbox("Glyphe à côté du nom##nameplate_glyphs", ref glyphs))
+        {
+            configuration.ShowNameplateGlyphs = glyphs;
+            configuration.Save();
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        Text.Wrapped("Un glyphe coloré à droite du nom des joueurs qui utilisent Linkpearl :");
+
+        Legend(NameplateMark.Online, "pairé et connecté");
+        Legend(NameplateMark.Available, "utilise Linkpearl, pas encore pairé");
+        Legend(NameplateMark.Requesting, "vous a envoyé une demande de pairage");
+        Legend(NameplateMark.Offline, "pairé, hors ligne ou en pause");
+        Legend(NameplateMark.Trouble, "pairé, mais quelque chose a échoué : voir le carnet");
+    }
+
+    private static void Legend(NameplateMark mark, string meaning)
+    {
+        Feedback.StatusDot(NameplateGlyphs.ColorOf(mark));
+        ImGui.SameLine();
+        Text.Small(meaning);
     }
 
     private void DrawUpload()

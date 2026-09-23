@@ -1,4 +1,3 @@
-using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.ContextMenu;
@@ -28,16 +27,16 @@ namespace Linkpearl;
 /// Le plugin n'est qu'une coquille autour de <c>Core</c> : il fournit les
 /// adaptateurs Dalamud et l'interface, et ne porte aucune logique. Tout ce qui
 /// décide se teste sous Linux, sans le jeu.
-///
-/// À ce stade (jalon 1) il n'y a ni réseau, ni pair, ni interface : seulement la
-/// boucle locale qui lève les inconnues côté jeu.
 /// </remarks>
 public sealed class Plugin : IDalamudPlugin
 {
     /// <summary>
+    /// Ouvre la fenêtre, rien d'autre : tout le reste passe par l'interface.
+    /// </summary>
+    /// <remarks>
     /// Le jeu intercepte « /linkpearl » avant Dalamud : c'est une commande de
     /// chat native. Toute commande choisie ici doit être vérifiée en jeu.
-    /// </summary>
+    /// </remarks>
     private const string Command = "/lpearl";
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
@@ -51,6 +50,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IDtrBar                 DtrBar          { get; private set; } = null!;
     [PluginService] internal static IGameGui                GameGui         { get; private set; } = null!;
+    [PluginService] internal static INamePlateGui           NamePlates      { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly PenumbraIpc _penumbra;
@@ -102,9 +102,11 @@ public sealed class Plugin : IDalamudPlugin
     private readonly MainWindow _window;
     private readonly StatusBarEntry _statusBar;
     private readonly TransferOverlay _overlay;
+    private readonly NameplateGlyphs _nameplates;
     private readonly ExtrasIpc _extras;
     private readonly TransientCapture _transients;
     private long _statusBarDueAt;
+    private long _nameplatesDueAt;
     private readonly Configuration _configuration;
     private readonly SystemClock _clock = new();
     private SyncEngineSettings _engineSettings = new();
@@ -125,7 +127,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         var penumbra  = _penumbra  = new PenumbraIpc(PluginInterface);
         var glamourer = _glamourer = new GlamourerIpc(PluginInterface);
-        _selfLoop = new SelfLoop(penumbra, glamourer, Framework, Log);
+        _selfLoop = new SelfLoop(penumbra, glamourer, Log);
 
         _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
@@ -243,11 +245,11 @@ public sealed class Plugin : IDalamudPlugin
             _discovery,
             at => RunSafely(() => DiscoverAsync(at)),
             player => RunSafely(() => RequestPairAsync(player)),
-            request => RunSafely(() => AcceptAsync(request)),
+            Accept,
             Decline,
-            (id, paused) => Report(_pairing.SetPaused(id, paused)),
-            id => { _engine?.Reapply(id); Report("réapplication demandée."); },
-            id => Report(_pairing.Remove(id)),
+            (id, paused) => _pairing.SetPaused(id, paused),
+            id => _engine?.Reapply(id),
+            id => _pairing.Remove(id),
             SetUploadLimited,
             () => GlobalReceive,
             SetGlobalReceive,
@@ -262,6 +264,8 @@ public sealed class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened += OnMenuOpened;
 
         _windows.AddWindow(_window);
+        _windows.AddWindow(new RequestToasts(
+            _presence, _state, () => _window.ShowsRequests, _window.OpenRequests, Accept, Decline));
 
         _statusBar = new StatusBarEntry(DtrBar, Open);
         Framework.Update += UpdateStatusBar;
@@ -270,6 +274,9 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update += UpdateOverlay;
         PluginInterface.UiBuilder.Draw += _overlay.Draw;
 
+        _nameplates = new NameplateGlyphs(NamePlates);
+        Framework.Update += UpdateNameplates;
+
         PluginInterface.UiBuilder.Draw += _windows.Draw;
         PluginInterface.UiBuilder.OpenMainUi += Open;
         PluginInterface.UiBuilder.OpenConfigUi += Open;
@@ -277,12 +284,12 @@ public sealed class Plugin : IDalamudPlugin
         _ = Task.Run(() => RefreshLoopAsync(_shutdown.Token), _shutdown.Token);
         _ = Task.Run(() => SyncLoopAsync(_shutdown.Token), _shutdown.Token);
 
-        Commands.AddHandler(Command, new CommandInfo(OnCommand)
+        Commands.AddHandler(Command, new CommandInfo((_, _) => Open())
         {
-            HelpMessage = "capture | capture force | apply | revert",
+            HelpMessage = "Ouvre la fenêtre de Linkpearl.",
         });
 
-        Report($"chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
+        Log.Information($"Chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
 
         // Rattrapage d'une session précédente : un rechargement ou un plantage a
         // pu laisser une collection affectée au personnage, que plus rien en
@@ -290,7 +297,7 @@ public sealed class Plugin : IDalamudPlugin
         if (_selfLoop.HasLeftovers())
         {
             Framework.RunOnFrameworkThread(_selfLoop.Revert);
-            Report("une collection d'une session précédente a été retirée.");
+            Log.Information("Une collection d'une session précédente a été retirée.");
         }
 
         Framework.RunOnFrameworkThread(() =>
@@ -298,15 +305,18 @@ public sealed class Plugin : IDalamudPlugin
             var left = _applicator.CleanLeftovers();
 
             if (left > 0)
-                Report($"{left} collection(s) de pair d'une session précédente ont été retirées.");
+                Log.Information($"{left} collection(s) de pair d'une session précédente ont été retirées.");
         });
     }
 
-    /// <summary>Ajoute « réappliquer » au menu d'un personnage appairé.</summary>
+    /// <summary>
+    /// Ajoute au menu d'un personnage ce que Linkpearl peut faire avec lui :
+    /// réappliquer s'il est pairé, le pairage s'il peut l'être.
+    /// </summary>
     /// <remarks>
-    /// Seulement pour un personnage du carnet : proposer l'entrée à tout le
-    /// monde inviterait à cliquer pour rien, et dirait à qui regarde par-dessus
-    /// l'épaule que le plugin est là.
+    /// Rien pour les autres : proposer l'entrée à tout le monde inviterait à
+    /// cliquer pour rien, et dirait à qui regarde par-dessus l'épaule que le
+    /// plugin est là.
     /// </remarks>
     private void OnMenuOpened(IMenuOpenedArgs args)
     {
@@ -318,23 +328,77 @@ public sealed class Plugin : IDalamudPlugin
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        var fingerprint = PlayerFingerprint.Of(
-            DalamudObjectSource.Normalize(name), (ushort)player.HomeWorld.RowId);
+        var world = (ushort)player.HomeWorld.RowId;
+        var fingerprint = PlayerFingerprint.Of(DalamudObjectSource.Normalize(name), world);
 
-        if (_pairing.Book.All.Any(pair => pair.PinnedFingerprint == fingerprint) is false)
-            return;
+        // L'empreinte annoncée compte autant que l'épinglée : un pair ajouté
+        // avant que l'épinglage se fasse à l'acceptation n'a que la première.
+        var paired = _pairing.Book.Listed.Any(pair => pair.PinnedFingerprint == fingerprint)
+                  || (_engine?.Statuses ?? []).Any(status => status.View.Fingerprint == fingerprint);
 
-        args.AddMenuItem(new MenuItem
+        if (paired)
         {
-            Name = "Linkpearl : réappliquer",
+            args.AddMenuItem(new MenuItem
+            {
+                Name = "Linkpearl : réappliquer",
+                PrefixChar = 'L',
+                PrefixColor = 541,
+                OnClicked = _ => _engine?.Reapply(fingerprint),
+            });
+
+            return;
+        }
+
+        if (PairingMenuItem(name, world, fingerprint) is { } item)
+            args.AddMenuItem(item);
+    }
+
+    /// <summary>
+    /// L'entrée de pairage, pour un joueur que la page « Autour de vous »
+    /// listerait comme « à pairer ».
+    /// </summary>
+    /// <remarks>
+    /// Si c'est lui qui a demandé, l'entrée accepte : lui renvoyer une demande
+    /// croiserait la sienne au lieu de conclure.
+    /// </remarks>
+    private MenuItem? PairingMenuItem(string name, ushort world, PlayerFingerprint fingerprint)
+    {
+        var incoming = _presence.RequestCount == 0
+            ? null
+            : _presence.PeekRequests().FirstOrDefault(request =>
+                  request.WorldId == world
+               && string.Equals(request.CharacterName, name, StringComparison.OrdinalIgnoreCase));
+
+        if (incoming is not null)
+        {
+            return new MenuItem
+            {
+                Name = "Linkpearl : accepter le pairage",
+                PrefixChar = 'L',
+                PrefixColor = 541,
+                OnClicked = _ => Accept(incoming),
+            };
+        }
+
+        // Seulement un joueur qui se signale : une demande déposée dans la
+        // boîte de quelqu'un qui n'utilise pas le plugin n'arriverait jamais.
+        if (_presence.Detected.ContainsKey(fingerprint) is false)
+            return null;
+
+        // L'instantané fournit le NearbyPlayer qu'attend la demande ; un joueur
+        // tout juste arrivé n'y est pas encore, et l'entrée attend le suivant.
+        if (_state.Nearby.FirstOrDefault(nearby => nearby.Fingerprint == fingerprint) is not { } target)
+            return null;
+
+        var sent = _presence.PendingOutgoing.ContainsKey(fingerprint);
+
+        return new MenuItem
+        {
+            Name = sent ? "Linkpearl : renvoyer la demande de pairage" : "Linkpearl : demander le pairage",
             PrefixChar = 'L',
             PrefixColor = 541,
-            OnClicked = _ =>
-            {
-                _engine?.Reapply(fingerprint);
-                Report($"réapplication demandée pour {name}.");
-            },
-        });
+            OnClicked = _ => RunSafely(() => RequestPairAsync(target)),
+        };
     }
 
     /// <summary>Reprend le témoin des collections de l'emplacement précédent.</summary>
@@ -396,7 +460,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void TakeCharacter(ulong contentId)
     {
-        var root = CharacterStorage.Prepare(_root, contentId, _legacyRoot, Report);
+        var root = CharacterStorage.Prepare(_root, contentId, _legacyRoot, message => Log.Information(message));
 
         _pairing.Bind(root);
         _transients.Attach(root);
@@ -411,9 +475,18 @@ public sealed class Plugin : IDalamudPlugin
             _appearance, _applicator, _cache, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
             new PluginLogSink(Log, "moteur"), _engineSettings);
 
-        var pairs = _pairing.Book.All.Count;
+        // Le moteur a déjà retiré l'entrée du carnet : il reste à l'écrire, et
+        // à dire pourquoi une ligne vient de disparaître de la liste.
+        _engine.PairEnded += pair =>
+        {
+            _pairing.Save();
+            Report($"{pair.DisplayName} a mis fin au pairage.");
+        };
+        _engine.RevocationDelivered += _ => _pairing.Save();
 
-        Report(pairs is 0
+        var pairs = _pairing.Book.Listed.Count;
+
+        Log.Information(pairs is 0
             ? $"identité de ce personnage : {_pairing.Id}. Aucun pair pour l'instant."
             : $"identité de ce personnage : {_pairing.Id}. {pairs} pair(s) au carnet.");
     }
@@ -424,6 +497,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _engine = null;
         _pairing.Unbind();
+        _presence.ForgetRequests();
         _transients.Attach(null);
 
         if (engine is null)
@@ -448,86 +522,7 @@ public sealed class Plugin : IDalamudPlugin
     private static string Describe((int Major, int Minor)? version)
         => version is { } v ? $"{v.Major}.{v.Minor}" : "absent";
 
-    private void OnCommand(string _, string arguments)
-    {
-        switch (arguments.Trim().ToLowerInvariant())
-        {
-            case "capture":       RunSafely(() => CaptureAsync(force: false)); break;
-            case "capture force": RunSafely(() => CaptureAsync(force: true));  break;
-            case "invite":        RunSafely(InviteAsync);                      break;
-            case "check":         RunSafely(CheckAsync);                       break;
-            case "pairs":         ShowPairs();                                 break;
-            case "id":
-                Report(_pairing.Id is { } id
-                    ? $"votre identifiant sur ce personnage : {id}"
-                    : "connectez-vous d'abord : l'identité appartient au personnage.");
-                break;
-            case "":              Open();                                      break;
-            case "diag":          RunSafely(DiagnoseAsync);                    break;
-            case "unlock":        RunSafely(UnlockAsync);                      break;
-            case "announce":      RunSafely(AnnounceAsync);                    break;
-            case "sync":          ShowSync();                                  break;
-            case "presence":      ShowPresence();                              break;
-            case "rebuild":       _appearance.Rebuild(); Report("apparence en cours de reconstruction."); break;
-            case "apply":     RunSafely(ApplyAsync);                        break;
-            case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
-            default:
-                if (arguments.StartsWith("rdv ", StringComparison.OrdinalIgnoreCase))
-                {
-                    SetRendezvous(arguments[4..].Trim());
-                    break;
-                }
-
-                if (arguments.StartsWith("pair ", StringComparison.OrdinalIgnoreCase))
-                {
-                    AddPair(arguments[5..].Trim());
-                    break;
-                }
-
-                if (arguments.StartsWith("unpair ", StringComparison.OrdinalIgnoreCase))
-                {
-                    Report(_pairing.Remove(arguments[7..].Trim()));
-                    break;
-                }
-
-                if (arguments.StartsWith("rename ", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parts = arguments[7..].Trim().Split(' ', 2);
-                    Report(parts.Length == 2
-                        ? _pairing.Rename(parts[0], parts[1])
-                        : "usage : /lpearl rename <ancien> <nouveau>");
-                    break;
-                }
-
-                Report("invite | pair <nom> | check | pairs | rename <a> <b> | unpair <nom>");
-                Report("rdv <hôte> | id | announce | sync | presence | rebuild | capture | apply | revert | diag | unlock");
-                Report("capture | capture force | apply | revert");
-                break;
-        }
-    }
-
     private void Open() => _window.IsOpen = true;
-
-    /// <summary>Dit ce que le plugin a laissé sur le personnage, s'il a laissé quelque chose.</summary>
-    private async Task DiagnoseAsync()
-    {
-        var report = await Framework.RunOnFrameworkThread(_selfLoop.Diagnose).ConfigureAwait(false);
-        Report(report);
-        Log.Information($"Diagnostic Linkpearl : {report}");
-    }
-
-    /// <summary>Retire toute mainmise sur Glamourer, sans toucher à l'apparence.</summary>
-    private async Task UnlockAsync()
-    {
-        var released = await Framework.RunOnFrameworkThread(_selfLoop.UnlockGlamourer).ConfigureAwait(false);
-
-        Report(released switch
-        {
-            < 0 => "Glamourer n'a pas répondu.",
-            0 => "aucun verrou de notre part : Linkpearl ne tenait rien.",
-            _ => $"{released} verrou(x) relâché(s).",
-        });
-    }
 
     /// <summary>
     /// Tient à jour ce que l'interface affiche.
@@ -654,7 +649,7 @@ public sealed class Plugin : IDalamudPlugin
             return;
 
         _statusBarDueAt = now + 1000;
-        _statusBar.Update(_state.Nearby, _pairing.Book.All);
+        _statusBar.Update(_state.Nearby, _pairing.Book.Listed, _presence.RequestCount);
 
         RemindBackup();
     }
@@ -669,7 +664,7 @@ public sealed class Plugin : IDalamudPlugin
     /// </remarks>
     private void RemindBackup()
     {
-        if (_configuration.BackupReminded || _pairing.Book.All.Count == 0)
+        if (_configuration.BackupReminded || _pairing.Book.Listed.Count == 0)
             return;
 
         _configuration.BackupReminded = true;
@@ -701,6 +696,28 @@ public sealed class Plugin : IDalamudPlugin
         => _overlay.Update(
             _configuration.ShowTransferBadges, _engine?.Statuses ?? [], _state.Nearby, _pairing.Book);
 
+    /// <summary>
+    /// Recalcule les glyphes des plaques de nom, quatre fois par seconde.
+    /// </summary>
+    /// <remarks>
+    /// Pas à chaque image comme les badges : la plaque suit le personnage
+    /// d'elle-même, et ce qu'elle affiche ne change qu'au rythme de l'instantané
+    /// des joueurs visibles et des états du moteur.
+    /// </remarks>
+    private void UpdateNameplates(IFramework framework)
+    {
+        var now = Environment.TickCount64;
+
+        if (now < _nameplatesDueAt)
+            return;
+
+        _nameplatesDueAt = now + 250;
+        _nameplates.Update(
+            _configuration.ShowNameplateGlyphs, _state.Nearby, _pairing.Book.Listed, _engine?.Statuses ?? [],
+            [.. _presence.Detected.Keys],
+            _presence.RequestCount == 0 ? [] : _presence.PeekRequests());
+    }
+
     private TransientCategories GlobalReceive => _engineSettings.Receive;
 
     private void SetGlobalReceive(TransientCategories receive)
@@ -720,7 +737,7 @@ public sealed class Plugin : IDalamudPlugin
         // Le moteur voit le changement au tic suivant et redemande le
         // manifeste : rien d'autre à faire ici.
         if (_pairing.SetReceive(id, receive) is { Length: > 0 } failure)
-            Report(failure);
+            Log.Warning($"Réglage de réception refusé : {failure}");
     }
 
     private void SetUploadLimited(bool limited)
@@ -834,7 +851,6 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             Tell(outcome.Message, failed: outcome.Restored is false);
-            Report(outcome.Message);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -896,67 +912,6 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    /// <summary>
-    /// Pourquoi on voit, ou ne voit pas, les joueurs d'à côté.
-    /// </summary>
-    /// <remarks>
-    /// Chaque ligne oppose ce que nous ouvrons à ce que nous demandons : c'est
-    /// la seule façon de distinguer une place où personne n'utilise le plugin
-    /// d'une boîte ouverte sous une adresse que les autres ne calculent pas.
-    /// </remarks>
-    private void ShowPresence()
-    {
-        foreach (var line in _presence.Describe(_state.Self?.Fingerprint))
-            Report(line);
-
-        var nearby = _state.Nearby;
-
-        if (nearby.Count == 0)
-        {
-            Report("aucun joueur visible autour de vous.");
-            return;
-        }
-
-        Report($"{nearby.Count} joueur(s) visible(s), et la boîte que nous leur calculons :");
-
-        foreach (var player in nearby.Take(8))
-        {
-            var box = MailboxAddress.Of(player.Fingerprint, new SystemClock().UtcNow);
-            var seen = _presence.Detected.ContainsKey(player.Fingerprint);
-
-            Report($"  {player.Display} : {box}{(seen ? " (détecté)" : "")}");
-        }
-    }
-
-    /// <summary>Ce que le moteur fait, pair par pair.</summary>
-    private void ShowSync()
-    {
-        Report($"apparence annoncée : {_appearance.Description}{(_appearance.Building ? " (en construction)" : "")}");
-
-        var statuses = _engine?.Statuses ?? [];
-
-        if (statuses.Count == 0)
-        {
-            Report("aucun pair actif.");
-            return;
-        }
-
-        foreach (var status in statuses)
-        {
-            var view = status.View;
-
-            var avancement = status.Applied ? "posée"
-                           : view.Ready ? "prête"
-                           : view.MissingBytes > 0
-                                ? $"{view.ReceivedBytes / 1024 / 1024} / {view.MissingBytes / 1024 / 1024} Mo"
-                                : "rien à recevoir";
-
-            Report($"{status.DisplayName} : {status.State}, {avancement}"
-                 + $"{(status.FingerprintDisputed ? ", empreinte inattendue" : "")}"
-                 + $"{(status.LastFailure is { } failure ? $", {failure}" : "")}");
-        }
-    }
-
     private async Task RequestPairAsync(NearbyPlayer target)
     {
         if (_state.Self is not { } self)
@@ -968,6 +923,14 @@ public sealed class Plugin : IDalamudPlugin
         Report(await _presence.RequestPairAsync(target, self, _shutdown.Token).ConfigureAwait(false));
     }
 
+    private void Accept(IncomingRequest request)
+    {
+        // Retirée avant tout await : la réponse part en tâche de fond, et un
+        // second clic à l'image suivante accepterait sinon deux fois.
+        _presence.Forget(request);
+        RunSafely(() => AcceptAsync(request));
+    }
+
     private async Task AcceptAsync(IncomingRequest request)
     {
         if (_state.Self is not { } self)
@@ -976,184 +939,15 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        _presence.TryTakeRequest(out _);
-
         var message = await _presence.AcceptAsync(request, self, _shutdown.Token).ConfigureAwait(false);
         Report(_pairing.AddFromRequest(request));
         Report(message);
     }
 
-    private void Decline(IncomingRequest request)
-    {
-        _presence.TryTakeRequest(out _);
-        Report($"{request.CharacterName} refusé.");
-    }
-
-    private void SetRendezvous(string host)
-    {
-        if (string.IsNullOrWhiteSpace(host))
-        {
-            Report($"rendez-vous actuel : {(_configuration.RendezvousHost is "" ? "aucun" : _configuration.RendezvousHost)}");
-            return;
-        }
-
-        _configuration.RendezvousHost = host;
-        _configuration.Save();
-        Report($"rendez-vous réglé sur {host}. C'est lui qui figurera dans vos invitations.");
-    }
-
-    /// <summary>Dépose une invitation et met le ticket dans le presse-papiers.</summary>
-    private async Task InviteAsync()
-    {
-        var (ticket, rejection) = await _pairing.CreateInvitationAsync(_shutdown.Token).ConfigureAwait(false);
-
-        if (ticket is null)
-        {
-            Report($"invitation impossible : {rejection}");
-            return;
-        }
-
-        Report($"ticket d'invitation : {ticket}");
-
-        if (TryCopyToClipboard(ticket))
-            Report("copié dans le presse-papiers. Valable 24 heures, pour une seule personne.");
-
-        Report("quand la personne l'aura utilisé, faites /lpearl check.");
-        Log.Information($"Ticket d'invitation Linkpearl : {ticket}");
-    }
-
-    /// <summary>Relève les réponses aux invitations déposées.</summary>
-    private async Task CheckAsync()
-        => Report(await _pairing.CollectRepliesAsync(_shutdown.Token).ConfigureAwait(false));
+    private void Decline(IncomingRequest request) => _presence.Forget(request);
 
     /// <summary>
-    /// Met un texte dans le presse-papiers de Windows.
-    /// </summary>
-    /// <remarks>
-    /// Passe par le thread du framework : le presse-papiers d'ImGui appartient
-    /// au contexte de rendu, et y toucher depuis un autre fil planterait le jeu.
-    /// </remarks>
-    private static bool TryCopyToClipboard(string text)
-    {
-        try
-        {
-            Framework.RunOnFrameworkThread(() => ImGui.SetClipboardText(text)).Wait(TimeSpan.FromSeconds(2));
-            return true;
-        }
-        catch (Exception e)
-        {
-            Log.Warning(e, "Copie dans le presse-papiers impossible.");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Ajoute un pair en retirant son ticket, pris dans le presse-papiers.
-    /// </summary>
-    private void AddPair(string arguments)
-    {
-        var name = arguments.Trim();
-
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            Report("usage : copiez le ticket reçu, puis /lpearl pair <nom>");
-            return;
-        }
-
-        var space = name.IndexOf(' ');
-
-        if (space > 0)
-        {
-            var given = name[(space + 1)..].Trim();
-            var who = name[..space].Trim();
-            RunSafely(async () => Report(await _pairing.RedeemAsync(given, who, _shutdown.Token).ConfigureAwait(false)));
-            return;
-        }
-
-        if (TryReadClipboard(out var ticket) is false || string.IsNullOrWhiteSpace(ticket))
-        {
-            Report("presse-papiers vide. Copiez d'abord le ticket qu'on vous a envoyé.");
-            return;
-        }
-
-        RunSafely(async () =>
-            Report(await _pairing.RedeemAsync(ticket.Trim(), name, _shutdown.Token).ConfigureAwait(false)));
-    }
-
-    /// <summary>Lit le presse-papiers, depuis le thread du framework.</summary>
-    private static bool TryReadClipboard(out string text)
-    {
-        var read = string.Empty;
-
-        try
-        {
-            Framework.RunOnFrameworkThread(() => read = ImGui.GetClipboardText()).Wait(TimeSpan.FromSeconds(2));
-        }
-        catch (Exception e)
-        {
-            Log.Warning(e, "Lecture du presse-papiers impossible.");
-            text = string.Empty;
-            return false;
-        }
-
-        text = read;
-        return true;
-    }
-
-    private void ShowPairs()
-    {
-        var pairs = _pairing.Book.All.ToList();
-
-        if (pairs.Count == 0)
-        {
-            Report("carnet vide. Demandez un ticket à quelqu'un, puis /lpearl pair <nom>.");
-            return;
-        }
-
-        foreach (var pair in pairs)
-        {
-            Report($"{pair.DisplayName} : {pair.Trust}"
-                 + $"{(pair.KeyVerified ? ", vérifié" : ", NON VÉRIFIÉ")}"
-                 + $", {pair.Id.ToHex()[..8]}");
-        }
-
-        Report($"{_pairing.PendingInvitations} invitation(s) en attente de réponse.");
-    }
-
-    private async Task AnnounceAsync()
-    {
-        var report = await _pairing.AnnounceAsync(_shutdown.Token).ConfigureAwait(false);
-
-        Report($"{report.Pairs} pairs actifs, {report.Announced} annonces envoyées, {report.Matched} appariés.");
-
-        if (report.Failure is not null)
-            Report($"échec : {report.Failure}");
-    }
-
-    private async Task CaptureAsync(bool force)
-    {
-        var report = await _selfLoop.CaptureAsync(force, _shutdown.Token).ConfigureAwait(false);
-
-        Report($"capture : {report.FileCount} fichiers, {Megabytes(report.TotalBytes)}, "
-             + $"{report.GamePathCount} chemins de jeu.");
-        Report($"manifeste : {report.ManifestBytes / 1024} Ko bruts, "
-             + $"{report.CompressedManifestBytes / 1024} Ko compressés.");
-        Report($"durées : hachage {report.HashMilliseconds} ms, copie vers le cache {report.CopyMilliseconds} ms.");
-        Report($"échanges de fichier non synchronisés en v1 : {report.SwapCount}. "
-             + $"Ressources écartées : {report.SkippedCount}.");
-
-        foreach (var skipped in report.Skipped.Take(5))
-            Log.Information($"écarté : {skipped.GamePath} ({skipped.Reason})");
-    }
-
-    private async Task ApplyAsync()
-    {
-        var applied = await _selfLoop.ApplyAsync(_shutdown.Token).ConfigureAwait(false);
-        Report($"appliqué {applied} chemins de jeu depuis le cache.");
-    }
-
-    /// <summary>
-    /// Exécute une tâche déclenchée par une commande, sans jamais laisser une
+    /// Exécute une tâche déclenchée depuis l'interface, sans jamais laisser une
     /// exception se perdre dans un Task oublié.
     /// </summary>
     private void RunSafely(Func<Task> work)
@@ -1165,17 +959,20 @@ public sealed class Plugin : IDalamudPlugin
             }
             catch (Exception e)
             {
-                Log.Error(e, "Commande Linkpearl en échec.");
+                Log.Error(e, "Action Linkpearl en échec.");
                 Report($"échec : {e.Message}");
             }
         }, _shutdown.Token);
 
-    private static string Megabytes(long bytes) => $"{bytes / 1024.0 / 1024.0:F1} Mo";
-
     /// <summary>
-    /// Écrit dans le journal local du joueur, jamais dans le chat du jeu : rien
-    /// de ce que fait ce plugin ne doit partir vers le serveur.
+    /// Dit au joueur ce qui le concerne, dans son chat local : rien de ce que
+    /// fait ce plugin ne doit partir vers le serveur.
     /// </summary>
+    /// <remarks>
+    /// Seulement ce qu'il ne verrait pas autrement : une réponse arrivée pendant
+    /// que la fenêtre était fermée, une action qui a échoué. Le diagnostic va
+    /// au journal de Dalamud.
+    /// </remarks>
     private static void Report(string message) => Chat.Print($"[Linkpearl] {message}");
 
     public void Dispose()
@@ -1196,7 +993,9 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update -= FollowCharacter;
         Framework.Update -= UpdateStatusBar;
         Framework.Update -= UpdateOverlay;
+        Framework.Update -= UpdateNameplates;
         PluginInterface.UiBuilder.Draw -= _overlay.Draw;
+        _nameplates.Dispose();
         _statusBar.Dispose();
 
         // Le moteur d'abord : il retire des pairs ce qu'il leur a posé, et cela

@@ -83,14 +83,6 @@ public sealed class GlamourerIpc : IDisposable
         return ec is GlamourerApiEc.Success ? state : null;
     }
 
-    /// <summary>Applique un état sans le verrouiller.</summary>
-    /// <remarks>
-    /// Clé nulle : l'utilisateur doit pouvoir reprendre la main sur son propre
-    /// personnage depuis l'interface de Glamourer.
-    /// </remarks>
-    public void ApplyStateUnlocked(string base64, int objectIndex)
-        => Apply(base64, objectIndex, key: 0);
-
     /// <summary>Applique l'état d'un pair, verrouillé sous notre clé.</summary>
     /// <remarks>
     /// Verrouillé pour que l'automation de Glamourer chez le receveur n'écrase

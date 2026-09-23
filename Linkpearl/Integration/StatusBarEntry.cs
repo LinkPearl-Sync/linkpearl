@@ -7,7 +7,7 @@ namespace Linkpearl.Integration;
 
 /// <summary>
 /// L'entrée de Linkpearl dans la barre de statut du jeu : le symbole HQ, suivi
-/// du nombre de pairs à portée.
+/// du nombre de pairs à portée, et des demandes en attente entre parenthèses.
 /// </summary>
 /// <remarks>
 /// Le symbole HQ est le glyphe du plugin. Il vient de la police du jeu
@@ -26,39 +26,50 @@ internal sealed class StatusBarEntry : IDisposable
     private static readonly string Glyph = SeIconChar.HighQuality.ToIconString();
 
     private readonly IDtrBarEntry _entry;
-    private int? _shown;
+    private (int Nearby, int Pending)? _shown;
 
     public StatusBarEntry(IDtrBar bar, Action open)
     {
         _entry = bar.Get("Linkpearl");
         _entry.OnClick = _ => open();
-        Show(0);
+        Show(0, 0);
     }
 
-    public void Update(IReadOnlyList<NearbyPlayer> nearby, IEnumerable<PairRecord> pairs)
+    public void Update(IReadOnlyList<NearbyPlayer> nearby, IEnumerable<PairRecord> pairs, int pending)
     {
         var pinned = pairs
             .Where(pair => pair.Trust is not PairTrust.Blocked && pair.PinnedFingerprint is not null)
             .Select(pair => pair.PinnedFingerprint!.Value)
             .ToHashSet();
 
-        Show(nearby.Count(player => pinned.Contains(player.Fingerprint)));
+        Show(nearby.Count(player => pinned.Contains(player.Fingerprint)), pending);
     }
 
-    private void Show(int count)
+    private void Show(int count, int pending)
     {
         // Réécrire le texte à chaque appel marquerait le nœud comme modifié
         // pour rien, et le jeu le recomposerait à chaque fois.
-        if (_shown == count)
+        if (_shown == (count, pending))
             return;
 
-        _shown = count;
-        _entry.Text = $"{Glyph} {count}";
-        _entry.Tooltip = count switch
+        _shown = (count, pending);
+
+        // Rien entre parenthèses sans demande : un « (0) » permanent apprendrait
+        // à ne plus regarder la parenthèse.
+        _entry.Text = pending is 0 ? $"{Glyph} {count}" : $"{Glyph} {count} ({pending})";
+
+        var nearby = count switch
         {
             0 => "Linkpearl : aucun pair à portée",
             1 => "Linkpearl : 1 pair à portée",
             _ => $"Linkpearl : {count} pairs à portée",
+        };
+
+        _entry.Tooltip = pending switch
+        {
+            0 => nearby,
+            1 => $"{nearby}\n1 demande de pairage en attente",
+            _ => $"{nearby}\n{pending} demandes de pairage en attente",
         };
     }
 

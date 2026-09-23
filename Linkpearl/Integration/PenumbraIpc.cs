@@ -27,7 +27,6 @@ public sealed class PenumbraIpc : IDisposable
     private readonly RemoveTemporaryMod _removeMod;
     private readonly DeleteTemporaryCollection _deleteCollection;
     private readonly RedrawObject _redraw;
-    private readonly GetCollectionForObject _collectionForObject;
     private readonly ResolvePlayerPaths _resolvePlayer;
     private readonly IDisposable _redrawn;
     private readonly IDisposable _settings;
@@ -44,7 +43,6 @@ public sealed class PenumbraIpc : IDisposable
         _removeMod         = new RemoveTemporaryMod(pi);
         _deleteCollection  = new DeleteTemporaryCollection(pi);
         _redraw            = new RedrawObject(pi);
-        _collectionForObject = new GetCollectionForObject(pi);
         _resolvePlayer     = new ResolvePlayerPaths(pi);
 
         // Le redessin est le signal qui compte : tout changement de mod
@@ -163,26 +161,4 @@ public sealed class PenumbraIpc : IDisposable
 
     public void Redraw(int objectIndex)
         => _redraw.Invoke(objectIndex, RedrawType.Redraw);
-
-    /// <summary>
-    /// La collection réellement appliquée à un objet.
-    /// </summary>
-    /// <remarks>
-    /// Sert au diagnostic : une collection temporaire oubliée sur le personnage
-    /// du joueur expliquerait qu'un autre plugin le juge dans un état
-    /// inattendu, et il faut pouvoir le constater plutôt que le supposer.
-    /// </remarks>
-    public string DescribeCollection(int objectIndex)
-    {
-        try
-        {
-            var result = _collectionForObject.Invoke(objectIndex);
-            return $"objet valide : {result.ObjectValid}, réglage individuel : {result.IndividualSet}, "
-                 + $"collection : {result.EffectiveCollection.Name} ({result.EffectiveCollection.Id})";
-        }
-        catch (Exception e)
-        {
-            return $"interrogation impossible : {e.Message}";
-        }
-    }
 }

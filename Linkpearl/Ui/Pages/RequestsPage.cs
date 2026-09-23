@@ -16,7 +16,11 @@ internal sealed class RequestsPage(
     PluginState state, PresenceService presence,
     Action<IncomingRequest> accept, Action<IncomingRequest> decline)
 {
-    public int Count => presence.PeekRequests().Count;
+    public int Count => presence.RequestCount;
+
+    /// <summary>La personne qui demande est-elle devant nous ?</summary>
+    public static bool IsVisible(PluginState state, IncomingRequest request)
+        => state.Nearby.Any(player => string.Equals(player.Name, request.CharacterName, StringComparison.Ordinal));
 
     public void Draw()
     {
@@ -38,8 +42,7 @@ internal sealed class RequestsPage(
 
         foreach (var request in requests)
         {
-            var visible = state.Nearby.Any(player =>
-                string.Equals(player.Name, request.CharacterName, StringComparison.Ordinal));
+            var visible = IsVisible(state, request);
 
             using var card = Card.Begin($"request_{request.Id.ToHex()}", accent: Theme.Accent);
 

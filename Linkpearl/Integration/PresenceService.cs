@@ -34,7 +34,12 @@ public sealed class PresenceService : IDisposable
     private readonly IPluginLog _log;
     private readonly IClock _clock;
 
-    private readonly ConcurrentQueue<IncomingRequest> _incoming = new();
+    /// <summary>Les demandes reçues, gardées par <see cref="_gate"/>.</summary>
+    /// <remarks>
+    /// Une liste et non une file : l'utilisateur répond dans l'ordre qu'il
+    /// veut, et c'est la demande cliquée qu'il faut retirer, pas la plus ancienne.
+    /// </remarks>
+    private readonly List<IncomingRequest> _incoming = [];
 
     /// <summary>Les acceptations reçues en réponse à nos propres demandes.</summary>
     private readonly ConcurrentQueue<IncomingRequest> _accepted = new();
@@ -67,12 +72,6 @@ public sealed class PresenceService : IDisposable
         public long OpenedWindow { get; set; }
 
         public string? Failure { get; set; }
-
-        /// <summary>Quand ce service a répondu à une interrogation pour la dernière fois.</summary>
-        public DateTimeOffset? LastAnswer { get; set; }
-
-        /// <summary>Pourquoi la dernière interrogation n'a rien rendu.</summary>
-        public string? LastQueryFailure { get; set; }
 
         public DateTimeOffset NextAttempt { get; set; }
     }
@@ -125,68 +124,39 @@ public sealed class PresenceService : IDisposable
     /// <summary>Les empreintes reconnues comme utilisant le plugin, avec leur fraîcheur.</summary>
     public IReadOnlyDictionary<PlayerFingerprint, DateTimeOffset> Detected => _detected;
 
-    /// <summary>
-    /// Ce que chaque service est en train de faire, en clair.
-    /// </summary>
-    /// <remarks>
-    /// Une détection qui ne trouve personne est indiscernable d'une place vide :
-    /// sans ceci, il n'existe aucun moyen de savoir si la boîte est ouverte, sous
-    /// quelle adresse, et si l'interrogation a seulement eu lieu. C'est ce qui
-    /// manquait le jour où deux personnages côte à côte ne se sont pas vus.
-    /// </remarks>
-    public IReadOnlyList<string> Describe(PlayerFingerprint? self)
+    /// <summary>Le nombre de demandes en attente, sans copier la liste.</summary>
+    public int RequestCount
     {
-        var lines = new List<string>
+        get
         {
-            _configuration.Discoverable
-                ? "se signaler : activé."
-                : "se signaler : DÉSACTIVÉ, personne ne peut vous voir.",
-        };
-
-        var window = MailboxAddress.IndexAt(_clock.UtcNow);
-
-        lines.Add(self is { } me
-            ? $"votre boîte : {MailboxAddress.Of(me, _clock.UtcNow)} (fenêtre {window})"
-            : "votre personnage n'est pas encore connu du plugin.");
-
-        var sessions = Snapshot();
-
-        if (sessions.Count == 0)
-            lines.Add("aucun service de rendez-vous actif dans les réglages.");
-
-        foreach (var session in sessions)
-        {
-            var state = session.Client is null
-                ? $"NON CONNECTÉ ({session.Failure ?? "pas encore tenté"})"
-                : session.OpenedWindow == window
-                    ? $"connecté, boîte ouverte pour la fenêtre {session.OpenedWindow}"
-                    : $"connecté, mais boîte ouverte sous la fenêtre {session.OpenedWindow} au lieu de {window}";
-
-            lines.Add($"{session.At} : {state}");
-
-            // Une connexion en bonne santé dont les interrogations restent sans
-            // réponse a exactement l'air d'une place vide : c'est l'angle mort
-            // qui a coûté la soirée.
-            lines.Add(session.LastQueryFailure is { } why
-                ? $"  interrogations : EN ÉCHEC ({why})"
-                : session.LastAnswer is { } when
-                    ? $"  interrogations : répondues il y a {(int)(_clock.UtcNow - when).TotalSeconds} s"
-                    : "  interrogations : aucune n'a encore abouti");
+            lock (_gate)
+                return _incoming.Count;
         }
-
-        lines.Add($"détectés à la dernière ronde : {_detected.Count}");
-
-        return lines;
     }
 
-    public bool TryTakeRequest(out IncomingRequest? request)
+    public IReadOnlyList<IncomingRequest> PeekRequests()
     {
-        var taken = _incoming.TryDequeue(out var value);
-        request = value;
-        return taken;
+        lock (_gate)
+            return [.. _incoming];
     }
 
-    public IReadOnlyList<IncomingRequest> PeekRequests() => _incoming.ToArray();
+    /// <summary>Retire une demande à laquelle l'utilisateur vient de répondre.</summary>
+    public void Forget(IncomingRequest request)
+    {
+        lock (_gate)
+            _incoming.Remove(request);
+    }
+
+    /// <summary>Oublie toutes les demandes, au changement de personnage.</summary>
+    /// <remarks>
+    /// Une demande est adressée à la boîte d'un personnage : la montrer au
+    /// suivant lui ferait accepter, sous son nom, ce qu'on a proposé à un autre.
+    /// </remarks>
+    public void ForgetRequests()
+    {
+        lock (_gate)
+            _incoming.Clear();
+    }
 
     /// <summary>Une acceptation qui conclut une demande que nous avons envoyée.</summary>
     public bool TryTakeAcceptance(out IncomingRequest? request)
@@ -378,20 +348,9 @@ public sealed class PresenceService : IDisposable
                         .QueryPresenceAsync(addresses, deadline.Token).ConfigureAwait(false);
 
                     if (present is null)
-                    {
-                        lock (_gate)
-                            session.LastQueryFailure = "sans réponse";
-
                         break;
-                    }
 
                     answered = true;
-
-                    lock (_gate)
-                    {
-                        session.LastAnswer = _clock.UtcNow;
-                        session.LastQueryFailure = null;
-                    }
 
                     for (var i = 0; i < batch.Length && i < present.Length; i++)
                         if (present[i])
@@ -400,10 +359,7 @@ public sealed class PresenceService : IDisposable
                 catch (Exception e)
                 {
                     lock (_gate)
-                    {
                         session.Failure = e.Message;
-                        session.LastQueryFailure = e.Message;
-                    }
 
                     _log.Warning(e, $"Interrogation de présence en échec sur {session.At}.");
                     break;
@@ -562,7 +518,8 @@ public sealed class PresenceService : IDisposable
             return;
         }
 
-        _incoming.Enqueue(request);
+        lock (_gate)
+            _incoming.Add(request);
 
         _log.Information($"Demande de pairage reçue de {message.CharacterName}.");
     }
