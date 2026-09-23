@@ -51,10 +51,36 @@ public static class ManifestCodec
             else
                 writer.WriteString("g", manifest.GlamourerState);
 
+            // Une clé par extra présent, et aucune pour les absents : un
+            // manifeste sans extras garde ainsi exactement l'encodage, donc
+            // l'empreinte, qu'il avait avant les intégrations.
+            var extras = manifest.ExtrasOrNone;
+            WriteExtra(writer, "xc", extras.CustomizePlus);
+            WriteExtra(writer, "xh", extras.Heels);
+            WriteExtra(writer, "xt", extras.Honorific);
+            WriteExtra(writer, "xm", extras.Moodles);
+            WriteExtra(writer, "xp", extras.PetNicknames);
+
             writer.WriteEndObject();
         }
 
         return buffer.WrittenSpan.ToArray();
+    }
+
+    private static void WriteExtra(Utf8JsonWriter writer, string key, string? value)
+    {
+        if (value is not null)
+            writer.WriteString(key, value);
+    }
+
+    private static string? ReadExtra(JsonElement root, string key)
+    {
+        if (root.TryGetProperty(key, out var element) is false)
+            return null;
+
+        return element.ValueKind is JsonValueKind.String
+            ? element.GetString()
+            : throw new JsonException($"extra {key} non textuel");
     }
 
     /// <summary>
@@ -242,7 +268,13 @@ public static class ManifestCodec
                 };
             }
 
-            manifest = new CharacterManifest(version, replacements, metaElement.GetString()!, glamourer);
+            var extras = new CharacterExtras(
+                ReadExtra(root, "xc"), ReadExtra(root, "xh"), ReadExtra(root, "xt"),
+                ReadExtra(root, "xm"), ReadExtra(root, "xp"));
+
+            manifest = new CharacterManifest(
+                version, replacements, metaElement.GetString()!, glamourer,
+                extras.IsEmpty ? null : extras);
             rejection = null;
             return true;
         }

@@ -34,9 +34,37 @@ public sealed record CharacterManifest(
     ushort Version,
     IReadOnlyList<FileReplacement> Replacements,
     string MetaManipulations,
-    string? GlamourerState)
+    string? GlamourerState,
+    CharacterExtras? Extras = null)
 {
-    public const ushort CurrentVersion = 1;
+    /// <summary>
+    /// 2 depuis les intégrations : un manifeste peut porter des extras. Un
+    /// manifeste 1 reste lisible, sans extras.
+    /// </summary>
+    public const ushort CurrentVersion = 2;
+
+    public CharacterExtras ExtrasOrNone => Extras ?? CharacterExtras.None;
+}
+
+/// <summary>
+/// Ce que les plugins voisins montrent du personnage, au format natif de chacun.
+/// </summary>
+/// <remarks>
+/// Null veut dire « pas de ce plugin, ou rien à montrer ». Les chaînes sont
+/// opaques pour le noyau, qui n'en vérifie que la forme et la taille : ce sont
+/// les plugins qui leur donnent un sens. Moodles et PetNicknames arrivent déjà
+/// nettoyés de tout identifiant.
+/// </remarks>
+public sealed record CharacterExtras(
+    string? CustomizePlus,
+    string? Heels,
+    string? Honorific,
+    string? Moodles,
+    string? PetNicknames)
+{
+    public static CharacterExtras None { get; } = new(null, null, null, null, null);
+
+    public bool IsEmpty => this == None;
 }
 
 /// <summary>Un fichier écarté à la construction, avec la raison.</summary>

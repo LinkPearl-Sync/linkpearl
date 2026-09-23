@@ -14,9 +14,16 @@ public static class ManifestValidator
 {
     public static bool TryAccept(CharacterManifest manifest, Quotas quotas, out string? rejection)
     {
-        if (manifest.Version != CharacterManifest.CurrentVersion)
+        // 1 : manifeste d'avant les intégrations, toujours lisible, sans extras.
+        if (manifest.Version is not (1 or CharacterManifest.CurrentVersion))
         {
-            rejection = $"version de manifeste inconnue ({manifest.Version}, attendu {CharacterManifest.CurrentVersion})";
+            rejection = $"version de manifeste inconnue ({manifest.Version}, attendu 1 ou {CharacterManifest.CurrentVersion})";
+            return false;
+        }
+
+        if (manifest.Version == 1 && manifest.ExtrasOrNone.IsEmpty is false)
+        {
+            rejection = "manifeste de version 1 portant des extras";
             return false;
         }
 
