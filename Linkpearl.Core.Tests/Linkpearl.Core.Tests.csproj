@@ -9,6 +9,10 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+
+    <!-- Pour vérifier le codec Moodles contre la vraie bibliothèque. Le noyau
+         n'en dépend pas : il décode ce format à la main, dans ses bornes. -->
+    <PackageReference Include="MemoryPack" Version="1.21.4" />
   </ItemGroup>
 
   <!-- Le noyau est compilé par inclusion de sources : référencer le plugin
