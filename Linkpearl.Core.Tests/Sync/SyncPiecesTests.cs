@@ -225,6 +225,53 @@ public class PairBookTests
     }
 
     [Fact]
+    public void Un_pair_retire_quitte_la_liste_mais_reste_a_prevenir()
+    {
+        // Retiré sans prévenir, il nous verrait encore comme pairé : c'est
+        // l'entrée gardée qui permet au moteur de le lui dire.
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
+
+        book.Revoke(code.Id);
+
+        Assert.Empty(book.Listed);
+        Assert.Empty(book.Active);
+        Assert.Equal(code.Id, Assert.Single(book.Revoked).Id);
+    }
+
+    [Fact]
+    public void Un_retrait_jamais_remis_est_oublie_au_bout_d_un_mois()
+    {
+        var clock = new MovableClock();
+        var book = new PairBook(clock);
+        var (code, ours, theirKey) = Invitation();
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
+        book.Revoke(code.Id);
+
+        clock.Advance(TimeSpan.FromDays(29));
+        Assert.Equal(0, book.ForgetStaleRevocations());
+
+        clock.Advance(TimeSpan.FromDays(2));
+        Assert.Equal(1, book.ForgetStaleRevocations());
+        Assert.Null(book.Find(code.Id));
+    }
+
+    [Fact]
+    public void Un_nouveau_pairage_remplace_un_retrait_en_attente()
+    {
+        var book = New();
+        var (code, ours, theirKey) = Invitation();
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
+        book.Revoke(code.Id);
+
+        book.Add(code.Id, theirKey, code.PairingNonce, ours, "Amie", [Place]);
+
+        Assert.Single(book.Active);
+        Assert.Empty(book.Revoked);
+    }
+
+    [Fact]
     public void Un_inconnu_n_est_jamais_autorise()
     {
         using var stranger = CryptoPrimitives.GenerateIdentity();

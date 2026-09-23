@@ -4,6 +4,7 @@ using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
+using Linkpearl.Core.Protocol;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport;
 
@@ -85,6 +86,16 @@ public sealed record SyncEngineSettings
 
     /// <summary>Les animations, VFX et sons acceptés de tous, avant le réglage de chaque pair.</summary>
     public TransientCategories Receive { get; init; } = TransientCategories.All;
+
+    /// <summary>
+    /// Attente d'un pair prévenu de son retrait, avant de réessayer plus tard.
+    /// </summary>
+    /// <remarks>
+    /// Un pair à jour raccroche aussitôt l'avis reçu. Celui qui reste en ligne
+    /// sans rien dire a un client qui ignore l'avis : on referme, et l'attente
+    /// croissante espace les tentatives jusqu'à sa mise à jour.
+    /// </remarks>
+    public TimeSpan RevocationPatience { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>L'état d'un pair, tel que l'interface l'affiche.</summary>
@@ -169,8 +180,20 @@ public sealed class SyncEngine : IAsyncDisposable
         _quotas = quotas ?? Quotas.Default;
     }
 
+    /// <summary>
+    /// Le pair nous a retirés de son carnet, et vient d'être retiré du nôtre.
+    /// </summary>
+    /// <remarks>
+    /// Levé depuis le tic, sur le fil du moteur. L'hôte enregistre le carnet
+    /// et le dit à l'utilisateur, qui sinon verrait une ligne disparaître.
+    /// </remarks>
+    public event Action<PairRecord>? PairEnded;
+
+    /// <summary>Un pair retiré a reçu l'avis, et son entrée a quitté le carnet.</summary>
+    public event Action<PairRecord>? RevocationDelivered;
+
     public IReadOnlyList<PeerStatus> Statuses =>
-        _runtimes.Select(entry => new PeerStatus(
+        _runtimes.Where(entry => entry.Value.Revoked is false).Select(entry => new PeerStatus(
             entry.Key,
             entry.Value.Pair.DisplayName,
             entry.Value.Session?.State ?? PeerSessionState.Disconnected,
@@ -204,6 +227,8 @@ public sealed class SyncEngine : IAsyncDisposable
         try
         {
             await ReconcileBookAsync(ct).ConfigureAwait(false);
+            await FollowEndingsAsync(ct).ConfigureAwait(false);
+            await GiveUpUnansweredNoticesAsync(ct).ConfigureAwait(false);
             await ServeReapplyAsync(ct).ConfigureAwait(false);
             await FollowReceiveChangesAsync(ct).ConfigureAwait(false);
             await AdoptFinishedDialsAsync(ct).ConfigureAwait(false);
@@ -315,19 +340,22 @@ public sealed class SyncEngine : IAsyncDisposable
 
     private async Task ReconcileBookAsync(CancellationToken ct)
     {
-        var active = _book.Active.ToDictionary(pair => pair.Id);
+        // Un pair retiré se joint encore, le temps de le lui dire.
+        var active = _book.Active.Concat(_book.Revoked).ToDictionary(pair => pair.Id);
 
         foreach (var (id, runtime) in _runtimes.ToList())
         {
-            if (active.TryGetValue(id, out var pair))
+            if (active.TryGetValue(id, out var pair) && pair.Trust == runtime.Pair.Trust)
             {
                 runtime.Pair = pair;
                 continue;
             }
 
-            // Mis en pause, bloqué ou supprimé : on débranche et on efface ce
-            // qu'on avait posé. Laisser l'apparence en place ferait de la mise
-            // en pause un bouton sans effet visible.
+            // Mis en pause, bloqué, supprimé ou retiré : on débranche et on
+            // efface ce qu'on avait posé. Laisser l'apparence en place ferait
+            // de la mise en pause un bouton sans effet visible. Un pair retiré
+            // revient au tour suivant, sous une session qui ne sert qu'à le
+            // prévenir : celle-ci portait une apparence, qui doit cesser.
             _log.Info($"{runtime.Pair.DisplayName} : pair retiré des actifs, session fermée.");
             await TearDownAsync(id, runtime, ct).ConfigureAwait(false);
             _runtimes.Remove(id);
@@ -341,6 +369,56 @@ public sealed class SyncEngine : IAsyncDisposable
             // Joignable tout de suite : une reprise de plugin ne doit pas coûter
             // une attente à l'utilisateur.
             _runtimes[id] = new Runtime { Pair = pair, NextAttempt = _clock.UtcNow };
+        }
+    }
+
+    /// <summary>
+    /// Tire les conséquences d'un avis de retrait reçu.
+    /// </summary>
+    /// <remarks>
+    /// L'avis vient d'une session chiffrée, liée à la clé du carnet : seul ce
+    /// pair a pu l'envoyer, et le rendez-vous n'y peut rien. Le retrait est
+    /// donc appliqué sans demander, comme l'autre l'a décidé sans nous.
+    ///
+    /// Reçu d'un pair que nous avions nous-mêmes retiré, c'est que les deux ont
+    /// rompu en même temps : il n'y a plus personne à prévenir.
+    /// </remarks>
+    private async Task FollowEndingsAsync(CancellationToken ct)
+    {
+        foreach (var (id, runtime) in _runtimes.ToList())
+        {
+            if (runtime.EndedByPeer is false)
+                continue;
+
+            await TearDownAsync(id, runtime, ct).ConfigureAwait(false);
+            _runtimes.Remove(id);
+            _book.Remove(id);
+
+            if (runtime.Revoked)
+            {
+                RevocationDelivered?.Invoke(runtime.Pair);
+                continue;
+            }
+
+            _log.Info($"{runtime.Pair.DisplayName} : pairage rompu par le pair.");
+            PairEnded?.Invoke(runtime.Pair);
+        }
+    }
+
+    /// <summary>Referme la session d'un pair prévenu qui ne raccroche pas.</summary>
+    private async Task GiveUpUnansweredNoticesAsync(CancellationToken ct)
+    {
+        foreach (var (id, runtime) in _runtimes)
+        {
+            if (runtime is not { Revoked: true, Session: not null, NoticeSentAt: { } sent })
+                continue;
+
+            if (_clock.UtcNow - sent < _settings.RevocationPatience)
+                continue;
+
+            _log.Info($"{runtime.Pair.DisplayName} : avis de retrait resté sans réponse.");
+            await TearDownAsync(id, runtime, ct).ConfigureAwait(false);
+            Retry(runtime, peerWasAbsent: false, "avis de retrait sans réponse");
         }
     }
 
@@ -378,6 +456,12 @@ public sealed class SyncEngine : IAsyncDisposable
 
     private async Task AdoptSessionAsync(PeerId id, Runtime runtime, PeerSession session, CancellationToken ct)
     {
+        if (runtime.Revoked)
+        {
+            await NotifyRevokedAsync(runtime, session, ct).ConfigureAwait(false);
+            return;
+        }
+
         var limiter = new RateLimiter(_clock, _settings.Limiter);
 
         var exchange = new PeerExchange(
@@ -415,12 +499,55 @@ public sealed class SyncEngine : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Ouvre une session qui ne sert qu'à dire au pair qu'on l'a retiré.
+    /// </summary>
+    /// <remarks>
+    /// Ni présence ni apparence : il n'a plus à nous voir. Ce qu'il nous
+    /// envoie est lu et jeté, sauf son propre avis s'il nous retire aussi.
+    /// </remarks>
+    private async Task NotifyRevokedAsync(Runtime runtime, PeerSession session, CancellationToken ct)
+    {
+        runtime.Session = session;
+        runtime.SessionSince = _clock.UtcNow;
+        runtime.Failures = 0;
+        runtime.LastFailure = null;
+        runtime.Life = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
+        runtime.Pump = PumpAsync(runtime, null, session, runtime.Life.Token);
+
+        try
+        {
+            await session.SendAsync(ChannelPlan.ControlChannel, MessageKind.Unpair, ReadOnlyMemory<byte>.Empty, ct)
+                .ConfigureAwait(false);
+
+            runtime.NoticeSentAt = _clock.UtcNow;
+            _log.Info($"{runtime.Pair.DisplayName} : avis de retrait envoyé.");
+        }
+        catch (Exception e)
+        {
+            _log.Warning($"{runtime.Pair.DisplayName} : avis de retrait non envoyé.", e);
+        }
+    }
+
     private async Task DropDeadSessionsAsync()
     {
-        foreach (var (id, runtime) in _runtimes)
+        foreach (var (id, runtime) in _runtimes.ToList())
         {
             if (runtime.Session is not { State: PeerSessionState.Disconnected })
                 continue;
+
+            if (runtime is { Revoked: true, NoticeSentAt: not null })
+            {
+                // Il a raccroché après l'avis : c'est sa façon d'en accuser
+                // réception, et l'entrée gardée pour lui n'a plus d'objet.
+                await TearDownAsync(id, runtime, CancellationToken.None).ConfigureAwait(false);
+                _runtimes.Remove(id);
+                _book.Remove(id);
+
+                _log.Info($"{runtime.Pair.DisplayName} : avis de retrait remis.");
+                RevocationDelivered?.Invoke(runtime.Pair);
+                continue;
+            }
 
             _log.Info($"{runtime.Pair.DisplayName} : session tombée.");
 
@@ -701,12 +828,24 @@ public sealed class SyncEngine : IAsyncDisposable
         }
     }
 
-    private async Task PumpAsync(Runtime runtime, PeerExchange exchange, PeerSession session, CancellationToken ct)
+    /// <param name="exchange">Null pour la session d'un pair retiré, dont on ne lit que l'avis.</param>
+    private async Task PumpAsync(Runtime runtime, PeerExchange? exchange, PeerSession session, CancellationToken ct)
     {
         try
         {
             await foreach (var message in session.Messages.ReadAllAsync(ct).ConfigureAwait(false))
-                await exchange.HandleAsync(message, ct).ConfigureAwait(false);
+            {
+                // Ramassé au tic suivant : c'est lui qui touche au carnet et à
+                // l'écran, pas ce fil-ci.
+                if (message.Kind == MessageKind.Unpair)
+                {
+                    runtime.EndedByPeer = true;
+                    continue;
+                }
+
+                if (exchange is not null)
+                    await exchange.HandleAsync(message, ct).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -778,6 +917,7 @@ public sealed class SyncEngine : IAsyncDisposable
 
         runtime.Life?.Dispose();
         runtime.Life = null;
+        runtime.NoticeSentAt = null;
         runtime.Exchange = null;
         runtime.Session = null;
         runtime.Limiter = null;
@@ -867,6 +1007,15 @@ public sealed class SyncEngine : IAsyncDisposable
         public CharacterManifest? AppliedValue { get; set; }
 
         public bool Disputed { get; set; }
+
+        /// <summary>Vrai pour un pair retiré, qu'on ne joint plus que pour le prévenir.</summary>
+        public bool Revoked => Pair.Trust is PairTrust.Revoked;
+
+        /// <summary>Quand l'avis de retrait est parti sur la session en cours.</summary>
+        public DateTimeOffset? NoticeSentAt { get; set; }
+
+        /// <summary>Écrit par la pompe de la session, lu par le tic.</summary>
+        public volatile bool EndedByPeer;
 
         /// <summary>
         /// Ce qu'on accepte de ce pair, global et pair confondus.

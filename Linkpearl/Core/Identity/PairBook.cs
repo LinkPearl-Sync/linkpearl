@@ -15,6 +15,17 @@ public enum PairTrust
     Pending,
     Accepted,
     Blocked,
+
+    /// <summary>
+    /// Retiré par nous, et pas encore prévenu.
+    /// </summary>
+    /// <remarks>
+    /// L'entrée est gardée pour une seule raison : lui dire que c'est fini.
+    /// Sans cela il nous verrait encore comme pairés, avec une ligne « hors
+    /// ligne » que rien n'expliquerait. On le joint comme un pair, mais sa
+    /// session ne porte que l'avis de retrait, jamais une apparence.
+    /// </remarks>
+    Revoked,
 }
 
 /// <summary>Ce qu'on accepte d'échanger avec un pair, dans chaque sens.</summary>
@@ -102,6 +113,9 @@ public sealed record PairRecord
     public required DateTimeOffset PairedAt { get; init; }
     public DateTimeOffset? LastSeenAt { get; init; }
 
+    /// <summary>Quand on l'a retiré, pour oublier un avis jamais remis.</summary>
+    public DateTimeOffset? RevokedAt { get; init; }
+
     /// <summary>Empreinte du personnage du pair, épinglée à la première rencontre.</summary>
     /// <remarks>
     /// Sans épinglage, un pair pourrait annoncer l'empreinte d'un tiers et nous
@@ -122,10 +136,27 @@ public sealed class PairBook(IClock clock)
 {
     private readonly Dictionary<PeerId, PairRecord> _pairs = [];
 
+    /// <summary>
+    /// Durée pendant laquelle on cherche à prévenir un pair retiré.
+    /// </summary>
+    /// <remarks>
+    /// Un mois : assez pour un joueur qui fait une pause, et au-delà l'entrée
+    /// ne serait plus qu'une tentative de connexion toutes les trente secondes
+    /// vers quelqu'un qui ne reviendra pas.
+    /// </remarks>
+    public static readonly TimeSpan RevocationLifetime = TimeSpan.FromDays(30);
+
+    /// <summary>Tout le carnet, retraits en attente compris : ce qui s'enregistre.</summary>
     public IReadOnlyCollection<PairRecord> All => _pairs.Values;
+
+    /// <summary>Ce que l'utilisateur voit : un pair retiré n'est plus le sien.</summary>
+    public IReadOnlyList<PairRecord> Listed => [.. _pairs.Values.Where(p => p.Trust is not PairTrust.Revoked)];
 
     public IEnumerable<PairRecord> Active =>
         _pairs.Values.Where(p => p.Trust is PairTrust.Accepted && p.Paused is false);
+
+    /// <summary>Les pairs retirés qu'il reste à prévenir.</summary>
+    public IEnumerable<PairRecord> Revoked => _pairs.Values.Where(p => p.Trust is PairTrust.Revoked);
 
     public PairRecord? Find(PeerId id) => _pairs.GetValueOrDefault(id);
 
@@ -176,6 +207,26 @@ public sealed class PairBook(IClock clock)
     public void Seen(PeerId id) => Update(id, record => record with { LastSeenAt = clock.UtcNow });
 
     public bool Remove(PeerId id) => _pairs.Remove(id);
+
+    /// <summary>Retire un pair de la liste, en gardant de quoi le prévenir.</summary>
+    public void Revoke(PeerId id)
+        => Update(id, record => record with { Trust = PairTrust.Revoked, RevokedAt = clock.UtcNow });
+
+    /// <summary>Oublie les retraits qu'on n'a pas pu remettre à temps.</summary>
+    /// <returns>Le nombre d'entrées oubliées, pour savoir s'il faut enregistrer.</returns>
+    public int ForgetStaleRevocations()
+    {
+        var stale = _pairs.Values
+            .Where(p => p.Trust is PairTrust.Revoked
+                     && clock.UtcNow - (p.RevokedAt ?? p.PairedAt) > RevocationLifetime)
+            .Select(p => p.Id)
+            .ToList();
+
+        foreach (var id in stale)
+            _pairs.Remove(id);
+
+        return stale.Count;
+    }
 
     /// <summary>Oublie tout, au changement de personnage.</summary>
     /// <remarks>

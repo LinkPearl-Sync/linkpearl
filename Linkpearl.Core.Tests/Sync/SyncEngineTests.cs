@@ -643,6 +643,60 @@ public sealed class SyncEngineTests : IDisposable
         Assert.Contains(IdlePath, world.BobApplicator.Applied[^1].Manifest.Replacements.SelectMany(r => r.GamePaths));
     }
 
+    [Fact]
+    public async Task Un_pair_retire_l_apprend_et_nous_retire_de_son_carnet()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        var ended = new List<PeerId>();
+        var delivered = new List<PeerId>();
+        world.Bob.PairEnded += pair => ended.Add(pair.Id);
+        world.Alice.RevocationDelivered += pair => delivered.Add(pair.Id);
+
+        world.AliceBook.Revoke(world.BobId);
+
+        Assert.True(
+            await world.SettleAsync(() => delivered.Count > 0, [], sees),
+            "l'avis de retrait n'a jamais été remis : " + world.Describe());
+
+        // Sans cela, Bob verrait encore Alice comme pairée, et sa ligne
+        // resterait « hors ligne » pour toujours sans qu'il sache pourquoi.
+        Assert.Equal(world.AliceId, Assert.Single(ended));
+        Assert.Null(world.BobBook.Find(world.AliceId));
+        Assert.Null(world.AliceBook.Find(world.BobId));
+        Assert.Contains(world.AliceId, world.BobApplicator.Removed);
+        Assert.Empty(world.Bob.Statuses);
+        Assert.Empty(world.Alice.Statuses);
+    }
+
+    [Fact]
+    public async Task Un_pair_absent_au_retrait_l_apprend_en_revenant_sans_rien_recevoir()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        var delivered = new List<PeerId>();
+        world.Alice.RevocationDelivered += pair => delivered.Add(pair.Id);
+
+        // Retiré avant toute rencontre : la session qui s'ouvre ensuite ne sert
+        // qu'à le prévenir, jamais à lui envoyer une apparence.
+        world.AliceBook.Revoke(world.BobId);
+
+        Assert.True(
+            await world.SettleAsync(() => delivered.Count > 0, [], sees),
+            "l'avis de retrait n'a jamais été remis : " + world.Describe());
+
+        Assert.Null(world.BobBook.Find(world.AliceId));
+        Assert.Empty(world.BobApplicator.Applied);
+    }
+
     /// <summary>Un moteur seul, qui n'a personne à joindre. Pour les tentatives.</summary>
     private SyncEngine Solitary(IPeerDialer dialer)
     {

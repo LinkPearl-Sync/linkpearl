@@ -23,4 +23,13 @@ public static class MessageKind
     public const byte Ping = 0x0C;
     public const byte Pong = 0x0D;
     public const byte Bye = 0x0E;
+
+    /// <summary>
+    /// L'expéditeur nous a retirés de son carnet.
+    /// </summary>
+    /// <remarks>
+    /// Sans charge utile : la session chiffrée dit déjà de qui il vient, et
+    /// seul ce pair-là peut l'envoyer. Un client qui ne le connaît pas l'ignore.
+    /// </remarks>
+    public const byte Unpair = 0x0F;
 }
