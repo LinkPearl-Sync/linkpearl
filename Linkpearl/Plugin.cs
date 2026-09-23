@@ -6,6 +6,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
+using Linkpearl.Core.Identity;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport;
@@ -352,6 +353,7 @@ public sealed class Plugin : IDalamudPlugin
             case "unlock":        RunSafely(UnlockAsync);                      break;
             case "announce":      RunSafely(AnnounceAsync);                    break;
             case "sync":          ShowSync();                                  break;
+            case "presence":      ShowPresence();                              break;
             case "rebuild":       _appearance.Rebuild(); Report("apparence en cours de reconstruction."); break;
             case "apply":     RunSafely(ApplyAsync);                        break;
             case "revert":    _selfLoop.Revert(); Report("personnage rendu à son état normal."); break;
@@ -384,7 +386,7 @@ public sealed class Plugin : IDalamudPlugin
                 }
 
                 Report("invite | pair <nom> | check | pairs | rename <a> <b> | unpair <nom>");
-                Report("rdv <hôte> | id | announce | sync | rebuild | capture | apply | revert | diag | unlock");
+                Report("rdv <hôte> | id | announce | sync | presence | rebuild | capture | apply | revert | diag | unlock");
                 Report("capture | capture force | apply | revert");
                 break;
         }
@@ -548,6 +550,38 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Pourquoi on voit, ou ne voit pas, les joueurs d'à côté.
+    /// </summary>
+    /// <remarks>
+    /// Chaque ligne oppose ce que nous ouvrons à ce que nous demandons : c'est
+    /// la seule façon de distinguer une place où personne n'utilise le plugin
+    /// d'une boîte ouverte sous une adresse que les autres ne calculent pas.
+    /// </remarks>
+    private void ShowPresence()
+    {
+        foreach (var line in _presence.Describe(_state.Self?.Fingerprint))
+            Report(line);
+
+        var nearby = _state.Nearby;
+
+        if (nearby.Count == 0)
+        {
+            Report("aucun joueur visible autour de vous.");
+            return;
+        }
+
+        Report($"{nearby.Count} joueur(s) visible(s), et la boîte que nous leur calculons :");
+
+        foreach (var player in nearby.Take(8))
+        {
+            var box = MailboxAddress.Of(player.Fingerprint, new SystemClock().UtcNow);
+            var seen = _presence.Detected.ContainsKey(player.Fingerprint);
+
+            Report($"  {player.Display} : {box}{(seen ? " (détecté)" : "")}");
         }
     }
 

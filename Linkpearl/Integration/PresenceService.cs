@@ -116,6 +116,51 @@ public sealed class PresenceService : IDisposable
     /// <summary>Les empreintes reconnues comme utilisant le plugin, avec leur fraîcheur.</summary>
     public IReadOnlyDictionary<PlayerFingerprint, DateTimeOffset> Detected => _detected;
 
+    /// <summary>
+    /// Ce que chaque service est en train de faire, en clair.
+    /// </summary>
+    /// <remarks>
+    /// Une détection qui ne trouve personne est indiscernable d'une place vide :
+    /// sans ceci, il n'existe aucun moyen de savoir si la boîte est ouverte, sous
+    /// quelle adresse, et si l'interrogation a seulement eu lieu. C'est ce qui
+    /// manquait le jour où deux personnages côte à côte ne se sont pas vus.
+    /// </remarks>
+    public IReadOnlyList<string> Describe(PlayerFingerprint? self)
+    {
+        var lines = new List<string>
+        {
+            _configuration.Discoverable
+                ? "se signaler : activé."
+                : "se signaler : DÉSACTIVÉ, personne ne peut vous voir.",
+        };
+
+        var window = MailboxAddress.IndexAt(_clock.UtcNow);
+
+        lines.Add(self is { } me
+            ? $"votre boîte : {MailboxAddress.Of(me, _clock.UtcNow)} (fenêtre {window})"
+            : "votre personnage n'est pas encore connu du plugin.");
+
+        var sessions = Snapshot();
+
+        if (sessions.Count == 0)
+            lines.Add("aucun service de rendez-vous actif dans les réglages.");
+
+        foreach (var session in sessions)
+        {
+            var state = session.Client is null
+                ? $"NON CONNECTÉ ({session.Failure ?? "pas encore tenté"})"
+                : session.OpenedWindow == window
+                    ? $"connecté, boîte ouverte pour la fenêtre {session.OpenedWindow}"
+                    : $"connecté, mais boîte ouverte sous la fenêtre {session.OpenedWindow} au lieu de {window}";
+
+            lines.Add($"{session.At} : {state}");
+        }
+
+        lines.Add($"détectés à la dernière ronde : {_detected.Count}");
+
+        return lines;
+    }
+
     public bool TryTakeRequest(out IncomingRequest? request)
     {
         var taken = _incoming.TryDequeue(out var value);

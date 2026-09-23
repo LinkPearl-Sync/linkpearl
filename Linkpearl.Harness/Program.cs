@@ -37,6 +37,15 @@ if (args.Length > 0 && args[0] == "pairing")
     return;
 }
 
+if (args.Length > 0 && args[0] == "presence")
+{
+    var host = args.Length > 1 ? args[1] : "127.0.0.1";
+    var port = args.Length > 2 && int.TryParse(args[2], out var p3) ? p3 : 47900;
+
+    Environment.ExitCode = await PresenceRun.ExecuteAsync(host, port, CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "hostile")
 {
     Environment.ExitCode = await HostileRun.ExecuteAsync(CancellationToken.None) ? 0 : 1;
