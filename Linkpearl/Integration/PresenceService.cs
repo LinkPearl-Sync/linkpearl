@@ -65,6 +65,12 @@ public sealed class PresenceService : IDisposable
 
         public string? Failure { get; set; }
 
+        /// <summary>Quand ce service a répondu à une interrogation pour la dernière fois.</summary>
+        public DateTimeOffset? LastAnswer { get; set; }
+
+        /// <summary>Pourquoi la dernière interrogation n'a rien rendu.</summary>
+        public string? LastQueryFailure { get; set; }
+
         public DateTimeOffset NextAttempt { get; set; }
     }
 
@@ -154,6 +160,15 @@ public sealed class PresenceService : IDisposable
                     : $"connecté, mais boîte ouverte sous la fenêtre {session.OpenedWindow} au lieu de {window}";
 
             lines.Add($"{session.At} : {state}");
+
+            // Une connexion en bonne santé dont les interrogations restent sans
+            // réponse a exactement l'air d'une place vide : c'est l'angle mort
+            // qui a coûté la soirée.
+            lines.Add(session.LastQueryFailure is { } why
+                ? $"  interrogations : EN ÉCHEC ({why})"
+                : session.LastAnswer is { } when
+                    ? $"  interrogations : répondues il y a {(int)(_clock.UtcNow - when).TotalSeconds} s"
+                    : "  interrogations : aucune n'a encore abouti");
         }
 
         lines.Add($"détectés à la dernière ronde : {_detected.Count}");
@@ -342,12 +357,30 @@ public sealed class PresenceService : IDisposable
 
                 try
                 {
-                    var present = await session.Client!.QueryPresenceAsync(addresses, ct).ConfigureAwait(false);
+                    // Un délai de garde, parce qu'une réponse perdue bloquait
+                    // toute la boucle de rafraîchissement : plus de détection,
+                    // plus de réouverture de boîte, et rien qui le dise.
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+                    var present = await session.Client!
+                        .QueryPresenceAsync(addresses, deadline.Token).ConfigureAwait(false);
 
                     if (present is null)
+                    {
+                        lock (_gate)
+                            session.LastQueryFailure = "sans réponse";
+
                         break;
+                    }
 
                     answered = true;
+
+                    lock (_gate)
+                    {
+                        session.LastAnswer = _clock.UtcNow;
+                        session.LastQueryFailure = null;
+                    }
 
                     for (var i = 0; i < batch.Length && i < present.Length; i++)
                         if (present[i])
@@ -356,7 +389,10 @@ public sealed class PresenceService : IDisposable
                 catch (Exception e)
                 {
                     lock (_gate)
+                    {
                         session.Failure = e.Message;
+                        session.LastQueryFailure = e.Message;
+                    }
 
                     _log.Warning(e, $"Interrogation de présence en échec sur {session.At}.");
                     break;

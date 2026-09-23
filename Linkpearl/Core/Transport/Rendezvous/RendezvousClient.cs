@@ -59,9 +59,21 @@ public sealed class RendezvousClient : IAsyncDisposable
     public Task OpenMailboxesAsync(IReadOnlyList<byte[]> addresses, CancellationToken ct)
         => SendAsync(RendezvousWire.MailboxOpen(addresses), ct);
 
-    /// <summary>Demande lesquelles de ces adresses sont présentes.</summary>
+    /// <summary>
+    /// Demande lesquelles de ces adresses sont présentes.
+    /// </summary>
+    /// <remarks>
+    /// Deux chemins, parce qu'il y a deux usages. Sans écouteur, l'appelant est
+    /// seul à lire et attend sa réponse lui-même. Avec un écouteur, c'est lui
+    /// qui lit : lire ici en même temps ferait deux lecteurs sur un flux, et
+    /// celui qui attrape la trame n'est pas celui qui l'attendait. La présence
+    /// s'est arrêtée exactement ainsi, sans qu'aucun état n'ait l'air fautif.
+    /// </remarks>
     public async Task<bool[]?> QueryPresenceAsync(IReadOnlyList<byte[]> addresses, CancellationToken ct)
     {
+        if (_listening)
+            return await QueryThroughListenerAsync(addresses, ct).ConfigureAwait(false);
+
         await SendAsync(RendezvousWire.MailboxQuery(addresses), ct).ConfigureAwait(false);
 
         while (true)
@@ -87,6 +99,22 @@ public sealed class RendezvousClient : IAsyncDisposable
                     return null;
             }
         }
+    }
+
+    /// <summary>L'interrogation qui laisse l'écouteur lire pour elle.</summary>
+    private async Task<bool[]?> QueryThroughListenerAsync(IReadOnlyList<byte[]> addresses, CancellationToken ct)
+    {
+        var waiter = new TaskCompletionSource<bool[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Une seule interrogation à la fois sur une connexion : la précédente,
+        // si elle existe encore, n'aura jamais sa réponse.
+        Interlocked.Exchange(ref _presenceWaiter, waiter)?.TrySetResult(null);
+
+        await SendAsync(RendezvousWire.MailboxQuery(addresses), ct).ConfigureAwait(false);
+
+        await using var give = ct.Register(() => waiter.TrySetResult(null)).ConfigureAwait(false);
+
+        return await waiter.Task.ConfigureAwait(false);
     }
 
     /// <summary>
@@ -132,6 +160,10 @@ public sealed class RendezvousClient : IAsyncDisposable
     /// <summary>Appelé quand une demande nous est poussée.</summary>
     public event Action<byte[]>? Delivered;
 
+    private volatile bool _listening;
+
+    private TaskCompletionSource<bool[]?>? _presenceWaiter;
+
     /// <summary>
     /// Boucle de réception des remises.
     /// </summary>
@@ -142,15 +174,42 @@ public sealed class RendezvousClient : IAsyncDisposable
     /// </remarks>
     public async Task ListenAsync(CancellationToken ct)
     {
-        while (ct.IsCancellationRequested is false)
+        _listening = true;
+
+        try
         {
-            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+            while (ct.IsCancellationRequested is false)
+            {
+                var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
 
-            if (frame is null)
-                return;
+                if (frame is null)
+                    return;
 
-            if (frame[0] == RendezvousKind.MailboxDelivery)
-                Delivered?.Invoke(frame[1..]);
+                switch (frame[0])
+                {
+                    case RendezvousKind.MailboxDelivery:
+                        Delivered?.Invoke(frame[1..]);
+                        break;
+
+                    // La réponse appartient à celui qui a posé la question.
+                    case RendezvousKind.MailboxPresence:
+                        Interlocked.Exchange(ref _presenceWaiter, null)?.TrySetResult(
+                            RendezvousWire.TryReadPresence(frame, out var present) ? present : null);
+                        break;
+
+                    case RendezvousKind.Error:
+                        Interlocked.Exchange(ref _presenceWaiter, null)?.TrySetResult(null);
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            _listening = false;
+
+            // La connexion s'en va : celui qui attendait doit l'apprendre plutôt
+            // que d'attendre une trame qui ne viendra plus.
+            Interlocked.Exchange(ref _presenceWaiter, null)?.TrySetResult(null);
         }
     }
 
