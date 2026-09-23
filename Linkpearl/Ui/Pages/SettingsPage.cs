@@ -45,6 +45,12 @@ internal sealed class SettingsPage(
 {
     private string _newAddress = "";
 
+    /// <summary>Vrai pendant la suppression de l'ancien cache : le bouton se désactive, un clic répété ne lance pas une deuxième suppression concurrente.</summary>
+    private volatile bool _deletingPrevious;
+
+    /// <summary>L'échec de la dernière suppression de l'ancien cache, montré sous le bouton.</summary>
+    private volatile string? _deletePreviousError;
+
     public void Draw()
     {
         Text.Title("Réglages");
@@ -144,8 +150,15 @@ internal sealed class SettingsPage(
         Text.Small($"L'ancien cache occupe {size} dans {previous}.", Theme.TextMuted);
 
         if (Btn.Draw("Supprimer l'ancien cache", BtnTone.Danger, BtnSize.Small, Icons.Remove, id: "cache_delete_previous",
+                     disabled: _deletingPrevious,
                      tooltip: "N'efface que les fichiers de Linkpearl. Tout autre fichier de ce dossier reste."))
         {
+            // Le drapeau désactive le bouton tout de suite : sans lui, un
+            // second clic pendant la suppression lancerait une deuxième
+            // suppression concurrente sur le même dossier.
+            _deletingPrevious = true;
+            _deletePreviousError = null;
+
             _ = Task.Run(() =>
             {
                 try
@@ -154,10 +167,21 @@ internal sealed class SettingsPage(
                 }
                 catch (Exception e)
                 {
+                    // Montré, pas seulement journalisé : le bouton et la
+                    // taille resteraient sinon affichés comme si de rien
+                    // n'était, alors que rien n'a été supprimé.
                     Plugin.Log.Warning(e, "Suppression de l'ancien cache en échec.");
+                    _deletePreviousError = $"échec de la suppression : {e.Message}";
+                }
+                finally
+                {
+                    _deletingPrevious = false;
                 }
             });
         }
+
+        if (_deletePreviousError is { } error)
+            Text.Small(error, Theme.Danger);
     }
 
     private void DrawOnboarding()
