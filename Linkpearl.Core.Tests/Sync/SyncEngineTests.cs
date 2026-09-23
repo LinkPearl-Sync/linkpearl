@@ -164,6 +164,14 @@ internal sealed class RecordingApplicator : IRemoteApplicator
         return Task.CompletedTask;
     }
 
+    public List<(PeerId Peer, CharacterExtras Extras, ExtrasChange Change)> ExtrasApplied { get; } = [];
+
+    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+    {
+        ExtrasApplied.Add((peer, extras, change));
+        return Task.CompletedTask;
+    }
+
     public Task RemoveAsync(PeerId peer, CancellationToken ct)
     {
         Removed.Add(peer);
@@ -455,6 +463,49 @@ public sealed class SyncEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Un_changement_d_extras_seul_se_pose_sans_application_complete()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        world.AliceAppearance.Manifest = world.AliceAppearance.Manifest! with
+        {
+            Extras = CharacterExtras.None with { Honorific = "{\"Title\":\"le Voyageur\"}" },
+        };
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.ExtrasApplied.Count > 0, [], sees),
+            "les extras n'ont jamais été posés : " + world.Describe());
+
+        Assert.Single(world.BobApplicator.Applied);
+        Assert.True(world.BobApplicator.ExtrasApplied[0].Change.Honorific);
+        Assert.False(world.BobApplicator.ExtrasApplied[0].Change.CustomizePlus);
+    }
+
+    [Fact]
+    public async Task Des_fichiers_changes_redemandent_une_application_complete()
+    {
+        await using var world = await TwoEnginesAsync();
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees));
+
+        world.AliceAppearance.Manifest = world.AliceAppearance.Manifest! with
+        {
+            MetaManipulations = "AAAA",
+            Extras = CharacterExtras.None with { Honorific = "{\"Title\":\"b\"}" },
+        };
+
+        Assert.True(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 1, [], sees),
+            "la nouvelle apparence n'a pas été reposée : " + world.Describe());
+        Assert.Empty(world.BobApplicator.ExtrasApplied);
+    }
+
+    [Fact]
     public async Task Rien_n_est_pose_tant_que_le_jeu_n_est_pas_pret()
     {
         await using var world = await TwoEnginesAsync();
@@ -557,8 +608,10 @@ public sealed class SyncEngineTests : IDisposable
         var aliceLog = new SilentLog();
         var bobLog = new SilentLog();
 
+        var aliceAppearance = new FixedAppearance(manifest, AlicePrint);
+
         var aliceEngine = new SyncEngine(
-            aliceBook, new MeetingDialer(point), new FixedAppearance(manifest, AlicePrint),
+            aliceBook, new MeetingDialer(point), aliceAppearance,
             new RecordingApplicator(), aliceStore, aliceId, alice, _clock, aliceLog);
 
         var bobEngine = new SyncEngine(
@@ -567,13 +620,14 @@ public sealed class SyncEngineTests : IDisposable
 
         return new TwoEngines(
             aliceEngine, bobEngine, bobBook, bobApplicator, bobStore, aliceId, hash, content.Length,
-            aliceLog, bobLog, _clock, aliceBook, bobId);
+            aliceLog, bobLog, _clock, aliceBook, bobId, aliceAppearance);
     }
 
     private sealed record TwoEngines(
         SyncEngine Alice, SyncEngine Bob, PairBook BobBook, RecordingApplicator BobApplicator,
         FileSystemBlobStore BobStore, PeerId AliceId, BlobHash Blob, long BlobSize,
-        SilentLog AliceLog, SilentLog BobLog, MovableClock Clock, PairBook AliceBook, PeerId BobId)
+        SilentLog AliceLog, SilentLog BobLog, MovableClock Clock, PairBook AliceBook, PeerId BobId,
+        FixedAppearance AliceAppearance)
         : IAsyncDisposable
     {
         public PeerStatus BobStatus() => Bob.Statuses.Single();

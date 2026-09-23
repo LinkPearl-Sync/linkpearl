@@ -121,6 +121,9 @@ public sealed class RemoteApplicator : IRemoteApplicator, IDisposable
         }).ConfigureAwait(false);
     }
 
+    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+        => Task.CompletedTask;   // remplacé en tâche 9, quand les IPC des plugins voisins existent
+
     public async Task RemoveAsync(PeerId peer, CancellationToken ct)
     {
         AppliedPeer applied;

@@ -78,6 +78,12 @@ internal sealed class NarratingApplicator(IBlobStore store) : IRemoteApplicator
         return Task.CompletedTask;
     }
 
+    public Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct)
+    {
+        Console.WriteLine($"  Extras posés sans redessin : {change}.");
+        return Task.CompletedTask;
+    }
+
     public Task RemoveAsync(PeerId peer, CancellationToken ct)
     {
         Removals++;

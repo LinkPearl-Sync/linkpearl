@@ -235,6 +235,7 @@ public sealed class SyncEngine : IAsyncDisposable
             // Oublier ce qu'on a posé suffit à reposer au prochain passage. Et on
             // redemande le manifeste, pour que ce soit bien le dernier.
             runtime.AppliedManifest = null;
+            runtime.AppliedValue = null;
             runtime.AppliedOn = null;
 
             if (runtime.Exchange is { } exchange && runtime.Session is not null)
@@ -527,7 +528,20 @@ public sealed class SyncEngine : IAsyncDisposable
                     continue;
                 }
 
-                runtime.Work = ApplyAsync(id, runtime, target, manifest, hash);
+                // Même objet, mêmes fichiers : seuls les plugins voisins ont
+                // quelque chose à reposer, et un redessin ferait clignoter le
+                // personnage entier pour un titre qui change.
+                if (runtime.AppliedOn == target
+                    && runtime.AppliedValue is { } before
+                    && ExtrasDiff.OnlyExtrasDiffer(before, manifest))
+                {
+                    var change = ExtrasDiff.Between(before.ExtrasOrNone, manifest.ExtrasOrNone);
+                    runtime.Work = ApplyExtrasAsync(id, runtime, target, manifest, change, hash);
+                }
+                else
+                {
+                    runtime.Work = ApplyAsync(id, runtime, target, manifest, hash);
+                }
             }
             else if (runtime.AppliedOn is not null && inSight is false)
             {
@@ -545,6 +559,7 @@ public sealed class SyncEngine : IAsyncDisposable
 
             runtime.AppliedOn = target;
             runtime.AppliedManifest = hash;
+            runtime.AppliedValue = manifest;
             runtime.Session?.MarkApplied();
             _book.Seen(id);
 
@@ -560,6 +575,28 @@ public sealed class SyncEngine : IAsyncDisposable
         }
     }
 
+    private async Task ApplyExtrasAsync(
+        PeerId id, Runtime runtime, GameObjectRef target, CharacterManifest manifest, ExtrasChange change, BlobHash hash)
+    {
+        try
+        {
+            await _applicator.ApplyExtrasAsync(id, target, manifest.ExtrasOrNone, change, _life.Token).ConfigureAwait(false);
+
+            runtime.AppliedManifest = hash;
+            runtime.AppliedValue = manifest;
+
+            _log.Info($"{runtime.Pair.DisplayName} : extras reposés sans redessin.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception e)
+        {
+            runtime.LastFailure = $"extras en échec : {e.Message}";
+            _log.Warning($"{runtime.Pair.DisplayName} : extras en échec.", e);
+        }
+    }
+
     private async Task RemoveAsync(PeerId id, Runtime runtime)
     {
         try
@@ -568,6 +605,7 @@ public sealed class SyncEngine : IAsyncDisposable
 
             runtime.AppliedOn = null;
             runtime.AppliedManifest = null;
+            runtime.AppliedValue = null;
 
             // La session reste ouverte et le cache reste plein : le pair va
             // revenir, et tout refaire coûterait un transfert complet.
@@ -619,6 +657,7 @@ public sealed class SyncEngine : IAsyncDisposable
 
             runtime.AppliedOn = null;
             runtime.AppliedManifest = null;
+            runtime.AppliedValue = null;
         }
 
         if (runtime.Exchange is { } exchange)
@@ -713,6 +752,9 @@ public sealed class SyncEngine : IAsyncDisposable
         public GameObjectRef? AppliedOn { get; set; }
 
         public BlobHash? AppliedManifest { get; set; }
+
+        /// <summary>Le manifeste posé, pour savoir ce qu'un nouveau change.</summary>
+        public CharacterManifest? AppliedValue { get; set; }
 
         public bool Disputed { get; set; }
 

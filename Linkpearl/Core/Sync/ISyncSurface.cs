@@ -24,6 +24,12 @@ public interface IRemoteApplicator
     /// <summary>Pose l'apparence d'un pair sur l'objet de jeu qui lui correspond.</summary>
     Task ApplyAsync(PeerId peer, GameObjectRef target, CharacterManifest manifest, CancellationToken ct);
 
+    /// <summary>
+    /// Pose seulement les extras qui ont changé, sans redessin, sur un objet où
+    /// l'apparence est déjà posée.
+    /// </summary>
+    Task ApplyExtrasAsync(PeerId peer, GameObjectRef target, CharacterExtras extras, ExtrasChange change, CancellationToken ct);
+
     /// <summary>Retire ce que nous avons posé pour ce pair.</summary>
     Task RemoveAsync(PeerId peer, CancellationToken ct);
 
