@@ -97,6 +97,9 @@ public sealed class Plugin : IDalamudPlugin
     /// </remarks>
     private HashSet<Linkpearl.Core.Abstractions.PlayerFingerprint> _lastVisible = [];
 
+    /// <summary>Quand la dernière interrogation a eu lieu.</summary>
+    private DateTimeOffset _lastDetection = DateTimeOffset.MinValue;
+
     public Plugin()
     {
         var penumbra  = _penumbra  = new PenumbraIpc(PluginInterface);
@@ -446,9 +449,20 @@ public sealed class Plugin : IDalamudPlugin
                         // cadence une nécessité et non un confort.
                         var visible = _state.Nearby.Select(player => player.Fingerprint).ToHashSet();
 
-                        if (visible.SetEquals(_lastVisible) is false)
+                        // Le changement de champ n'est pas un critère suffisant.
+                        // Un « non » n'est vrai qu'à l'instant où il est donné :
+                        // celui qui vient d'arriver n'a pas encore ouvert sa
+                        // boîte, et sans ce rattrapage sa réponse négative tient
+                        // pour toujours, alors que les deux sont là, connectés,
+                        // et que rien ne bouge plus. C'est exactement ainsi que
+                        // deux personnages côte à côte ne se sont jamais vus.
+                        var stale = _clock.UtcNow - _lastDetection > TimeSpan.FromSeconds(60);
+
+                        if (visible.SetEquals(_lastVisible) is false || stale)
                         {
                             _lastVisible = visible;
+                            _lastDetection = _clock.UtcNow;
+
                             await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
                         }
                     }
