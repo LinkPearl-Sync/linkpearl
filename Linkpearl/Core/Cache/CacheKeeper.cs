@@ -23,8 +23,10 @@ public enum CacheGateState
 /// débranché. Le plugin s'arrête et demande d'en choisir un autre.
 ///
 /// Les appels peuvent venir de l'interface et de la boucle de synchronisation :
-/// l'état est lu sans verrou, et seule la perte, qui peut arriver de deux fils
-/// à la fois, en prend un.
+/// l'état est lu sans verrou, mais Choose, OpenConfigured et Lose, qui
+/// peuvent chacun être appelés de plusieurs fils à la fois, mutent l'état
+/// sous _gate. Les événements Opened et Lost ne sont levés qu'une fois ce
+/// verrou relâché.
 /// </remarks>
 public sealed class CacheKeeper(
     ICacheConfiguration configuration, string defaultRoot, IClock clock, Func<string, long> freeSpace, ILogSink log)
@@ -183,11 +185,24 @@ public sealed class CacheKeeper(
                     // a pu avoir un cache au dossier par défaut. En choisir un
                     // autre ne doit pas l'abandonner en silence : il doit
                     // rester proposable à la suppression une fois le nouveau
-                    // ouvert.
+                    // ouvert. Un second choix pendant la présentation ne doit
+                    // pas écraser ce repérage par le dossier vide que Prepare
+                    // vient de créer pour ce second choix : on ne remplace
+                    // PreviousCacheDirectory que s'il est encore vide ou si le
+                    // dossier qu'il désigne a disparu, et on le vide si le
+                    // nouveau choix retombe dessus.
                     var priorRoot = ConfiguredRoot;
+                    var trackedPrevious = configuration.PreviousCacheDirectory;
 
-                    if (Directory.Exists(priorRoot))
-                        configuration.PreviousCacheDirectory = SamePath(root, priorRoot) ? "" : priorRoot;
+                    if (trackedPrevious is not "" && SamePath(root, trackedPrevious))
+                    {
+                        configuration.PreviousCacheDirectory = "";
+                    }
+                    else if ((trackedPrevious is "" || Directory.Exists(trackedPrevious) is false)
+                             && Directory.Exists(priorRoot) && SamePath(root, priorRoot) is false)
+                    {
+                        configuration.PreviousCacheDirectory = priorRoot;
+                    }
 
                     configuration.CacheDirectory = root;
                     configuration.Save();

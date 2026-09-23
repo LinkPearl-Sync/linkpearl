@@ -331,6 +331,53 @@ public sealed class CacheKeeperTests : IDisposable
     }
 
     [Fact]
+    public void Un_deuxieme_choix_pendant_la_presentation_ne_perd_pas_l_ancien_par_defaut()
+    {
+        // Le premier choix crée un dossier vide sous "ailleurs" : le second
+        // choix ne doit pas remplacer par ce dossier vide le repérage de
+        // l'ancien cache par défaut fait au premier choix.
+        Directory.CreateDirectory(DefaultRoot);
+        File.WriteAllBytes(Path.Combine(DefaultRoot, "temoin.txt"), [1]);
+
+        var keeper = Keeper();
+        keeper.Start();
+
+        Assert.Null(keeper.Choose(Chosen("ailleurs")));
+        Assert.Null(keeper.Choose(Chosen("encore")));
+        keeper.FinishOnboarding();
+
+        Assert.Equal(CacheGateState.Open, keeper.State);
+        Assert.Equal(Path.Combine(_root, "encore", "LinkpearlCache"), keeper.ActiveRoot);
+        Assert.Equal(DefaultRoot, keeper.PreviousRoot);
+    }
+
+    [Fact]
+    public void Rechoisir_pendant_la_presentation_le_meme_dossier_que_l_ancien_ne_le_garde_pas_a_la_suppression()
+    {
+        // L'ancien cache (d'une installation sans présentation) vit sous
+        // "ancien". Le repérer, puis rechoisir ce même dossier, ne doit pas
+        // le laisser proposé à la suppression : c'est celui qu'on vient
+        // d'ouvrir.
+        var ancien = Path.Combine(_root, "ancien", CacheLocation.FolderName);
+        Directory.CreateDirectory(ancien);
+        File.WriteAllBytes(Path.Combine(ancien, "temoin.txt"), [1]);
+        _configuration.CacheDirectory = ancien;
+
+        var keeper = Keeper();
+        keeper.Start();
+
+        Assert.Null(keeper.Choose(Chosen("ailleurs")));
+        Assert.Equal(ancien, _configuration.PreviousCacheDirectory);
+
+        Assert.Null(keeper.Choose(Path.Combine(_root, "ancien")));
+        keeper.FinishOnboarding();
+
+        Assert.Equal(ancien, keeper.ActiveRoot);
+        Assert.Null(keeper.PreviousRoot);
+        Assert.Equal("", _configuration.PreviousCacheDirectory);
+    }
+
+    [Fact]
     public void Un_cache_etabli_dont_la_racine_existe_mais_est_vide_bloque_au_chargement()
     {
         _configuration.OnboardingSeen = true;
