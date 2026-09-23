@@ -54,6 +54,18 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
     private volatile bool _pending;
     private PlayerFingerprint? _fingerprint;
 
+    /// <summary>
+    /// Jeton de génération : une reconstruction en vol au moment de
+    /// <see cref="Forget"/> n'a plus le droit d'écrire son résultat.
+    /// </summary>
+    /// <remarks>
+    /// Follow(null) seul ne suffit pas à oublier une reconstruction en cours :
+    /// elle finirait quand même par réaffecter <see cref="_current"/> après
+    /// coup, ressuscitant une apparence bâtie pour un cache qui vient de
+    /// disparaître.
+    /// </remarks>
+    private long _generation;
+
     public LocalAppearance(
         PenumbraIpc penumbra, GlamourerIpc glamourer, IFramework framework, IObjectTable objects,
         ExtrasIpc extras, TransientCapture transients, Func<byte[]?> moodlesKey, IBlobStore store, IPluginLog log)
@@ -97,6 +109,23 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
         if (fingerprint is not null)
             Rebuild();
+    }
+
+    /// <summary>
+    /// Oublie le personnage suivi et invalide toute reconstruction en vol.
+    /// </summary>
+    /// <remarks>
+    /// À utiliser quand le cache n'est plus disponible (présentation en
+    /// attente, dossier perdu) : contrairement à <see cref="Follow"/>, le
+    /// jeton de génération empêche une construction déjà lancée de réaffecter
+    /// <see cref="_current"/> une fois terminée.
+    /// </remarks>
+    public void Forget()
+    {
+        _fingerprint = null;
+        _current = null;
+        Description = "hors du jeu";
+        Interlocked.Increment(ref _generation);
     }
 
     /// <summary>Reconstruit l'apparence, en tâche de fond.</summary>
@@ -154,6 +183,10 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
     private async Task RebuildAsync(CancellationToken ct)
     {
+        // Relevée avant le travail long : si Forget() l'incrémente pendant la
+        // construction, le résultat ne doit plus être écrit une fois fini.
+        var generation = Interlocked.Read(ref _generation);
+
         // L'ObjectTable et l'IPC ne se touchent que depuis le thread du
         // framework. Ce qui suit est une copie, manipulable ailleurs.
         var snapshot = await ReadWhenDrawnAsync(ct).ConfigureAwait(false);
@@ -256,6 +289,14 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
         if (_current is { } previous && ManifestCodec.HashOf(previous) == ManifestCodec.HashOf(manifest))
         {
             Description = $"inchangée, {hashed} fichier(s) rehaché(s)";
+            return;
+        }
+
+        // Forget() a été appelé pendant le travail ci-dessus (cache perdu,
+        // personnage quitté) : ce résultat ne concerne plus rien de suivi.
+        if (Interlocked.Read(ref _generation) != generation)
+        {
+            Description = "construction abandonnée, le suivi a changé entre-temps";
             return;
         }
 

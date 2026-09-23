@@ -1056,6 +1056,15 @@ public sealed class Plugin : IDalamudPlugin
                     if (_appearanceChanged.TryConsume())
                         _appearance.Rebuild();
                 }
+                else
+                {
+                    // Le cache est fermé (présentation en attente, ou dossier
+                    // perdu) : on oublie ce qu'on suivait. Sans cela, un
+                    // personnage inchangé à la réouverture verrait Follow(fp)
+                    // rester muet, et le moteur neuf annoncerait un manifeste
+                    // dont les blobs ne sont plus dans le nouveau cache.
+                    _appearance.Forget();
+                }
 
                 // Le dossier du cache peut être supprimé pendant qu'on joue.
                 if (++_syncTicks % 5 == 0)
