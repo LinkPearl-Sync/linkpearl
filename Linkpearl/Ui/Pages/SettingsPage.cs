@@ -50,6 +50,7 @@ internal sealed class SettingsPage(
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
         DrawDiscoverable();
+        DrawBadges();
         DrawUpload();
         backup.Draw();
         DrawServices();
@@ -78,6 +79,28 @@ internal sealed class SettingsPage(
           + "Avec, l'opérateur de chaque service peut savoir que votre personnage est en "
           + "ligne : pour qu'un inconnu puisse vous reconnaître, il faut bien que quelque "
           + "chose soit calculable à partir de votre nom.");
+    }
+
+    private void DrawBadges()
+    {
+        using var card = Card.Begin("settings_badges");
+
+        Text.WithIcon(Icons.Receiving, "Badges de transfert", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        var shown = configuration.ShowTransferBadges;
+
+        if (ImGui.Checkbox("Afficher sous les pairs##transfer_badges", ref shown))
+        {
+            configuration.ShowTransferBadges = shown;
+            configuration.Save();
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        Text.Wrapped(
+            "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
+          + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée.");
     }
 
     private void DrawUpload()

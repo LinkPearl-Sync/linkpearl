@@ -74,6 +74,9 @@ public sealed class Configuration : IPluginConfiguration
 
     public long CacheQuotaBytes { get; set; } = 20L * 1024 * 1024 * 1024;
 
+    /// <summary>Un badge aux pieds des pairs dont l'apparence arrive ou se fait attendre.</summary>
+    public bool ShowTransferBadges { get; set; } = true;
+
     /// <summary>
     /// Brider l'envoi pour préserver le ping.
     /// </summary>

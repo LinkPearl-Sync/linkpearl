@@ -48,6 +48,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IContextMenu            ContextMenu     { get; private set; } = null!;
     [PluginService] internal static ICondition              Condition       { get; private set; } = null!;
     [PluginService] internal static IDtrBar                 DtrBar          { get; private set; } = null!;
+    [PluginService] internal static IGameGui                GameGui         { get; private set; } = null!;
     [PluginService] internal static IPluginLog              Log             { get; private set; } = null!;
 
     private readonly PenumbraIpc _penumbra;
@@ -98,6 +99,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem _windows = new("Linkpearl");
     private readonly MainWindow _window;
     private readonly StatusBarEntry _statusBar;
+    private readonly TransferOverlay _overlay;
     private long _statusBarDueAt;
     private readonly Configuration _configuration;
     private readonly SystemClock _clock = new();
@@ -232,6 +234,10 @@ public sealed class Plugin : IDalamudPlugin
 
         _statusBar = new StatusBarEntry(DtrBar, Open);
         Framework.Update += UpdateStatusBar;
+
+        _overlay = new TransferOverlay(GameGui, Objects);
+        Framework.Update += UpdateOverlay;
+        PluginInterface.UiBuilder.Draw += _overlay.Draw;
 
         PluginInterface.UiBuilder.Draw += _windows.Draw;
         PluginInterface.UiBuilder.OpenMainUi += Open;
@@ -641,6 +647,14 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private string CharactersRoot => Path.Combine(_root, "characters");
+
+    /// <summary>
+    /// Place les badges de transfert, à chaque image : le personnage bouge, la
+    /// caméra aussi, et un badge en retard d'une seconde flotterait à côté.
+    /// </summary>
+    private void UpdateOverlay(IFramework framework)
+        => _overlay.Update(
+            _configuration.ShowTransferBadges, _engine?.Statuses ?? [], _state.Nearby, _pairing.Book);
 
     private void SetUploadLimited(bool limited)
     {
@@ -1114,6 +1128,8 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update -= PollLinks;
         Framework.Update -= FollowCharacter;
         Framework.Update -= UpdateStatusBar;
+        Framework.Update -= UpdateOverlay;
+        PluginInterface.UiBuilder.Draw -= _overlay.Draw;
         _statusBar.Dispose();
 
         // Le moteur d'abord : il retire des pairs ce qu'il leur a posé, et cela
