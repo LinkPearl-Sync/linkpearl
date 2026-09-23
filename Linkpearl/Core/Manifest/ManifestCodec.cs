@@ -51,9 +51,9 @@ public static class ManifestCodec
             else
                 writer.WriteString("g", manifest.GlamourerState);
 
-            // Une clé par extra présent, et aucune pour les absents : un
-            // manifeste sans extras garde ainsi exactement l'encodage, donc
-            // l'empreinte, qu'il avait avant les intégrations.
+            // Une clé par extra présent, et aucune pour les absents : des extras
+            // vides et des extras absents donnent le même encodage, donc la
+            // même empreinte, et ne font pas réannoncer pour rien.
             var extras = manifest.ExtrasOrNone;
             WriteExtra(writer, "xc", extras.CustomizePlus);
             WriteExtra(writer, "xh", extras.Heels);

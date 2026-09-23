@@ -118,7 +118,10 @@ fois et ne mesure pas le moteur.
   pieds ce qu'un pair porte.
 - **Un client d'avant les tronçons ne peut plus échanger** avec un client
   d'après. Le receveur le dit dans le journal, mais la version du protocole n'a
-  pas été relevée : ses vecteurs figés servent à la relecture externe.
+  pas été relevée : ses vecteurs figés servent à la relecture externe. De même,
+  un client d'avant les intégrations refuse les manifestes v2 (« version de
+  manifeste inconnue ») : décidé ainsi puisque les transferts étaient déjà
+  incompatibles.
 - **SimpleHeels garde un décalage reçu** jusqu'à ce qu'on le désenregistre, ce
   qui exige un personnage visible : un pair retiré hors de vue garde son
   décalage chez nous jusqu'au rechargement de SimpleHeels.
