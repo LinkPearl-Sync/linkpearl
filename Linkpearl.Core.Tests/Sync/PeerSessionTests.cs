@@ -22,7 +22,19 @@ internal sealed class HeldLink : IPeerLink
 {
     private HeldLink? _other;
     private readonly Queue<(byte Channel, byte[] Payload)> _held = new();
+
+    /// <summary>
+    /// Ce qui arrive avant que quiconque ne se soit abonné. Deux sessions
+    /// construites l'une après l'autre par le même appelant peuvent envoyer
+    /// leur premier message avant que l'autre bout n'existe encore : sans
+    /// cette file, ce message serait perdu en silence, au lieu d'attendre
+    /// l'abonnement comme le ferait un vrai socket qui n'a encore livré à
+    /// personne.
+    /// </summary>
+    private readonly Queue<(byte Channel, byte[] Payload)> _beforeSubscribed = new();
+
     private int _delivered;
+    private Action<byte, byte[]>? _received;
 
     /// <summary>Au-delà de ce nombre de trames reçues, les suivantes sont retenues.</summary>
     public int DeliverFirst { get; set; } = int.MaxValue;
@@ -48,7 +60,17 @@ internal sealed class HeldLink : IPeerLink
 
     public EndPoint? Remote => new IPEndPoint(IPAddress.Loopback, 7777);
 
-    public event Action<byte, byte[]>? Received;
+    public event Action<byte, byte[]>? Received
+    {
+        add
+        {
+            _received += value;
+
+            while (_beforeSubscribed.TryDequeue(out var frame))
+                Arrive(frame.Channel, frame.Payload);
+        }
+        remove => _received -= value;
+    }
 
     public event Action<string>? Closed;
 
@@ -62,13 +84,19 @@ internal sealed class HeldLink : IPeerLink
     public void Release()
     {
         while (_held.TryDequeue(out var frame))
-            Received?.Invoke(frame.Channel, frame.Payload);
+            _received?.Invoke(frame.Channel, frame.Payload);
     }
 
     private void Arrive(byte channel, byte[] payload)
     {
+        if (_received is null)
+        {
+            _beforeSubscribed.Enqueue((channel, payload));
+            return;
+        }
+
         if (_delivered++ < DeliverFirst)
-            Received?.Invoke(channel, payload);
+            _received?.Invoke(channel, payload);
         else
             _held.Enqueue((channel, payload));
     }

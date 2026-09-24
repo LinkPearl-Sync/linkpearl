@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Threading.Channels;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Crypto;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Protocol;
 using Linkpearl.Core.Transport;
@@ -48,6 +49,9 @@ public sealed class PeerSession : IAsyncDisposable
 
     private SecureChannel? _secure;
 
+    /// <summary>Ce qui admet la clé d'un pair de groupe. Null quand le moteur n'a pas de groupes.</summary>
+    private IGroupGate? _groups;
+
     private PeerSession(IPeerLink link, PairRecord pair, ILogSink log)
     {
         _link = link;
@@ -80,13 +84,13 @@ public sealed class PeerSession : IAsyncDisposable
     /// </remarks>
     public static async Task<PeerSession?> EstablishAsync(
         IPeerLink link, PairRecord pair, PeerId ourId, ECDsa identity, IClock clock, ILogSink log,
-        CancellationToken ct)
+        CancellationToken ct, IGroupGate? groups = null)
     {
-        var session = new PeerSession(link, pair, log) { State = PeerSessionState.Handshaking };
+        var session = new PeerSession(link, pair, log) { State = PeerSessionState.Handshaking, _groups = groups };
 
         try
         {
-            var weInitiate = string.CompareOrdinal(ourId.ToHex(), pair.Id.ToHex()) < 0;
+            var weInitiate = WeInitiate(pair, ourId);
 
             var keys = weInitiate
                 ? await session.InitiateAsync(identity, pair, clock, ct).ConfigureAwait(false)
@@ -133,6 +137,20 @@ public sealed class PeerSession : IAsyncDisposable
             State = PeerSessionState.Connected;
     }
 
+    /// <summary>
+    /// Qui des deux envoie le premier message.
+    /// </summary>
+    /// <remarks>
+    /// Pour un pair de groupe, l'identifiant du pair est tiré du secret du
+    /// couple et vaut la même chose des deux côtés : le comparer au nôtre
+    /// pourrait donner deux initiateurs. Les deux empreintes, elles, sont
+    /// connues des deux et différentes.
+    /// </remarks>
+    private static bool WeInitiate(PairRecord pair, PeerId ourId)
+        => pair.Group is { } origin
+            ? string.CompareOrdinal(origin.Ours.ToString(), origin.Theirs.ToString()) < 0
+            : string.CompareOrdinal(ourId.ToHex(), pair.Id.ToHex()) < 0;
+
     private async Task<SessionKeys?> InitiateAsync(ECDsa identity, PairRecord pair, IClock clock, CancellationToken ct)
     {
         var initiator = new HandshakeInitiator(identity, clock);
@@ -141,7 +159,7 @@ public sealed class PeerSession : IAsyncDisposable
 
         var message2 = await NextRawAsync(ct).ConfigureAwait(false);
 
-        if (initiator.TryHandleMessage2(message2, key => Authorizes(pair, key), out var message3, out var keys, out var why) is false)
+        if (initiator.TryHandleMessage2(message2, key => Authorizes(pair, key, _groups), out var message3, out var keys, out var why) is false)
         {
             _log.Warning($"{pair.DisplayName} : message 2 refusé, {why}");
             return null;
@@ -167,7 +185,7 @@ public sealed class PeerSession : IAsyncDisposable
 
         var message3 = await NextRawAsync(ct).ConfigureAwait(false);
 
-        if (responder.TryHandleMessage3(message3, key => Authorizes(pair, key), out var keys, out var why2) is false)
+        if (responder.TryHandleMessage3(message3, key => Authorizes(pair, key, _groups), out var keys, out var why2) is false)
         {
             _log.Warning($"{pair.DisplayName} : message 3 refusé, {why2}");
             return null;
@@ -180,11 +198,16 @@ public sealed class PeerSession : IAsyncDisposable
     /// La clé reçue doit être celle du pair attendu, et de personne d'autre.
     /// </summary>
     /// <remarks>
-    /// L'empreinte de la clé sert de comparaison : une clé substituée donne une
-    /// autre empreinte, donc un refus. La liaison est assurée par construction.
+    /// Pour une paire, l'empreinte de la clé sert de comparaison : une clé
+    /// substituée donne une autre empreinte, donc un refus. Pour un pair de
+    /// groupe, on ne connaît pas sa clé d'avance : c'est le groupe qui décide,
+    /// par l'épinglage du premier vu. Sans groupe pour trancher, on refuse.
     /// </remarks>
-    private static bool Authorizes(PairRecord pair, byte[] publicKey)
+    private static bool Authorizes(PairRecord pair, byte[] publicKey, IGroupGate? groups)
     {
+        if (pair.Group is not null)
+            return groups?.Admits(pair, publicKey) ?? false;
+
         if (PeerId.Of(publicKey) != pair.Id)
             return false;
 
