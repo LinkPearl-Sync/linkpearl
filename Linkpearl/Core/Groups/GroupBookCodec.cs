@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport.Rendezvous;
@@ -23,10 +24,15 @@ namespace Linkpearl.Core.Groups;
 public static class GroupBookCodec
 {
     private sealed record MemberDto(
-        string Fingerprint, string? Id, string DisplayName, long? LastSeenAt, bool Paused, int Receive);
+        string Fingerprint, string? Id, string DisplayName, long? LastSeenAt, bool Paused, int Receive,
+        string? PublicKey = null);
 
     private sealed record GroupDto(
-        string Id, string Name, string Secret, string[] Rendezvous, long JoinedAt, MemberDto[] Members);
+        string Id, string Name, string Secret, string[] Rendezvous, long JoinedAt, MemberDto[] Members,
+        string? OwnerKey = null, string? SigningKey = null, string? Policy = null);
+
+    /// <summary>Même borne que la clé PKCS#8 qu'une identité ECDSA P-256 exporte.</summary>
+    private const int MaxSigningKeyLength = 1024;
 
     private const int ReceiveAnimations = 1;
     private const int ReceiveVfx = 2;
@@ -48,7 +54,11 @@ public static class GroupBookCodec
                 member.DisplayName,
                 member.LastSeenAt?.ToUnixTimeSeconds(),
                 member.Paused,
-                ToBits(member.Receive)))])).ToList());
+                ToBits(member.Receive),
+                member.PublicKey is { } publicKey ? Convert.ToHexStringLower(publicKey) : null))],
+            group.OwnerKey is { } ownerKey ? Convert.ToHexStringLower(ownerKey) : null,
+            group.SigningKey is { } signingKey ? Convert.ToHexStringLower(signingKey) : null,
+            group.Policy is { } policy ? Convert.ToHexStringLower(GroupPolicyCodec.Encode(policy)) : null)).ToList());
 
     public static IReadOnlyList<GroupRecord> Decode(ReadOnlySpan<byte> json)
     {
@@ -98,14 +108,69 @@ public static class GroupBookCodec
                 .GroupBy(member => member.Fingerprint)
                 .ToDictionary(same => same.Key, same => same.First());
 
+            var id = GroupId.FromBytes(Convert.FromHexString(dto.Id));
+
+            byte[]? ownerKey = null;
+
+            if (dto.OwnerKey is { } ownerKeyHex)
+            {
+                var candidate = Convert.FromHexString(ownerKeyHex);
+
+                // Une clé qui ne redonne pas l'identifiant du groupe n'a
+                // aucune raison qu'on lui prête la moindre autorité : elle
+                // ferait accepter n'importe quelle politique prétendument
+                // signée par le groupe. L'entrée entière est rejetée plutôt
+                // que gardée sans clé, pour ne pas faire disparaître en
+                // silence un groupe privé en groupe d'essai.
+                if (candidate.Length != CryptoPrimitives.CompressedPointLength || GroupId.Of(candidate) != id)
+                    return null;
+
+                ownerKey = candidate;
+            }
+
+            byte[]? signingKey = null;
+
+            if (dto.SigningKey is { } signingKeyHex)
+            {
+                // La clé de signature n'a de sens que pour le propriétaire, et
+                // le propriétaire est celui dont la clé redonne l'identifiant :
+                // sans OwnerKey, une SigningKey ne prouve rien et rejette
+                // l'entrée plutôt que de la garder à moitié.
+                if (ownerKey is null)
+                    return null;
+
+                var candidate = Convert.FromHexString(signingKeyHex);
+
+                if (candidate.Length > MaxSigningKeyLength)
+                    return null;
+
+                signingKey = candidate;
+            }
+
+            GroupPolicy? policy = null;
+
+            if (dto.Policy is { Length: > 0 } policyHex && ownerKey is not null)
+            {
+                var encoded = Convert.FromHexString(policyHex);
+
+                // Une politique qui ne passe plus TryAccept (clé altérée,
+                // signature invalide, bornes dépassées) est oubliée : le
+                // groupe reste, seule la politique retombe à néant.
+                if (GroupPolicyRules.TryAccept(encoded, id, ownerKey, out var accepted, out _))
+                    policy = accepted;
+            }
+
             return new GroupRecord
             {
-                Id = GroupId.FromBytes(Convert.FromHexString(dto.Id)),
+                Id = id,
                 Name = dto.Name,
                 Secret = secret,
                 Rendezvous = places,
                 JoinedAt = DateTimeOffset.FromUnixTimeSeconds(dto.JoinedAt),
                 Members = members,
+                OwnerKey = ownerKey,
+                SigningKey = signingKey,
+                Policy = policy,
             };
         }
         catch (Exception e) when (e is FormatException or ArgumentException or NullReferenceException)
@@ -121,6 +186,22 @@ public static class GroupBookCodec
 
         try
         {
+            byte[]? publicKey = null;
+
+            if (dto.PublicKey is { } publicKeyHex)
+            {
+                var candidate = Convert.FromHexString(publicKeyHex);
+
+                // Une clé complète mal formée ne vaut pas la peine de garder le
+                // membre à moitié : elle ne servira à rien (un modérateur ne se
+                // reconnaît qu'à sa clé exacte), et un membre à moitié rehydraté
+                // vaut moins qu'un membre absent, qu'un futur Admit repeuplera.
+                if (candidate.Length != CryptoPrimitives.PublicPointLength)
+                    return null;
+
+                publicKey = candidate;
+            }
+
             return new GroupMember
             {
                 Fingerprint = PlayerFingerprint.FromBytes(Convert.FromHexString(dto.Fingerprint)),
@@ -129,6 +210,7 @@ public static class GroupBookCodec
                 LastSeenAt = dto.LastSeenAt is { } seen ? DateTimeOffset.FromUnixTimeSeconds(seen) : null,
                 Paused = dto.Paused,
                 Receive = FromBits(dto.Receive),
+                PublicKey = publicKey,
             };
         }
         catch (Exception e) when (e is FormatException or ArgumentException or NullReferenceException)

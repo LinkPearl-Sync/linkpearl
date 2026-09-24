@@ -21,7 +21,36 @@ public enum GroupAdmission
     /// <summary>Une autre clé a déjà été vue pour ce personnage.</summary>
     Disputed,
 
+    /// <summary>La politique bannit cette clé ou ce personnage.</summary>
+    Banned,
+
     UnknownGroup,
+}
+
+/// <summary>Le sort d'une politique proposée. Strictement local.</summary>
+public enum PolicyOffer
+{
+    Adopted,
+
+    /// <summary>C'est déjà la nôtre.</summary>
+    Same,
+
+    /// <summary>La nôtre est plus récente : c'est à nous de la renvoyer.</summary>
+    Stale,
+
+    Invalid,
+    UnknownGroup,
+
+    /// <summary>Un groupe sans clé : essai ou Public.</summary>
+    NotPrivate,
+}
+
+/// <summary>Ce que le moteur demande pour propager les politiques.</summary>
+public interface IGroupPolicies
+{
+    byte[]? CurrentPolicy(GroupId group);
+
+    PolicyOffer OfferPolicy(GroupId group, ReadOnlySpan<byte> encoded);
 }
 
 /// <summary>
@@ -32,7 +61,7 @@ public enum GroupAdmission
 /// tournent chacun sur sa tâche : il se protège seul. Les enregistrements sont
 /// immuables, donc ce qui sort d'ici peut être lu sans verrou.
 /// </remarks>
-public sealed class GroupBook(IClock clock) : IGroupGate
+public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
 {
     /// <summary>
     /// Chaque groupe coûte quatre boîtes par connexion au changement de fenêtre.
@@ -48,6 +77,9 @@ public sealed class GroupBook(IClock clock) : IGroupGate
 
     /// <summary>Levé hors du verrou, quand quelque chose qui s'enregistre a changé.</summary>
     public event Action? Changed;
+
+    /// <summary>Levé hors du verrou, après <see cref="Changed"/>, quand une politique est adoptée.</summary>
+    public event Action<GroupId>? PolicyAdopted;
 
     public IReadOnlyList<GroupRecord> All
     {
@@ -120,6 +152,53 @@ public sealed class GroupBook(IClock clock) : IGroupGate
             _groups.Clear();
     }
 
+    public byte[]? CurrentPolicy(GroupId id)
+    {
+        lock (_gate)
+            return _groups.GetValueOrDefault(id)?.Policy is { } policy ? GroupPolicyCodec.Encode(policy) : null;
+    }
+
+    /// <summary>
+    /// Adopte une politique si elle est valide et plus récente que la nôtre.
+    /// </summary>
+    /// <remarks>
+    /// Le nom et les services du groupe suivent la politique : c'est elle qui
+    /// fait foi, pas ce qu'on avait reçu à l'entrée.
+    /// </remarks>
+    public PolicyOffer OfferPolicy(GroupId id, ReadOnlySpan<byte> encoded)
+    {
+        lock (_gate)
+        {
+            if (_groups.TryGetValue(id, out var group) is false)
+                return PolicyOffer.UnknownGroup;
+
+            if (group.OwnerKey is not { } ownerKey)
+                return PolicyOffer.NotPrivate;
+
+            if (GroupPolicyRules.TryAccept(encoded, id, ownerKey, out var candidate, out _) is false)
+                return PolicyOffer.Invalid;
+
+            if (group.Policy is { } current && GroupPolicyRules.IsNewer(candidate!, current) is false)
+            {
+                // Deux signatures du même contenu ne doivent jamais compter pour
+                // des politiques différentes : ECDSA signe au hasard, donc la
+                // comparer par signature ferait que deux membres se renvoient
+                // sans fin « leur » exemplaire du même contenu. C'est le contenu
+                // signé, et non la signature, qui départage ici comme dans
+                // GroupPolicyRules.IsNewer.
+                var same = GroupPolicyCodec.SignedPortion(candidate!).AsSpan()
+                    .SequenceEqual(GroupPolicyCodec.SignedPortion(current));
+                return same ? PolicyOffer.Same : PolicyOffer.Stale;
+            }
+
+            _groups[id] = group with { Policy = candidate, Name = candidate!.Name, Rendezvous = candidate.Rendezvous };
+        }
+
+        Changed?.Invoke();
+        PolicyAdopted?.Invoke(id);
+        return PolicyOffer.Adopted;
+    }
+
     /// <summary>
     /// Décide si cette clé peut parler pour ce personnage dans ce groupe.
     /// </summary>
@@ -134,11 +213,16 @@ public sealed class GroupBook(IClock clock) : IGroupGate
     {
         var key = PeerId.Of(publicKey);
         GroupAdmission verdict;
+        var write = false;
 
         lock (_gate)
         {
             if (_groups.TryGetValue(id, out var group) is false)
                 return GroupAdmission.UnknownGroup;
+
+            // Un banni ne laisse aucune trace : ni épinglage, ni dernière vue.
+            if (group.Policy?.IsBanned(key, member) is true)
+                return GroupAdmission.Banned;
 
             if (group.Members.TryGetValue(member, out var known) && known.Id is { } pinned)
             {
@@ -147,35 +231,56 @@ public sealed class GroupBook(IClock clock) : IGroupGate
                 // avec une clé bidon, sans jamais réussir le handshake. La laisser
                 // rafraîchir LastSeenAt fausserait l'ordre d'éviction de ForgetOldest
                 // sans qu'aucune preuve n'ait été apportée.
-                return pinned == key ? GroupAdmission.Admitted : GroupAdmission.Disputed;
-            }
+                if (pinned != key)
+                    return GroupAdmission.Disputed;
 
-            var members = new Dictionary<PlayerFingerprint, GroupMember>(group.Members);
+                verdict = GroupAdmission.Admitted;
 
-            if (known is not null)
-            {
-                verdict = GroupAdmission.Pinned;
-                members[member] = known with { Id = key, LastSeenAt = clock.UtcNow };
+                // La clé complète peut manquer sur un enregistrement épinglé
+                // avant cette version (ou relu depuis le disque) : la compléter
+                // est un vrai changement, à enregistrer, mais rien d'autre ne
+                // bouge tant que la clé est déjà connue.
+                if (known.PublicKey is null)
+                {
+                    var membersWithKey = new Dictionary<PlayerFingerprint, GroupMember>(group.Members)
+                    {
+                        [member] = known with { PublicKey = publicKey },
+                    };
+                    _groups[id] = group with { Members = membersWithKey };
+                    write = true;
+                }
             }
             else
             {
-                verdict = GroupAdmission.Pinned;
-                members[member] = new GroupMember
+                var members = new Dictionary<PlayerFingerprint, GroupMember>(group.Members);
+
+                if (known is not null)
                 {
-                    Fingerprint = member,
-                    Id = key,
-                    DisplayName = displayName,
-                    LastSeenAt = clock.UtcNow,
-                };
+                    verdict = GroupAdmission.Pinned;
+                    members[member] = known with { Id = key, PublicKey = publicKey, LastSeenAt = clock.UtcNow };
+                }
+                else
+                {
+                    verdict = GroupAdmission.Pinned;
+                    members[member] = new GroupMember
+                    {
+                        Fingerprint = member,
+                        Id = key,
+                        DisplayName = displayName,
+                        PublicKey = publicKey,
+                        LastSeenAt = clock.UtcNow,
+                    };
 
-                if (members.Count > MaxMembersPerGroup)
-                    ForgetOldest(members, spare: member);
+                    if (members.Count > MaxMembersPerGroup)
+                        ForgetOldest(members, spare: member);
+                }
+
+                _groups[id] = group with { Members = members };
+                write = true;
             }
-
-            _groups[id] = group with { Members = members };
         }
 
-        if (verdict is GroupAdmission.Pinned)
+        if (write)
             Changed?.Invoke();
 
         return verdict;

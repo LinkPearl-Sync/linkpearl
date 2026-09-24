@@ -41,17 +41,32 @@ public sealed class GroupDialPlanner(IClock clock)
         var now = clock.UtcNow;
 
         // Deux groupes en commun : le plus petit identifiant, choisi pareil des
-        // deux côtés sans se concerter, et une seule session.
+        // deux côtés sans se concerter, et une seule session. L'empreinte se
+        // vérifie contre l'Id épinglé du membre quand il est connu, et non
+        // contre null : un pair protégé (propriétaire-membre ou modérateur
+        // attesté) n'est jamais tenu pour banni tant que sa clé est reconnue,
+        // et un membre pas encore épinglé n'a pas encore cette protection à
+        // offrir.
         foreach (var seen in sightings
-                     .Where(sighting => sighting.Member != ours && byId.ContainsKey(sighting.Group))
+                     .Where(sighting => sighting.Member != ours
+                                        && byId.TryGetValue(sighting.Group, out var group)
+                                        && group.Policy?.IsBanned(
+                                               group.Members.GetValueOrDefault(sighting.Member)?.Id, sighting.Member)
+                                           is not true)
                      .GroupBy(sighting => sighting.Member))
         {
             var chosen = seen.MinBy(sighting => sighting.Group)!;
             _recent[seen.Key] = (chosen.Group, chosen.DisplayName, now);
         }
 
+        // Même substitution ici : un membre que la politique courante bannit
+        // (par empreinte, sauf s'il reste protégé par son Id épinglé) doit
+        // voir sa session se refermer au tic suivant, pas seulement ne plus
+        // s'en ouvrir une nouvelle.
         foreach (var (member, entry) in _recent.ToList())
-            if (now - entry.Seen > Linger || byId.ContainsKey(entry.Group) is false)
+            if (now - entry.Seen > Linger
+                || byId.TryGetValue(entry.Group, out var group) is false
+                || group.Policy?.IsBanned(group.Members.GetValueOrDefault(member)?.Id, member) is true)
                 _recent.Remove(member);
 
         // Une paire du carnet l'emporte toujours. Le carnet entier, retraits

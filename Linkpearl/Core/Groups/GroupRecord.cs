@@ -33,6 +33,15 @@ public sealed record GroupMember
 
     /// <summary>Les animations, VFX et sons acceptés de ce membre.</summary>
     public TransientCategories Receive { get; init; } = TransientCategories.All;
+
+    /// <summary>
+    /// La clé d'identité complète épinglée, point de 65 octets.
+    /// </summary>
+    /// <remarks>
+    /// L'identifiant seul ne suffit pas pour nommer un modérateur : la politique
+    /// porte des clés, pas des empreintes de clés.
+    /// </remarks>
+    public byte[]? PublicKey { get; init; }
 }
 
 /// <summary>Un groupe dont le personnage est membre.</summary>
@@ -52,4 +61,19 @@ public sealed record GroupRecord
     /// <summary>Les membres rencontrés, et eux seuls : personne ne tient la liste complète.</summary>
     public IReadOnlyDictionary<PlayerFingerprint, GroupMember> Members { get; init; }
         = new Dictionary<PlayerFingerprint, GroupMember>();
+
+    /// <summary>
+    /// La clé publique compressée du groupe, dont dérive son identifiant.
+    /// </summary>
+    /// <remarks>
+    /// Nulle pour un groupe fabriqué à partir d'un secret seul (essai, Public) :
+    /// sans elle, aucune politique ne peut se vérifier, donc aucune ne s'applique.
+    /// </remarks>
+    public byte[]? OwnerKey { get; init; }
+
+    /// <summary>La clé privée du groupe, PKCS#8, chez le seul propriétaire.</summary>
+    public byte[]? SigningKey { get; init; }
+
+    /// <summary>La politique vérifiée la plus récente. Nulle tant qu'aucun membre ne l'a transmise.</summary>
+    public GroupPolicy? Policy { get; init; }
 }
