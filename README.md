@@ -7,6 +7,10 @@
   directement de joueur à joueur, sans serveur au milieu.</b>
 </p>
 
+<p align="center">
+  <a href="https://linkpearl-sync.github.io/">linkpearl-sync.github.io</a>
+</p>
+
 ---
 
 ## Installer
