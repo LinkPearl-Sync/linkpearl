@@ -99,7 +99,7 @@ That's it: your looks are exchanged whenever you are within range of each other.
 - Your files leave your game only for the peers you accepted, end-to-end encrypted.
 - For two players to find each other, Linkpearl goes through a **rendezvous service**. It sees neither your files, nor your looks, nor your keys, nor your character's name.
 - If you keep **Me signaler aux autres joueurs** (let other players see me, on by default), the service can know that your character is online: that is what lets others recognise you. You can turn it off in **Réglages > Visibilité** (Settings > Visibility).
-- You can host your own rendezvous service: see [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous). You and your friends just need to share at least one.
+- You can host your own rendezvous service: see the [self-hosting guide](https://linkpearl-sync.github.io/expert.html#self-host). You and your friends just need to share at least one.
 
 ---
 
@@ -107,4 +107,4 @@ That's it: your looks are exchanged whenever you are within range of each other.
 
 Open an [issue](https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/issues) describing what you did and what you saw. The Dalamud log (`/xllog`) helps a lot. Issues in English or French are both welcome.
 
-For the curious and for contributors, the design and the protocol are described in [`docs/`](docs/) (in French).
+For the curious, [the technical page](https://linkpearl-sync.github.io/expert.html) explains connections, encryption and federation. For contributors, the design and the protocol are described in [`docs/`](docs/) (in French).

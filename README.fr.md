@@ -96,7 +96,7 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 - Vos fichiers ne quittent votre jeu que vers les pairs que vous avez acceptés, chiffrés de bout en bout.
 - Pour que deux joueurs se trouvent, Linkpearl passe par un **service de rendez-vous**. Il ne voit ni vos fichiers, ni vos apparences, ni vos clés, ni le nom de votre personnage.
 - Si vous activez **Me signaler aux autres joueurs** (réglage par défaut), le service peut savoir que votre personnage est en ligne : c'est ce qui permet aux autres de vous reconnaître. Vous pouvez le désactiver dans **Réglages > Visibilité**.
-- Vous pouvez héberger votre propre service de rendez-vous : voir [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous). Vous et vos amis devez simplement en partager au moins un.
+- Vous pouvez héberger votre propre service de rendez-vous : voir le [guide d'auto-hébergement](https://linkpearl-sync.github.io/expert.html#self-host). Vous et vos amis devez simplement en partager au moins un.
 
 ---
 
@@ -104,4 +104,4 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 
 Ouvrez une [issue](https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/issues) en décrivant ce que vous avez fait et ce que vous avez vu. Le journal de Dalamud (`/xllog`) aide beaucoup.
 
-Pour les curieux et les contributeurs, la conception et le protocole sont décrits dans [`docs/`](docs/).
+Pour les curieux, [la page technique](https://linkpearl-sync.github.io/expert.html) explique la connexion, le chiffrement et la fédération. Pour les contributeurs, la conception et le protocole sont décrits dans [`docs/`](docs/).
