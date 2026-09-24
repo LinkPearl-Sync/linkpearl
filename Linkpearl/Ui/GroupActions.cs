@@ -17,7 +17,8 @@ namespace Linkpearl.Ui;
 public sealed class GroupActions
 {
     /// <summary>Crée un groupe (nom, mot de passe ; vide pour la validation par modérateur).</summary>
-    public required Action<string, string> Create { get; init; }
+    /// <remarks>Rend vrai si le groupe existe désormais : la fenêtre de création ne se ferme qu'à ce prix.</remarks>
+    public required Func<string, string, bool> Create { get; init; }
 
     /// <summary>Demande à rejoindre un groupe (texte du code collé, mot de passe).</summary>
     public required Action<string, string> Join { get; init; }

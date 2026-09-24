@@ -30,7 +30,8 @@ namespace Linkpearl.Ui.Pages;
 /// ce qui se lit avant de cliquer et non au survol d'une icône.
 /// </remarks>
 internal sealed class GroupsPage(
-    GroupBook groups, AdmissionCandidate candidate, Func<IReadOnlyList<PeerStatus>> statuses, GroupActions actions)
+    GroupBook groups, AdmissionCandidate candidate, Func<IReadOnlyList<PeerStatus>> statuses, GroupActions actions,
+    GroupEntryWindow entry)
 {
     /// <summary>
     /// La dissolution n'est relayée que par le propriétaire : l'oublier trop
@@ -46,11 +47,6 @@ internal sealed class GroupsPage(
       + "entrés devront recevoir le nouveau.";
 
     private const string ConfirmTooltip = "Cliquer encore dans les quatre secondes pour confirmer.";
-
-    private string _joinCode = "";
-    private string _joinPassword = "";
-    private string _createName = "";
-    private string _createPassword = "";
 
     /// <summary>Le nouveau mot de passe saisi, par groupe : deux groupes ouverts ne partagent pas un champ.</summary>
     private readonly Dictionary<GroupId, string> _newPasswords = [];
@@ -102,8 +98,7 @@ internal sealed class GroupsPage(
         Text.Small("Un groupe synchronise tous ses membres entre eux, sans les pairer un à un.");
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-        DrawJoin();
-        DrawCreate();
+        DrawEntry();
 
         var all = groups.All;
 
@@ -122,127 +117,42 @@ internal sealed class GroupsPage(
             DrawGroup(group, GroupGovernance.RoleOf(group, ours), known, all.Count);
     }
 
-    private void DrawJoin()
+    /// <summary>Les deux portes d'entrée, et où en est une candidature pour qui a fermé sa fenêtre.</summary>
+    /// <remarks>
+    /// Rejoindre et créer vivent dans leur propre fenêtre : ce sont des gestes
+    /// d'une fois, et leurs formulaires repoussaient la liste des groupes, ce
+    /// qu'on vient voir tous les jours, sous la ligne de flottaison.
+    /// </remarks>
+    private void DrawEntry()
     {
-        using var card = Card.Begin("groups_join");
-
-        Text.WithIcon(Icons.Invite, "Rejoindre un groupe", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        ImGui.SetNextItemWidth(Card.FullWidth);
-        ImGui.InputTextWithHint("##group_code", "XXXX-XXXX-XXXX@service", ref _joinCode, 300);
-
-        ImGui.SetNextItemWidth(FieldWidth);
-        ImGui.InputTextWithHint("##group_join_password", "Mot de passe (facultatif)", ref _joinPassword,
-                                GroupPolicyCodec.MaxPasswordBytes, ImGuiInputTextFlags.Password);
+        if (Btn.Draw("Rejoindre un groupe", BtnTone.Primary, BtnSize.Small, Icons.Invite, id: "open_join"))
+            entry.OpenJoin();
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
-        // Une candidature à la fois : en relancer une pendant qu'un membre
-        // vérifie la preuve la remplacerait sous ses pieds.
-        var busy = candidate.State is CandidacyState.Waiting or CandidacyState.Proving;
+        if (Btn.Draw("Créer un groupe", BtnTone.Secondary, BtnSize.Small, Icons.Groups, id: "open_create"))
+            entry.OpenCreate();
 
-        if (Btn.Draw("Rejoindre", BtnTone.Primary, BtnSize.Small, Icons.Invite, id: "group_join",
-                     disabled: busy || _joinCode.Trim().Length == 0))
+        if (GroupEntryWindow.TryDescribe(candidate, out var status, out var color))
         {
-            actions.Join(_joinCode, _joinPassword);
+            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+            Text.Small(status, color);
 
-            // Effacé dès l'envoi : un mot de passe n'a pas à rester lisible
-            // dans un champ pendant qu'on joue, fenêtre ouverte.
-            _joinPassword = "";
+            // Tout sauf la réussite rouvre la fenêtre : c'est là qu'on annule,
+            // qu'on saisit le mot de passe demandé ou qu'on relance.
+            if (candidate.State is not CandidacyState.Idle)
+            {
+                if (ImGui.IsItemHovered())
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+                Feedback.TooltipOnHover("Rouvrir la fenêtre de la demande");
+
+                if (ImGui.IsItemClicked())
+                    entry.OpenJoin();
+            }
         }
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
-        Text.Small("Collez le code reçu par /tell. Laissez le mot de passe vide si le groupe valide chaque entrée.",
-                   Theme.TextFaint);
-
-        DrawCandidacy();
-    }
-
-    /// <summary>Où en est la candidature, dans la carte qui l'a lancée.</summary>
-    private void DrawCandidacy()
-    {
-        if (candidate.State is CandidacyState.Idle && candidate.LastJoinedName is null)
-            return;
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        switch (candidate.State)
-        {
-            case CandidacyState.Waiting:
-                // Le texte se cale sur la hauteur du bouton qui le suit, sans
-                // quoi il flotte au-dessus de la ligne.
-                ImGui.AlignTextToFramePadding();
-                Text.Small("Demande envoyée, en attente de la réponse du groupe.", Theme.Accent);
-                ImGui.SameLine(0f, Theme.S(Theme.GapM));
-
-                if (Btn.Draw("Annuler", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: "group_join_cancel"))
-                    actions.CancelJoin();
-
-                break;
-
-            case CandidacyState.NeedsPassword:
-                Text.Small("Ce groupe demande un mot de passe. Saisissez-le et relancez.", Theme.Idle);
-                break;
-
-            case CandidacyState.Proving:
-                Text.Small("Mot de passe envoyé…", Theme.Accent);
-                break;
-
-            case CandidacyState.Refused:
-                Text.Small(candidate.RefusalReason switch
-                {
-                    RefusalReason.WrongPassword   => "Mot de passe incorrect.",
-                    RefusalReason.TooManyAttempts => "Trop d'essais : réessayez dans une demi-heure.",
-                    _                             => "Un modérateur a refusé votre demande.",
-                }, Theme.Danger);
-                break;
-
-            case CandidacyState.Expired:
-                Text.Small("Personne n'a répondu en dix minutes. Un membre doit être en ligne.", Theme.Idle);
-                break;
-
-            case CandidacyState.Idle when candidate.LastJoinedName is { } name:
-                Text.Small($"Vous avez rejoint {Glyphs.Safe(name)}.", Theme.Online);
-                break;
-        }
-    }
-
-    private void DrawCreate()
-    {
-        using var card = Card.Begin("groups_create");
-
-        Text.WithIcon(Icons.Groups, "Créer un groupe", Theme.Accent);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        // Le tampon en octets, la limite en caractères : un nom accentué de
-        // trente-deux caractères dépasse trente-deux octets, et c'est
-        // IsValidName qui tranche, comme le fera chaque membre en le recevant.
-        ImGui.SetNextItemWidth(FieldWidth);
-        ImGui.InputTextWithHint("##group_name", "Nom du groupe (32 caractères)", ref _createName,
-                                GroupPolicyCodec.MaxNameBytes);
-
-        ImGui.SetNextItemWidth(FieldWidth);
-        ImGui.InputTextWithHint("##group_create_password", "Mot de passe (facultatif)", ref _createPassword,
-                                GroupPolicyCodec.MaxPasswordBytes, ImGuiInputTextFlags.Password);
-
-        ImGui.SameLine(0f, Theme.S(Theme.GapS));
-
-        if (Btn.Draw("Créer", BtnTone.Secondary, BtnSize.Small, Icons.Accept, id: "group_create",
-                     disabled: GroupPolicyCodec.IsValidName(_createName.Trim()) is false))
-        {
-            actions.Create(_createName.Trim(), _createPassword);
-            _createName = "";
-            _createPassword = "";
-        }
-
-        // La conséquence suit la saisie : c'est le mot de passe, ou son
-        // absence, qui choisit le mode d'admission du groupe à sa naissance.
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
-        Text.Small(_createPassword.Length == 0
-                       ? "Sans mot de passe, chaque entrée devra être validée par vous ou un modérateur."
-                       : "Avec le code et ce mot de passe, n'importe qui entrera sans attendre personne.",
-                   Theme.TextFaint);
+        ImGui.Dummy(Theme.S(0f, Theme.GapL));
     }
 
     private void DrawGroup(GroupRecord group, GroupRole role, IReadOnlyList<PeerStatus> known, int groupCount)

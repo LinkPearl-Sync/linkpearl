@@ -145,6 +145,9 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly StatusBarEntry _statusBar;
     private readonly TransferOverlay _overlay;
+
+    /// <summary>La fenêtre qui rejoint ou crée un groupe, ouverte depuis la page Groupes.</summary>
+    private readonly GroupEntryWindow _groupEntry;
     private readonly NameplateGlyphs _nameplates;
     private readonly ExtrasIpc _extras;
     private readonly TransientCapture _transients;
@@ -320,6 +323,8 @@ public sealed class Plugin : IDalamudPlugin
         // pas, sans jamais rester vide.
         Fonts.Build(PluginInterface);
 
+        _groupEntry = new GroupEntryWindow(_candidate, _groupActions);
+
         _window = new MainWindow(
             _pairing, _presence, _state, _configuration,
             () => _engine?.Statuses ?? [],
@@ -343,7 +348,8 @@ public sealed class Plugin : IDalamudPlugin
             _groups,
             _candidate,
             _groupActions,
-            () => _admissionHost.Pending);
+            () => _admissionHost.Pending,
+            _groupEntry);
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -351,6 +357,7 @@ public sealed class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened += OnMenuOpened;
 
         _windows.AddWindow(_window);
+        _windows.AddWindow(_groupEntry);
         _windows.AddWindow(new RequestToasts(
             _presence, _state, () => _window.ShowsRequests, _window.OpenRequests, Accept, Decline,
             () => _admissionHost.Pending, _groupActions.Approve, _groupActions.Decline));
@@ -1283,18 +1290,19 @@ public sealed class Plugin : IDalamudPlugin
     };
 
     /// <summary>Crée un groupe dont nous sommes le propriétaire, et en donne le code.</summary>
-    private void CreateGroup(string name, string password)
+    /// <returns>Vrai si le groupe existe désormais, pour que sa fenêtre se ferme.</returns>
+    private bool CreateGroup(string name, string password)
     {
         if (_pairing.Identity is not { } identity)
         {
             Report("personnage introuvable.");
-            return;
+            return false;
         }
 
         if (_configuration.ActiveRendezvous.FirstOrDefault() is not { } service)
         {
             Report("activez d'abord un service de rendez-vous dans les réglages.");
-            return;
+            return false;
         }
 
         CreatedGroup created;
@@ -1309,21 +1317,22 @@ public sealed class Plugin : IDalamudPlugin
             // veut rien dire pour le joueur.
             var why = e.ParamName is { } parameter ? e.Message.Replace($" (Parameter '{parameter}')", "") : e.Message;
             Report($"création impossible : {why}.");
-            return;
+            return false;
         }
         catch (InvalidOperationException e)
         {
             Report($"création impossible : {e.Message}.");
-            return;
+            return false;
         }
 
         if (_groups.TryAdd(created.Record, out var refusal) is false)
         {
             Report($"création impossible : {refusal}.");
-            return;
+            return false;
         }
 
         Report($"Groupe {created.Record.Name} créé. Son code : {InvitationTicketText.Encode(created.Code, service.Address)}");
+        return true;
     }
 
     /// <summary>Demande à rejoindre un groupe par le code collé.</summary>
@@ -1586,6 +1595,9 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= _windows.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= Open;
         PluginInterface.UiBuilder.OpenConfigUi -= Open;
+        // Fermée avant d'être retirée : ses mots de passe saisis ne restent
+        // pas en mémoire jusqu'au passage du ramasse-miettes.
+        _groupEntry.Close();
         _windows.RemoveAllWindows();
 
         Commands.RemoveHandler(Command);

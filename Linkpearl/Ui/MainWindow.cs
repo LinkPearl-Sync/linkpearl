@@ -48,7 +48,7 @@ public sealed class MainWindow : ThemedWindow
         BackupState backupState, Action<string, string?> backup, Action<string, string?> restore,
         CacheKeeper cacheKeeper, Action showOnboarding,
         GroupBook groupBook, AdmissionCandidate candidate, GroupActions groupActions,
-        Func<IReadOnlyList<PendingValidation>> admissions)
+        Func<IReadOnlyList<PendingValidation>> admissions, GroupEntryWindow groupEntry)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -69,7 +69,7 @@ public sealed class MainWindow : ThemedWindow
         _requests = new RequestsPage(
             state, presence, accept, decline, admissions, groupActions.Approve, groupActions.Decline);
 
-        var groups = new GroupsPage(groupBook, candidate, statuses, groupActions);
+        var groups = new GroupsPage(groupBook, candidate, statuses, groupActions, groupEntry);
 
         _shell = new AppShell(
         [
