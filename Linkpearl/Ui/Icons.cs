@@ -22,6 +22,7 @@ internal static class Icons
     public const FontAwesomeIcon Nearby   = FontAwesomeIcon.Users;
     public const FontAwesomeIcon Pairs    = FontAwesomeIcon.UserFriends;
     public const FontAwesomeIcon Requests = FontAwesomeIcon.Envelope;
+    public const FontAwesomeIcon Groups   = FontAwesomeIcon.PeopleGroup;
     public const FontAwesomeIcon Settings = FontAwesomeIcon.Cog;
 
     // ─── État d'un pair ───────────────────────────────────────────────────────
@@ -63,6 +64,10 @@ internal static class Icons
     public const FontAwesomeIcon Close   = FontAwesomeIcon.Times;
     public const FontAwesomeIcon Backup  = FontAwesomeIcon.Save;
     public const FontAwesomeIcon Restore = FontAwesomeIcon.FileImport;
+    public const FontAwesomeIcon Leave   = FontAwesomeIcon.SignOutAlt;
+
+    // ─── Groupes ──────────────────────────────────────────────────────────────
+    public const FontAwesomeIcon Moderator = FontAwesomeIcon.UserShield;
 
     // ─── Messages ─────────────────────────────────────────────────────────────
     public const FontAwesomeIcon Warning = FontAwesomeIcon.ExclamationTriangle;
@@ -82,12 +87,13 @@ internal static class Icons
     /// </remarks>
     public static readonly FontAwesomeIcon[] All =
     [
-        Nearby, Pairs, Requests, Settings,
+        Nearby, Pairs, Requests, Groups, Settings,
         Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
         Direct, Relayed,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
         Animations, Vfx, Sounds, Effects,
-        Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore,
+        Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore, Leave,
+        Moderator,
         Warning, Info, Empty,
         Folder, Lock, Check,
     ];

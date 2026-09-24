@@ -1,6 +1,7 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Linkpearl.Core.Cache;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Sync;
@@ -14,7 +15,7 @@ using System.Numerics;
 namespace Linkpearl.Ui;
 
 /// <summary>
-/// La fenêtre principale : une coque à chrome maison, quatre pages.
+/// La fenêtre principale : une coque à chrome maison, cinq pages.
 /// </summary>
 /// <remarks>
 /// <b>Aucune clé n'y est montrée.</b> L'utilisateur voit des noms de
@@ -45,7 +46,9 @@ public sealed class MainWindow : ThemedWindow
         Func<TransientCategories> globalReceive, Action<TransientCategories> setGlobalReceive,
         Action<PeerId, TransientCategories> setPairReceive,
         BackupState backupState, Action<string, string?> backup, Action<string, string?> restore,
-        CacheKeeper cacheKeeper, Action showOnboarding)
+        CacheKeeper cacheKeeper, Action showOnboarding,
+        GroupBook groupBook, AdmissionCandidate candidate, GroupActions groupActions,
+        Func<IReadOnlyList<PendingValidation>> admissions)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -63,7 +66,10 @@ public sealed class MainWindow : ThemedWindow
         var settings = new SettingsPage(
             configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding);
 
-        _requests = new RequestsPage(state, presence, accept, decline);
+        _requests = new RequestsPage(
+            state, presence, accept, decline, admissions, groupActions.Approve, groupActions.Decline);
+
+        var groups = new GroupsPage(groupBook, candidate, statuses, groupActions);
 
         _shell = new AppShell(
         [
@@ -80,6 +86,10 @@ public sealed class MainWindow : ThemedWindow
             {
                 Id = "requests", Icon = Icons.Requests, Label = () => "Demandes", Draw = _requests.Draw,
                 Badge = () => _requests.Count,
+            },
+            new ShellPage
+            {
+                Id = "groups", Icon = Icons.Groups, Label = () => "Groupes", Draw = groups.Draw,
             },
             new ShellPage
             {

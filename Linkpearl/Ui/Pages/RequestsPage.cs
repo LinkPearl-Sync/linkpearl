@@ -1,11 +1,13 @@
 using Dalamud.Bindings.ImGui;
+using Linkpearl.Core.Groups;
 using Linkpearl.Integration;
 using Linkpearl.Ui.Components;
 
 namespace Linkpearl.Ui.Pages;
 
 /// <summary>
-/// Les demandes de pairage reçues.
+/// Les demandes de pairage reçues, puis les demandes d'entrée dans un groupe
+/// qu'il nous revient de valider.
 /// </summary>
 /// <remarks>
 /// Le repère qui compte est affiché avant les boutons : cette personne est-elle
@@ -14,23 +16,35 @@ namespace Linkpearl.Ui.Pages;
 /// </remarks>
 internal sealed class RequestsPage(
     PluginState state, PresenceService presence,
-    Action<IncomingRequest> accept, Action<IncomingRequest> decline)
+    Action<IncomingRequest> accept, Action<IncomingRequest> decline,
+    Func<IReadOnlyList<PendingValidation>> admissions,
+    Action<PendingValidation> approve, Action<PendingValidation> declineAdmission)
 {
-    public int Count => presence.RequestCount;
+    public int Count => presence.RequestCount + admissions().Count;
 
     /// <summary>La personne qui demande est-elle devant nous ?</summary>
     public static bool IsVisible(PluginState state, IncomingRequest request)
         => state.Nearby.Any(player => string.Equals(player.Name, request.CharacterName, StringComparison.Ordinal));
 
+    /// <summary>Le candidat est-il devant nous ?</summary>
+    /// <remarks>
+    /// Par nom et par monde : le candidat les donne tous deux, et un homonyme
+    /// d'un autre monde croisé par hasard ne doit pas passer pour lui.
+    /// </remarks>
+    public static bool IsVisible(PluginState state, PendingValidation pending)
+        => state.Nearby.Any(player => player.WorldId == pending.WorldId
+                                   && string.Equals(player.Name, pending.CharacterName, StringComparison.Ordinal));
+
     public void Draw()
     {
         var requests = presence.PeekRequests();
+        var pending = admissions();
 
         Text.Title("Demandes");
         Text.Small("Quelqu'un souhaite que vous vous voyiez mutuellement avec vos mods.");
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
-        if (requests.Count == 0)
+        if (requests.Count == 0 && pending.Count == 0)
         {
             Feedback.EmptyState(
                 Icons.Requests,
@@ -66,5 +80,37 @@ internal sealed class RequestsPage(
                          id: $"decline_{request.Id.ToHex()}"))
                 decline(request);
         }
+
+        foreach (var admission in pending)
+            DrawAdmission(admission);
+    }
+
+    /// <summary>Une demande d'entrée dans un groupe, que nous validons comme propriétaire ou modérateur.</summary>
+    private void DrawAdmission(PendingValidation pending)
+    {
+        var id = Convert.ToHexString(pending.Nonce);
+        var visible = IsVisible(state, pending);
+
+        using var card = Card.Begin($"admission_{id}", accent: Theme.Accent);
+
+        // Le nom du candidat et celui du groupe viennent du réseau.
+        Text.H2(Glyphs.Safe(pending.CharacterName));
+        Text.Small($"veut rejoindre {Glyphs.Safe(pending.GroupName)}", Theme.TextMuted);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+
+        Chip.Draw(
+            visible ? "visible autour de vous" : "pas visible d'ici",
+            visible ? Theme.Online : Theme.Idle,
+            visible ? Icons.Character : Icons.Warning);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept, id: $"admission_accept_{id}"))
+            approve(pending);
+
+        ImGui.SameLine();
+
+        if (Btn.Draw("Refuser", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: $"admission_decline_{id}"))
+            declineAdmission(pending);
     }
 }

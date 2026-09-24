@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using Linkpearl.Core.Groups;
 using Linkpearl.Integration;
 using Linkpearl.Ui.Components;
 using Linkpearl.Ui.Pages;
@@ -8,7 +9,8 @@ using System.Numerics;
 namespace Linkpearl.Ui;
 
 /// <summary>
-/// Les demandes de pairage en attente, en cartes empilées dans le coin bas
+/// Les demandes de pairage en attente, et les demandes d'entrée dans un groupe
+/// qu'il nous revient de valider, en cartes empilées dans le coin bas
 /// droit de l'écran, avec de quoi répondre sans ouvrir la fenêtre.
 /// </summary>
 /// <remarks>
@@ -34,10 +36,15 @@ internal sealed class RequestToasts : ThemedWindow
     private readonly Action _open;
     private readonly Action<IncomingRequest> _accept;
     private readonly Action<IncomingRequest> _decline;
+    private readonly Func<IReadOnlyList<PendingValidation>> _admissions;
+    private readonly Action<PendingValidation> _approve;
+    private readonly Action<PendingValidation> _declineAdmission;
 
     public RequestToasts(
         PresenceService presence, PluginState state, Func<bool> mainShowsRequests, Action open,
-        Action<IncomingRequest> accept, Action<IncomingRequest> decline)
+        Action<IncomingRequest> accept, Action<IncomingRequest> decline,
+        Func<IReadOnlyList<PendingValidation>> admissions,
+        Action<PendingValidation> approve, Action<PendingValidation> declineAdmission)
         : base("Linkpearl : demandes##toasts",
                ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoMove
              | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing
@@ -49,6 +56,9 @@ internal sealed class RequestToasts : ThemedWindow
         _open              = open;
         _accept            = accept;
         _decline           = decline;
+        _admissions        = admissions;
+        _approve           = approve;
+        _declineAdmission  = declineAdmission;
 
         // Un flou derrière une fenêtre sans fond dessinerait un rectangle
         // brouillé autour des cartes.
@@ -63,7 +73,8 @@ internal sealed class RequestToasts : ThemedWindow
     /// Rien à montrer quand la fenêtre principale affiche déjà les demandes :
     /// les mêmes boutons deux fois à l'écran, c'est une de trop.
     /// </remarks>
-    public override bool DrawConditions() => _presence.RequestCount > 0 && _mainShowsRequests() is false;
+    public override bool DrawConditions()
+        => (_presence.RequestCount > 0 || _admissions().Count > 0) && _mainShowsRequests() is false;
 
     public override void PreDraw()
     {
@@ -90,14 +101,22 @@ internal sealed class RequestToasts : ThemedWindow
     public override void Draw()
     {
         var requests = _presence.PeekRequests();
+        var admissions = _admissions();
 
+        // Les pairages d'abord, comme dans la page : les deux sortes se
+        // partagent la même limite, l'écran n'est pas plus grand pour autant.
         foreach (var request in requests.Take(MaxShown))
             DrawOne(request);
 
-        if (requests.Count <= MaxShown)
+        foreach (var admission in admissions.Take(Math.Max(0, MaxShown - requests.Count)))
+            DrawOne(admission);
+
+        var total = requests.Count + admissions.Count;
+
+        if (total <= MaxShown)
             return;
 
-        var more = requests.Count - MaxShown;
+        var more = total - MaxShown;
 
         if (Btn.Draw($"{more} autre{(more > 1 ? "s" : "")} demande{(more > 1 ? "s" : "")}",
                      BtnTone.Secondary, BtnSize.Block, Icons.Requests, id: "toasts_more"))
@@ -129,5 +148,33 @@ internal sealed class RequestToasts : ThemedWindow
 
         if (Btn.Draw("Refuser", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: $"toast_decline_{id}"))
             _decline(request);
+    }
+
+    private void DrawOne(PendingValidation pending)
+    {
+        var id      = Convert.ToHexString(pending.Nonce);
+        var visible = RequestsPage.IsVisible(_state, pending);
+
+        using var card = Card.Begin($"toast_admission_{id}", accent: Theme.Accent);
+
+        Text.WithIcon(Icons.Groups, "Demande d'entrée dans un groupe", Theme.Accent, Theme.TextMuted);
+        Text.H2(Glyphs.Safe(pending.CharacterName));
+        Text.Small($"veut rejoindre {Glyphs.Safe(pending.GroupName)}", Theme.TextMuted);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+
+        Chip.Draw(
+            visible ? "visible autour de vous" : "pas visible d'ici",
+            visible ? Theme.Online : Theme.Idle,
+            visible ? Icons.Character : Icons.Warning);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept, id: $"toast_admission_accept_{id}"))
+            _approve(pending);
+
+        ImGui.SameLine();
+
+        if (Btn.Draw("Refuser", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: $"toast_admission_decline_{id}"))
+            _declineAdmission(pending);
     }
 }

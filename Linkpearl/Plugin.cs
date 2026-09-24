@@ -339,7 +339,11 @@ public sealed class Plugin : IDalamudPlugin
             (path, password) => RunSafely(() => BackupAsync(path, password)),
             (path, password) => RunSafely(() => RestoreAsync(path, password)),
             _cacheKeeper,
-            () => _onboarding.Show());
+            () => _onboarding.Show(),
+            _groups,
+            _candidate,
+            _groupActions,
+            () => _admissionHost.Pending);
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -348,7 +352,8 @@ public sealed class Plugin : IDalamudPlugin
 
         _windows.AddWindow(_window);
         _windows.AddWindow(new RequestToasts(
-            _presence, _state, () => _window.ShowsRequests, _window.OpenRequests, Accept, Decline));
+            _presence, _state, () => _window.ShowsRequests, _window.OpenRequests, Accept, Decline,
+            () => _admissionHost.Pending, _groupActions.Approve, _groupActions.Decline));
 
         _onboarding = new OnboardingWindow(
             Textures.GetFromManifestResource(Assembly.GetExecutingAssembly(), "Images.banner.png"),
