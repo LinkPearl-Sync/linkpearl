@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using Linkpearl.Core.Safety;
 
 namespace Linkpearl.Core.Transport.Rendezvous;
 
@@ -160,6 +161,49 @@ public sealed class RendezvousClient : IAsyncDisposable
                     return null;
             }
         }
+    }
+
+    /// <summary>
+    /// Télécharge la liste de bannissement de ce service, toutes pages.
+    /// </summary>
+    /// <remarks>
+    /// Sur une connexion à part, qui n'écoute pas de boîte : la boucle de
+    /// présence lit déjà la sienne, et deux lecteurs sur un flux se volent les
+    /// trames. Un service d'avant ces trames répond « trame inattendue » :
+    /// l'échec est rendu, jamais levé, et l'appelant garde ce qu'il avait.
+    /// </remarks>
+    public async Task<(BanList? List, string? Failure)> QueryBanListAsync(CancellationToken ct)
+    {
+        var pages = new List<BanList>();
+        var total = 1;
+
+        for (var page = 0; page < total; page++)
+        {
+            await SendAsync(RendezvousWire.BanListQuery(page), ct).ConfigureAwait(false);
+
+            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+            if (frame is null)
+                return (null, "connexion fermée par le service");
+
+            if (frame[0] == RendezvousKind.Error)
+                return (null, System.Text.Encoding.UTF8.GetString(frame.AsSpan(1)));
+
+            if (RendezvousWire.TryReadBanListData(frame, out var index, out var count, out var json, out var why) is false)
+                return (null, why);
+
+            if (index != page || (page > 0 && count != total))
+                return (null, "pages incohérentes");
+
+            total = count;
+
+            if (BanList.TryParse(json, out var list, out why) is false)
+                return (null, why);
+
+            pages.Add(list!);
+        }
+
+        return BanListPages.TryMerge(pages, out var merged, out var rejection) ? (merged, null) : (null, rejection);
     }
 
     /// <summary>Dépose une demande dans la boîte de quelqu'un.</summary>
