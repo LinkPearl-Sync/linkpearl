@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Crypto;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
@@ -55,6 +56,23 @@ public sealed class PresenceService : IDisposable
     private readonly HashSet<string> _seen = [];
     private readonly Lock _gate = new();
 
+    /// <summary>Remplacés d'un bloc par le fil de rafraîchissement, lus par les ouvertures.</summary>
+    private volatile IReadOnlyList<GroupRecord> _groups = [];
+
+    /// <summary>Par joueur détecté, les groupes dont sa boîte de présence a répondu.</summary>
+    private readonly ConcurrentDictionary<PlayerFingerprint, IReadOnlyList<GroupId>> _groupPresence = new();
+
+    /// <summary>
+    /// Boîtes qu'on s'autorise sur une connexion avant de la refaire à neuf.
+    /// </summary>
+    /// <remarks>
+    /// Le service ne retire jamais une adresse d'une connexion ouverte, et
+    /// chaque fenêtre en ajoute : sans remise à zéro, dix groupes épuisent sa
+    /// limite de 64 en une heure et demie, et l'ouverture suivante est refusée.
+    /// Un peu sous la limite, pour ne jamais la toucher.
+    /// </remarks>
+    private const int MailboxBudget = 60;
+
     /// <summary>
     /// Ce que nous tenons ouvert auprès d'un service.
     /// </summary>
@@ -76,6 +94,12 @@ public sealed class PresenceService : IDisposable
 
         /// <summary>La fenêtre sous laquelle les boîtes ont été ouvertes.</summary>
         public long OpenedWindow { get; set; }
+
+        /// <summary>Adresses tenues par cette connexion, qui ne fait qu'en accumuler.</summary>
+        public int OpenedCount { get; set; }
+
+        /// <summary>Les groupes pour lesquels les boîtes ont été ouvertes.</summary>
+        public string OpenedGroups { get; set; } = string.Empty;
 
         public string? Failure { get; set; }
 
@@ -190,6 +214,15 @@ public sealed class PresenceService : IDisposable
         return taken;
     }
 
+    public void SetGroups(IReadOnlyList<GroupRecord> groups) => _groups = groups;
+
+    public IReadOnlyList<GroupId> GroupsOf(PlayerFingerprint member)
+        => _groupPresence.TryGetValue(member, out var groups) ? groups : [];
+
+    /// <summary>Ce qui distingue un jeu de groupes d'un autre, pour savoir s'il faut rouvrir.</summary>
+    private static string Signature(IReadOnlyList<GroupRecord> groups)
+        => string.Join(',', groups.Select(group => group.Id.ToString()).Order(StringComparer.Ordinal));
+
     /// <summary>
     /// Ouvre nos boîtes, ou les rouvre si le personnage a changé.
     /// </summary>
@@ -215,11 +248,11 @@ public sealed class PresenceService : IDisposable
             if (session.Client is not null && session.OpenedFor != fingerprint)
                 Close(session);
 
-            // Les adresses tournent toutes les trente minutes. Une boîte
-            // ouverte une fois pour toutes cesse d'être trouvable dès que la
-            // fenêtre suivante commence, et plus rien ne le dit : la détection
-            // s'arrête en silence sur une connexion qui a l'air en bonne santé.
-            if (session.Client is { } open && session.OpenedWindow != MailboxAddress.IndexAt(_clock.UtcNow))
+            // Les adresses tournent toutes les trente minutes, et changent aussi
+            // quand on rejoint ou quitte un groupe.
+            if (session.Client is { } open
+                && (session.OpenedWindow != MailboxAddress.IndexAt(_clock.UtcNow)
+                    || session.OpenedGroups != Signature(_groups)))
                 await ReopenAsync(session, open, fingerprint, ct).ConfigureAwait(false);
 
             if (session.Client is not null || _clock.UtcNow < session.NextAttempt)
@@ -232,7 +265,11 @@ public sealed class PresenceService : IDisposable
     /// <summary>Aligne les sessions sur la liste des services activés.</summary>
     private void Reconcile()
     {
-        var active = _configuration.ActiveRendezvous.Select(entry => entry.Address).ToHashSet();
+        // Les services d'un groupe comptent même s'ils ne sont pas dans nos
+        // réglages : c'est là que ses membres nous cherchent.
+        var active = _configuration.ActiveRendezvous.Select(entry => entry.Address)
+            .Concat(_groups.SelectMany(group => group.Rendezvous))
+            .ToHashSet();
 
         lock (_gate)
         {
@@ -263,8 +300,10 @@ public sealed class PresenceService : IDisposable
             client.Delivered += OnDelivered;
 
             var window = MailboxAddress.IndexAt(_clock.UtcNow);
+            var groups = _groups;
+            var addresses = Addresses(fingerprint, groups);
 
-            await client.OpenMailboxesAsync(Addresses(fingerprint), ct).ConfigureAwait(false);
+            await client.OpenMailboxesAsync(addresses, ct).ConfigureAwait(false);
 
             var life = new CancellationTokenSource();
 
@@ -275,6 +314,8 @@ public sealed class PresenceService : IDisposable
                 session.OpenedFor = fingerprint;
                 session.OpenedWindow = window;
                 session.Failure = null;
+                session.OpenedCount = addresses.Count;
+                session.OpenedGroups = Signature(groups);
             }
 
             _ = Task.Run(() => ListenAsync(session, client, life.Token), life.Token);
@@ -307,13 +348,27 @@ public sealed class PresenceService : IDisposable
         Session session, RendezvousClient client, PlayerFingerprint fingerprint, CancellationToken ct)
     {
         var window = MailboxAddress.IndexAt(_clock.UtcNow);
+        var groups = _groups;
+        var addresses = Addresses(fingerprint, groups);
+
+        // Au-delà du budget, on repart d'une connexion neuve, rouverte dans la
+        // même ronde : la fermeture ne repousse pas la prochaine tentative.
+        if (session.OpenedCount + addresses.Count > MailboxBudget)
+        {
+            Close(session);
+            return;
+        }
 
         try
         {
-            await client.OpenMailboxesAsync(Addresses(fingerprint), ct).ConfigureAwait(false);
+            await client.OpenMailboxesAsync(addresses, ct).ConfigureAwait(false);
 
             lock (_gate)
+            {
                 session.OpenedWindow = window;
+                session.OpenedCount += addresses.Count;
+                session.OpenedGroups = Signature(groups);
+            }
         }
         catch (Exception e)
         {
@@ -324,9 +379,14 @@ public sealed class PresenceService : IDisposable
         }
     }
 
-    /// <summary>Les adresses à ouvrir : la fenêtre courante et la suivante.</summary>
-    private List<byte[]> Addresses(PlayerFingerprint fingerprint)
-        => [.. MailboxAddress.Around(fingerprint, _clock.UtcNow).Select(address => address.ToBytes())];
+    /// <summary>
+    /// Les adresses à ouvrir : la boîte personnelle, et une boîte de présence
+    /// par groupe, chacune sous la fenêtre courante et la suivante.
+    /// </summary>
+    private List<byte[]> Addresses(PlayerFingerprint fingerprint, IReadOnlyList<GroupRecord> groups)
+        => [.. MailboxAddress.Around(fingerprint, _clock.UtcNow)
+            .Concat(groups.SelectMany(group => GroupDerivation.PresenceAround(group.Secret, fingerprint, _clock.UtcNow)))
+            .Select(address => address.ToBytes())];
 
     /// <summary>
     /// Demande à tous les services lesquels de ces joueurs utilisent le plugin.
@@ -403,6 +463,79 @@ public sealed class PresenceService : IDisposable
             else
                 _detected.TryRemove(player.Fingerprint, out _);
         }
+
+        await RefreshGroupPresenceAsync(nearby, connected, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Demande, pour chaque joueur détecté, s'il est membre de l'un de nos groupes.
+    /// </summary>
+    /// <remarks>
+    /// Seulement les joueurs détectés : un passant sans le plugin n'a pas de
+    /// boîte de groupe, et l'interroger ne ferait que coûter au service. Un
+    /// joueur qui a coupé la détection n'est donc pas trouvé par ses groupes,
+    /// ce que l'interface devra dire.
+    /// </remarks>
+    private async Task RefreshGroupPresenceAsync(
+        IReadOnlyList<NearbyPlayer> nearby, List<Session> connected, CancellationToken ct)
+    {
+        var groups = _groups;
+        var detected = nearby.Where(player => _detected.ContainsKey(player.Fingerprint)).ToList();
+
+        if (groups.Count == 0 || detected.Count == 0)
+        {
+            _groupPresence.Clear();
+            return;
+        }
+
+        var questions = detected
+            .SelectMany(player => groups.Select(group => (
+                player.Fingerprint,
+                Group: group.Id,
+                Address: GroupDerivation.PresenceAddress(group.Secret, player.Fingerprint, _clock.UtcNow).ToBytes())))
+            .ToList();
+
+        var found = new HashSet<(PlayerFingerprint Member, GroupId Group)>();
+        var answered = false;
+
+        foreach (var session in connected)
+        {
+            foreach (var batch in questions.Chunk(RendezvousWire.MaxQueriedAddresses))
+            {
+                try
+                {
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+                    var present = await session.Client!
+                        .QueryPresenceAsync([.. batch.Select(question => question.Address)], deadline.Token)
+                        .ConfigureAwait(false);
+
+                    if (present is null)
+                        break;
+
+                    answered = true;
+
+                    for (var i = 0; i < batch.Length && i < present.Length; i++)
+                        if (present[i])
+                            found.Add((batch[i].Fingerprint, batch[i].Group));
+                }
+                catch (Exception e)
+                {
+                    _log.Warning(e, $"Interrogation des groupes en échec sur {session.At}.");
+                    break;
+                }
+            }
+        }
+
+        // Même règle que la détection : sans réponse, on ne retire personne.
+        if (answered is false)
+            return;
+
+        _groupPresence.Clear();
+
+        foreach (var member in found.GroupBy(pair => pair.Member))
+            _groupPresence[member.Key] = [.. member.Select(pair => pair.Group)];
     }
 
     /// <summary>Dépose une demande de pairage dans la boîte d'un joueur.</summary>
