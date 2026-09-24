@@ -91,10 +91,21 @@ public sealed class GlamourerIpc : IDisposable
     public void ApplyStateLocked(string base64, int objectIndex)
         => Apply(base64, objectIndex, LockKey);
 
+    /// <remarks>
+    /// Sans <c>ApplyFlag.Once</c> : avec lui, Glamourer tient les teintures
+    /// avancées pour une retouche ponctuelle, et les efface dès que le matériau
+    /// se recharge avec une table de couleurs différente de celle qu'il a vue
+    /// la première fois (MaterialManager.UpdateMaterialValues, source
+    /// IpcManual). C'est exactement ce que fait notre redessin, qui charge le
+    /// matériau moddé de l'arme après l'application, puis chaque fois que
+    /// l'arme est sortie. Vu en jeu : les teintures avancées des armes d'un
+    /// pair disparaissaient. L'état d'un pair est de toute façon reposé à
+    /// chacun de ses changements, et retiré par RevertState au départ.
+    /// </remarks>
     private void Apply(string base64, int objectIndex, uint key)
     {
         var ec = _applyState.Invoke(
-            base64, objectIndex, key, ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization);
+            base64, objectIndex, key, ApplyFlag.Equipment | ApplyFlag.Customization);
 
         if (ec is not GlamourerApiEc.Success)
             throw new InvalidOperationException($"application d'état refusée par Glamourer : {ec}");
