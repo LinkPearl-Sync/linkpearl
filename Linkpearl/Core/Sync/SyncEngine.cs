@@ -123,7 +123,8 @@ public sealed record PeerStatus(
     bool FingerprintDisputed,
     string? LastFailure,
     DateTimeOffset? NextAttempt,
-    PeerRoute? Route = null);
+    PeerRoute? Route = null,
+    GroupId? Group = null);
 
 /// <summary>
 /// Le moteur : il fait vivre une session par pair et décide quoi poser à l'écran.
@@ -162,6 +163,7 @@ public sealed class SyncEngine : IAsyncDisposable
     private TransientCategories _globalReceive;
 
     private readonly IGroupGate? _groups;
+    private readonly IGroupPolicies? _policies;
 
     /// <summary>
     /// Les pairs de groupe voulus, remplacés d'un bloc par le fil de rafraîchissement.
@@ -198,7 +200,7 @@ public sealed class SyncEngine : IAsyncDisposable
     public SyncEngine(
         PairBook book, IPeerDialer dialer, ILocalAppearance local, IRemoteApplicator applicator,
         IBlobStore store, PeerId ourId, ECDsa identity, IClock clock, ILogSink log,
-        SyncEngineSettings? settings = null, Quotas? quotas = null, IGroupGate? groups = null)
+        SyncEngineSettings? settings = null, Quotas? quotas = null, IGroupGate? groups = null, IGroupPolicies? policies = null)
     {
         _book = book;
         _dialer = dialer;
@@ -214,6 +216,7 @@ public sealed class SyncEngine : IAsyncDisposable
         _uploadLimited = _settings.LimitUpload;
         _quotas = quotas ?? Quotas.Default;
         _groups = groups;
+        _policies = policies;
     }
 
     /// <summary>
@@ -238,7 +241,8 @@ public sealed class SyncEngine : IAsyncDisposable
             entry.Value.Disputed,
             entry.Value.LastFailure,
             entry.Value.Session is null ? entry.Value.NextAttempt : null,
-            entry.Value.Session?.Link is { } link ? new PeerRoute(link.IsRelayed, link.RoundTripMs) : null))
+            entry.Value.Session?.Link is { } link ? new PeerRoute(link.IsRelayed, link.RoundTripMs) : null,
+            entry.Value.Pair.Group?.Group))
         .ToList();
 
     private static PeerView EmptyView { get; } = new(null, null, null, 0, 0, false);
@@ -267,6 +271,7 @@ public sealed class SyncEngine : IAsyncDisposable
             await ServeReapplyAsync(ct).ConfigureAwait(false);
             await FollowReceiveChangesAsync(ct).ConfigureAwait(false);
             await AdoptFinishedDialsAsync(ct).ConfigureAwait(false);
+            await ExchangePoliciesAsync(ct).ConfigureAwait(false);
             await DropDeadSessionsAsync().ConfigureAwait(false);
             StartDueDials();
             ObserveLinks();
@@ -339,6 +344,16 @@ public sealed class SyncEngine : IAsyncDisposable
     /// suivre dirait « a mis fin au pairage » à propos d'un groupe.
     /// </remarks>
     internal static bool EndsOnUnpair(PairRecord pair) => pair.Group is null;
+
+    /// <summary>
+    /// Vrai si un message de groupe reçu sur cette session doit être traité.
+    /// </summary>
+    /// <remarks>
+    /// Une paire directe n'a pas de politique de groupe à échanger : un message
+    /// de ce genre venu de là serait un pair hostile ou bogué qui prétend
+    /// parler pour un groupe auquel elle n'appartient pas.
+    /// </remarks>
+    internal static bool CarriesGroupMessages(PairRecord pair) => pair.Group is not null;
 
     /// <summary>Change ce qu'on accepte de tous ; les apparences posées suivent au tic suivant.</summary>
     public void SetGlobalReceive(TransientCategories receive)
@@ -589,6 +604,51 @@ public sealed class SyncEngine : IAsyncDisposable
         catch (Exception e)
         {
             _log.Warning($"{runtime.Pair.DisplayName} : présence non annoncée.", e);
+        }
+    }
+
+    /// <summary>
+    /// Échange les politiques de groupe sur chaque session de groupe.
+    /// </summary>
+    /// <remarks>
+    /// Chaque côté envoie la sienne à l'ouverture, garde la plus récente des
+    /// deux, et renvoie la sienne s'il reçoit plus ancien : deux membres qui se
+    /// croisent repartent avec la même.
+    /// </remarks>
+    private async Task ExchangePoliciesAsync(CancellationToken ct)
+    {
+        if (_policies is null)
+            return;
+
+        foreach (var runtime in _runtimes.Values)
+        {
+            if (runtime is not { Pair.Group: { } origin, Session: { } session })
+                continue;
+
+            while (runtime.InboundPolicies.TryDequeue(out var payload))
+            {
+                if (payload.Length <= GroupId.SizeInBytes
+                    || GroupId.FromBytes(payload.AsSpan(0, GroupId.SizeInBytes)) != origin.Group)
+                    continue;
+
+                if (_policies.OfferPolicy(origin.Group, payload.AsSpan(GroupId.SizeInBytes)) is PolicyOffer.Stale)
+                    runtime.SentPolicy = null;
+            }
+
+            if (_policies.CurrentPolicy(origin.Group) is not { } current
+                || runtime.SentPolicy is { } sent && sent.AsSpan().SequenceEqual(current))
+                continue;
+
+            try
+            {
+                byte[] message = [.. origin.Group.ToBytes(), .. current];
+                await session.SendAsync(ChannelPlan.ControlChannel, MessageKind.GroupPolicy, message, ct).ConfigureAwait(false);
+                runtime.SentPolicy = current;
+            }
+            catch (Exception e)
+            {
+                _log.Warning($"{runtime.Pair.DisplayName} : politique de groupe non envoyée.", e);
+            }
         }
     }
 
@@ -938,6 +998,21 @@ public sealed class SyncEngine : IAsyncDisposable
                     continue;
                 }
 
+                // Ramassé au tic suivant, comme l'avis de retrait : c'est le tic
+                // qui touche au carnet de groupes, pas ce fil-ci.
+                if (message.Kind == MessageKind.GroupPolicy)
+                {
+                    if (CarriesGroupMessages(runtime.Pair))
+                    {
+                        // Bornée à quatre : un pair qui inonde ne fait grossir
+                        // aucune mémoire, le tic suivant rééchange la plus récente.
+                        if (runtime.InboundPolicies.Count < 4)
+                            runtime.InboundPolicies.Enqueue(message.Payload);
+                    }
+
+                    continue;
+                }
+
                 if (exchange is not null)
                     await exchange.HandleAsync(message, ct).ConfigureAwait(false);
             }
@@ -1018,6 +1093,8 @@ public sealed class SyncEngine : IAsyncDisposable
         runtime.Limiter = null;
         runtime.Pump = null;
         runtime.Serve = null;
+        runtime.SentPolicy = null;
+        runtime.InboundPolicies.Clear();
     }
 
     private void Retry(Runtime runtime, bool peerWasAbsent, string? failure)
@@ -1131,5 +1208,11 @@ public sealed class SyncEngine : IAsyncDisposable
         public TransientCategories Receive { get; set; } = TransientCategories.All;
 
         public bool Busy => Work is { IsCompleted: false };
+
+        /// <summary>Les charges de <see cref="MessageKind.GroupPolicy"/> reçues, en attente du tic.</summary>
+        public ConcurrentQueue<byte[]> InboundPolicies { get; } = new();
+
+        /// <summary>La dernière politique de groupe envoyée sur cette session.</summary>
+        public byte[]? SentPolicy { get; set; }
     }
 }

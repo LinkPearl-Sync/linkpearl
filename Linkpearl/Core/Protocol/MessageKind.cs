@@ -32,4 +32,14 @@ public static class MessageKind
     /// seul ce pair-là peut l'envoyer. Un client qui ne le connaît pas l'ignore.
     /// </remarks>
     public const byte Unpair = 0x0F;
+
+    /// <summary>
+    /// La politique signée d'un groupe : identifiant (16) puis politique encodée.
+    /// </summary>
+    /// <remarks>
+    /// Envoyée à l'ouverture de chaque session de groupe et à chaque nouvelle
+    /// version. Le receveur garde la plus récente et renvoie la sienne si elle
+    /// l'est davantage. Un client qui ne le connaît pas l'ignore.
+    /// </remarks>
+    public const byte GroupPolicy = 0x10;
 }
