@@ -37,8 +37,8 @@ public sealed class GroupActions
     /// <remarks>
     /// La fonction reçoit le groupe et le signataire : <c>null</c> pour signer
     /// comme propriétaire, notre clé d'identité pour signer comme modérateur.
-    /// C'est le plugin qui choisit, d'après notre rôle, pour que la page ne
-    /// manipule jamais de clé.
+    /// C'est le plugin qui choisit, d'après notre rôle : la page ne choisit
+    /// jamais le signataire.
     /// </remarks>
     public required Action<GroupId, Func<GroupRecord, ECDsa?, byte[]>> Edit { get; init; }
 

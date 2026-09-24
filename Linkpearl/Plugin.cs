@@ -663,6 +663,17 @@ public sealed class Plugin : IDalamudPlugin
         _presence.SetGroups([]);
 
         _presence.ForgetRequests();
+
+        // Une candidature ou une admission du personnage précédent qui
+        // aboutirait maintenant rangerait le secret obtenu par l'un dans le
+        // carnet de l'autre : c'est exactement ce qui relierait les deux.
+        _candidate.Cancel();
+        _admissionHost.Reset();
+
+        // Sans quoi un bannissement adopté avant la prochaine ronde jugerait
+        // le nouveau personnage sur l'empreinte de l'ancien.
+        _state.Self = null;
+
         _transients.Attach(null);
     }
 
@@ -1257,7 +1268,7 @@ public sealed class Plugin : IDalamudPlugin
         Join = JoinGroup,
         CancelJoin = _candidate.Cancel,
         Leave = LeaveGroup,
-        Forget = id => _groups.Remove(id),
+        Forget = ForgetGroup,
         Edit = EditGroup,
         Approve = pending => AnswerAdmission(_admissionHost.Approve(pending.Nonce)),
         Decline = pending => AnswerAdmission(_admissionHost.Decline(pending.Nonce)),
@@ -1385,6 +1396,23 @@ public sealed class Plugin : IDalamudPlugin
         {
             Report($"Refusé : {e.Message}");
         }
+    }
+
+    /// <summary>Retire de la liste un groupe dissous.</summary>
+    /// <remarks>
+    /// Jamais un groupe vivant dont on tient la clé : elle n'existe nulle part
+    /// ailleurs, et l'oublier laisserait le groupe sans personne pour le
+    /// gouverner ni le dissoudre.
+    /// </remarks>
+    private void ForgetGroup(GroupId id)
+    {
+        if (_groups.Find(id) is { SigningKey: not null, Policy.Dissolved: false } group)
+        {
+            Report($"Le groupe {group.Name} vous appartient : dissolvez-le avant de l'oublier.");
+            return;
+        }
+
+        _groups.Remove(id);
     }
 
     /// <summary>Applique une modification de gouvernance, signée selon notre rôle.</summary>
@@ -1519,14 +1547,19 @@ public sealed class Plugin : IDalamudPlugin
     /// Seulement ce qu'il ne verrait pas autrement : une réponse arrivée pendant
     /// que la fenêtre était fermée, une action qui a échoué. Le diagnostic va
     /// au journal de Dalamud.
-    /// </remarks>
-    /// <remarks>
+    ///
     /// Appelé aussi hors du thread du jeu (handshakes, boucles de fond, tâches
     /// de l'interface) : le chat appartient au jeu, donc l'écriture y est
-    /// renvoyée quand on n'y est pas.
+    /// renvoyée quand on n'y est pas. Plus rien après l'arrêt : une fermeture
+    /// du plugin mise en file sur un Framework qui se décharge retiendrait
+    /// l'AssemblyLoadContext, ou tournerait sur un plugin déjà libéré.
     /// </remarks>
-    private static void Report(string message)
+    private void Report(string message)
     {
+        // IsCancellationRequested reste lisible après Dispose de la source.
+        if (_shutdown.IsCancellationRequested || Framework.IsFrameworkUnloading)
+            return;
+
         var line = $"[Linkpearl] {message}";
 
         if (Framework.IsInFrameworkUpdateThread)

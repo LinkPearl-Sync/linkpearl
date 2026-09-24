@@ -367,19 +367,37 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
                 _failures.Remove(candidate);
     }
 
+    /// <summary>
+    /// Oublie tout ce qui est en cours, au changement de personnage.
+    /// </summary>
+    /// <remarks>
+    /// Un défi ou une attente du personnage précédent qui aboutirait chez le
+    /// suivant ferait admettre au nom de l'un par le carnet de l'autre, et les
+    /// relierait. L'hôte reste utilisable : il vit aussi longtemps que le plugin.
+    /// </remarks>
+    public void Reset()
+    {
+        lock (_gate)
+            Forget();
+    }
+
     public void Dispose()
     {
         lock (_gate)
         {
             _disposed = true;
-
-            foreach (var challenge in _challenges.Values)
-                challenge.Ephemeral.Dispose();
-
-            _challenges.Clear();
-            _pending.Clear();
-            _answered.Clear();
-            _failures.Clear();
+            Forget();
         }
+    }
+
+    private void Forget()
+    {
+        foreach (var challenge in _challenges.Values)
+            challenge.Ephemeral.Dispose();
+
+        _challenges.Clear();
+        _pending.Clear();
+        _answered.Clear();
+        _failures.Clear();
     }
 }

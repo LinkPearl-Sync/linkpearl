@@ -570,6 +570,30 @@ public sealed class AdmissionTests : IDisposable
     }
 
     [Fact]
+    public void La_remise_a_zero_oublie_defis_et_attentes_sans_fermer_l_hote()
+    {
+        // Au changement de personnage : ce que le précédent avait en cours ne
+        // doit ni aboutir ni s'afficher chez le suivant.
+        var (host, _, created) = Member();
+        var candidate = NewCandidate();
+        var challenge = Assert.Single(host.OnRequest(Decode<AdmissionRequest>(Start(candidate, created, "lune")), Candidate));
+        var proof = candidate.OnChallenge(Decode<AdmissionChallenge>(challenge.Payload));
+
+        var (validating, _, open) = Member(password: "", asOwner: true);
+        Assert.Empty(validating.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), open, "")), Candidate));
+        Assert.Single(validating.Pending);
+
+        host.Reset();
+        validating.Reset();
+
+        Assert.Empty(host.OnProof(Decode<AdmissionProof>(proof!)));
+        Assert.Empty(validating.Pending);
+
+        // L'hôte sert encore : une demande neuve reçoit son défi.
+        Assert.Single(host.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune")), Candidate));
+    }
+
+    [Fact]
     public void Apres_dispose_l_hote_ne_cree_plus_rien()
     {
         var (host, _, created) = Member();
