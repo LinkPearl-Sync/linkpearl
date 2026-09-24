@@ -51,7 +51,10 @@ public static class ResourcePathClassifier
 
             if (isLocalFile is false)
             {
-                if (GamePathPolicy.TryNormalize(actualPath, quotas, out var normalizedTarget, out var targetWhy) is false)
+                // Penumbra rend parfois la cible d'un échange avec des
+                // antislashs, notamment pour les animations : sans cette
+                // conversion, la politique des chemins de jeu la refuserait.
+                if (GamePathPolicy.TryNormalize(actualPath.Replace('\\', '/'), quotas, out var normalizedTarget, out var targetWhy) is false)
                 {
                     skipped.Add(new SkippedFile(actualPath, targetWhy!));
                     continue;
@@ -103,6 +106,9 @@ public static class ResourcePathClassifier
     /// Le test est explicite et non délégué à <c>Path</c>, dont le comportement
     /// diffère entre Windows et Linux : le noyau se teste sous Linux et doit
     /// pourtant raisonner sur des chemins Windows.
+    ///
+    /// Un antislash seul ne suffit pas : Penumbra écrit aussi ainsi des chemins
+    /// de jeu. Un fichier du disque, lui, est toujours rendu absolu.
     /// </remarks>
     private static bool LooksLikeFileSystemPath(string path)
     {
@@ -111,9 +117,6 @@ public static class ResourcePathClassifier
 
         if (path[0] is '/' or '\\')
             return true;                                    // racine unix, ou UNC
-
-        if (path.Contains('\\'))
-            return true;                                    // séparateur Windows
 
         return path.Length >= 2 && path[1] == ':';          // lettre de lecteur
     }

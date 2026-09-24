@@ -40,6 +40,33 @@ public class ResourcePathClassifierTests
     }
 
     [Fact]
+    public void Un_echange_ecrit_avec_des_antislashs_reste_un_echange()
+    {
+        // Vu en jeu : pour un mod d'animation qui fait jouer celle d'une autre
+        // race, Penumbra rend la cible avec des antislashs. Prise pour un
+        // fichier, elle était « absente du disque » et l'animation ne partait
+        // jamais chez les pairs.
+        var result = Classify((@"chara\human\c0201\animation\a0001\bt_common\resident\idle.pap",
+                               ["chara/human/c1801/animation/a0001/bt_common/resident/idle.pap"]));
+
+        Assert.Empty(result.Files);
+        var swap = Assert.Single(result.Swaps);
+        Assert.Equal("chara/human/c1801/animation/a0001/bt_common/resident/idle.pap", swap.GamePath);
+        Assert.Equal("chara/human/c0201/animation/a0001/bt_common/resident/idle.pap", swap.TargetGamePath);
+    }
+
+    [Fact]
+    public void Un_chemin_de_jeu_vanilla_ecrit_avec_des_antislashs_s_ignore()
+    {
+        var result = Classify((@"chara\human\c1801\animation\a0001\bt_common\resident\idle.pap",
+                               ["chara/human/c1801/animation/a0001/bt_common/resident/idle.pap"]));
+
+        Assert.Empty(result.Files);
+        Assert.Empty(result.Swaps);
+        Assert.Empty(result.Skipped);
+    }
+
+    [Fact]
     public void Un_chemin_reel_identique_au_chemin_de_jeu_est_du_vanilla_et_s_ignore()
     {
         // Penumbra rend aussi les ressources non moddees. Les embarquer
