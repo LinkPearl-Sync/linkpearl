@@ -8,6 +8,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Safety;
@@ -20,6 +21,7 @@ using Linkpearl.Ui;
 using Linkpearl.Ui.Onboarding;
 using Linkpearl.Ui.Pages;
 using System.Reflection;
+using System.Security.Cryptography;
 
 namespace Linkpearl;
 
@@ -41,6 +43,9 @@ public sealed class Plugin : IDalamudPlugin
     /// chat native. Toute commande choisie ici doit être vérifiée en jeu.
     /// </remarks>
     private const string Command = "/lpearl";
+
+    /// <summary>Essai temporaire du noyau des groupes, retiré à l'incrément 2.</summary>
+    private const string GroupTestCommand = "/lpgroupe";
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager         Commands        { get; private set; } = null!;
@@ -98,6 +103,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly string _legacyRoot;
     private readonly PairingService _pairing;
     private readonly PresenceService _presence;
+    private readonly GroupBook _groups;
+    private readonly GroupDialPlanner _groupPlanner;
+    private GroupStore? _groupStore;
     private readonly DalamudObjectSource _objectSource;
     private readonly PluginState _state = new();
     private readonly DiscoveryState _discovery = new();
@@ -147,6 +155,9 @@ public sealed class Plugin : IDalamudPlugin
     /// </remarks>
     private HashSet<Linkpearl.Core.Abstractions.PlayerFingerprint> _lastVisible = [];
 
+    /// <summary>Le groupe d'essai rejoint par <see cref="OnGroupTest"/>, s'il y en a un.</summary>
+    private GroupId? _testGroup;
+
     /// <summary>Quand la dernière interrogation a eu lieu.</summary>
     private DateTimeOffset _lastDetection = DateTimeOffset.MinValue;
 
@@ -188,6 +199,13 @@ public sealed class Plugin : IDalamudPlugin
         _pairing = new PairingService(_configuration, clock, Log);
         _presence = new PresenceService(_configuration, () => _pairing.Identity, clock, Log);
         _objectSource = new DalamudObjectSource(Objects, ClientState, Framework);
+
+        _groups = new GroupBook(clock);
+        _groupPlanner = new GroupDialPlanner(clock);
+
+        // Un épinglage arrive d'un handshake, hors du thread du jeu : l'écriture
+        // se fait là où il arrive, le stockage se protège seul.
+        _groups.Changed += () => _groupStore?.Save(_groups);
 
         // Le moteur et ce qu'il lui faut. Une seule socket pour tous les pairs :
         // c'est son adresse publique que le rendez-vous rend, donc elle seule
@@ -332,6 +350,15 @@ public sealed class Plugin : IDalamudPlugin
         Commands.AddHandler(Command, new CommandInfo((_, _) => Open())
         {
             HelpMessage = "Ouvre la fenêtre de Linkpearl.",
+        });
+
+        // Temporaire, jusqu'à la page Groupes de l'incrément 2 : de quoi
+        // éprouver le noyau à deux personnages, avec un groupe dont le secret
+        // dérive d'une phrase convenue.
+        Commands.AddHandler(GroupTestCommand, new CommandInfo((_, args) => OnGroupTest(args))
+        {
+            HelpMessage = "Essai : /lpgroupe <phrase> rejoint un groupe d'essai, /lpgroupe quitter le quitte.",
+            ShowInHelp = false,
         });
 
         Log.Information($"Chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
@@ -554,6 +581,10 @@ public sealed class Plugin : IDalamudPlugin
         var root = CharacterStorage.Prepare(_root, contentId, _legacyRoot, message => Log.Information(message));
 
         _pairing.Bind(root);
+
+        _groupStore = new GroupStore(Path.Combine(root, "groups.json"));
+        _groupStore.Load(_groups);
+
         _transients.Attach(root);
         StartEngineIfReady();
     }
@@ -580,7 +611,7 @@ public sealed class Plugin : IDalamudPlugin
                 _clock,
                 new PluginLogSink(Log, "moteur")),
             _appearance, _applicator, _cacheKeeper.Store, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
-            new PluginLogSink(Log, "moteur"), _engineSettings);
+            new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups);
 
         // Le moteur a déjà retiré l'entrée du carnet : il reste à l'écrire, et
         // à dire pourquoi une ligne vient de disparaître de la liste.
@@ -605,6 +636,11 @@ public sealed class Plugin : IDalamudPlugin
         // soit vidé par Unbind.
         StopEngine();
         _pairing.Unbind();
+
+        _groupStore = null;
+        _groups.Clear();
+        _presence.SetGroups([]);
+
         _presence.ForgetRequests();
         _transients.Attach(null);
     }
@@ -743,6 +779,7 @@ public sealed class Plugin : IDalamudPlugin
 
                     if (self is not null)
                     {
+                        _presence.SetGroups(_groups.All);
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
                         // L'autre a dit oui à notre demande : le pair entre au
@@ -775,6 +812,20 @@ public sealed class Plugin : IDalamudPlugin
 
                             await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
                         }
+
+                        // À chaque ronde et non seulement quand le champ change :
+                        // un membre sorti du champ doit finir par partir, et
+                        // c'est le passage du temps qui l'y conduit.
+                        var sightings = _state.Nearby
+                            .SelectMany(player => _presence.GroupsOf(player.Fingerprint)
+                                .Select(group => new GroupSighting(group, player.Fingerprint, player.Name)))
+                            .ToList();
+
+                        var directly = _pairing.Book.All
+                            .Select(pair => pair.PinnedFingerprint)
+                            .OfType<PlayerFingerprint>();
+
+                        _engine?.SetGroupPeers(_groupPlanner.Plan(self.Fingerprint, sightings, _groups.All, directly));
                     }
                 }
                 else
@@ -1173,6 +1224,46 @@ public sealed class Plugin : IDalamudPlugin
     private void Decline(IncomingRequest request) => _presence.Forget(request);
 
     /// <summary>
+    /// Essai temporaire : rejoint ou quitte un groupe dont le secret dérive
+    /// d'une phrase convenue entre joueurs.
+    /// </summary>
+    /// <remarks>
+    /// Retiré à l'incrément 2, remplacé par la page Groupes.
+    /// </remarks>
+    private void OnGroupTest(string args)
+    {
+        var phrase = args.Trim();
+
+        if (phrase is "quitter")
+        {
+            if (_testGroup is { } id && _groups.Remove(id))
+                Report("groupe d'essai quitté.");
+
+            _testGroup = null;
+            return;
+        }
+
+        if (phrase.Length == 0 || _configuration.ActiveRendezvous.FirstOrDefault() is not { } service)
+        {
+            Report("usage : /lpgroupe <phrase>, avec un service de rendez-vous activé.");
+            return;
+        }
+
+        var secret = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("linkpearl:group-test:v1:" + phrase));
+        var group = new GroupRecord
+        {
+            Id = GroupId.Of(secret),
+            Name = "Essai",
+            Secret = secret,
+            Rendezvous = [service.Address],
+            JoinedAt = _clock.UtcNow,
+        };
+
+        Report(_groups.TryAdd(group, out var refusal) ? "groupe d'essai rejoint." : $"refusé : {refusal}");
+        _testGroup = group.Id;
+    }
+
+    /// <summary>
     /// Exécute une tâche déclenchée depuis l'interface, sans jamais laisser une
     /// exception se perdre dans un Task oublié.
     /// </summary>
@@ -1216,6 +1307,7 @@ public sealed class Plugin : IDalamudPlugin
         _windows.RemoveAllWindows();
 
         Commands.RemoveHandler(Command);
+        Commands.RemoveHandler(GroupTestCommand);
         ContextMenu.OnMenuOpened -= OnMenuOpened;
         Framework.Update -= PollLinks;
         Framework.Update -= FollowCharacter;
