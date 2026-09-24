@@ -1,7 +1,8 @@
 # Où on en est, et par où reprendre
 
 Écrit le 22 septembre 2026, en fin de première session. Mis à jour le 23, après
-la première journée d'essais en jeu. À lire en premier.
+la première journée d'essais en jeu, et le 24 pour les groupes. À lire en
+premier.
 
 ## Ce que le projet est devenu
 
@@ -32,8 +33,8 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    demande un pairage, l'autre reçoit une invite, il accepte ou refuse.
 4. **Un utilisateur ne doit jamais voir une clé.** Il voit des noms de
    personnage. C'est l'identité qui l'intéresse.
-5. **Les codes sont réservés aux groupes**, quand ils viendront. Un groupe n'a
-   pas de nom de personnage, donc il lui faut un identifiant.
+5. **Les codes sont réservés aux groupes.** Un groupe n'a pas de nom de
+   personnage, donc il lui faut un identifiant, qu'on s'envoie par /tell.
 6. **Désactiver le plugin ne doit rien changer à l'apparence** du joueur. Les
    clients comparables ne le font pas, et un jour où je l'ai fait c'était un bug.
 7. **Les joueurs visés font du jeu de rôle, pas du donjon.** Quelques
@@ -56,8 +57,14 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    synchronisation : un réglage global rapide, et un réglage par pair. Fait le
    23 septembre, voir `superpowers/specs/2026-09-23-transitoires-design.md` ;
    à éprouver en jeu avec la seconde partie de `essais-integrations.md`.
-3. **Les groupes**, en cours : incrément 1 livré (noyau), voir
-   `superpowers/specs/2026-09-24-groupes-design.md`. Ce sont eux qui porteront des codes (point 5).
+3. **Les groupes**, en cours, voir `superpowers/specs/2026-09-24-groupes-design.md`.
+   Incrément 1 livré (noyau). Incrément 2 livré le 24 septembre (groupes
+   privés) : création, code, admission par mot de passe ou par validation d'un
+   modérateur, politique signée et propagée, gouvernance, page Groupes,
+   sauvegarde v2 ; protocole dans la section « Groupes privés » de
+   `protocol.md`. Reste l'incrément 3, le groupe Public et l'application des
+   listes de bannissement des services, puis les essais en jeu : créer,
+   rejoindre dans les deux modes, exclure, dissoudre, à deux personnages.
 
 ## État des jalons
 
@@ -147,8 +154,12 @@ fois et ne mesure pas le moteur.
   étendu.
 - **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
   rien n'a encore mesuré ce qu'il coûte au processeur.
-- **La commande `/lpgroupe` est temporaire** : elle crée un groupe à la main
-  pour les essais. L'interface de gestion des groupes reste à faire.
+- **Les groupes privés n'ont pas encore été éprouvés en jeu.** Tout ce qui
+  décide est testé sous Linux ; l'interface et les boîtes d'admission sur un
+  vrai service, non.
+- **La dissolution n'est relayée que par le propriétaire** : un membre qu'il
+  ne croise plus garde le groupe. L'interface lui dit de garder le groupe
+  listé jusqu'à ce que les membres l'aient vu.
 - **Un joueur qui a coupé la détection n'est pas trouvé par ses groupes.** La
   détection interroge les boîtes de présence ; si elle ne tourne pas, un membre
   en groupe ne sera pas composé, même si sa boîte répond.
@@ -170,6 +181,8 @@ fois et ne mesure pas le moteur.
   est débrayé par défaut.
 - Le **test de paire réel** entre deux réseaux, quand quelqu'un sera disponible.
   Tout ce qui précède a été éprouvé sur une seule machine.
+- Les **groupes privés**, à deux personnages : créer un groupe, le rejoindre
+  par mot de passe puis par validation, exclure un membre, dissoudre.
 
 ## Pièges appris à la dure
 

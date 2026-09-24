@@ -83,5 +83,16 @@ d'eux.
 
 ## Ce qui garde les codes
 
-Les groupes, quand ils viendront. Un groupe n'a pas de nom de personnage, donc
-il lui faut bien un identifiant à échanger.
+Les groupes. Un groupe n'a pas de nom de personnage, donc il lui faut bien un
+identifiant à échanger : douze caractères suivis du service
+(`ABCD-EFGH-JKLM@rdv.exemple`), que le propriétaire et les modérateurs copient
+depuis la page Groupes et envoient par /tell.
+
+Ce code est **une porte, pas une clé**. Il mène à la boîte d'admission du
+groupe, où un membre en ligne demande le mot de passe, ou bien un modérateur
+valide l'entrée ; il ne donne jamais le secret du groupe à lui seul. Il se
+change sans rien redistribuer : l'ancien ne mène plus nulle part, et les
+membres restent. La même confiance au premier contact que le pairage s'y
+applique, pour les mêmes raisons. Voir
+`superpowers/specs/2026-09-24-groupes-design.md` et la section « Groupes
+privés » de `protocol.md`.

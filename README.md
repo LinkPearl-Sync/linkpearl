@@ -98,11 +98,27 @@ That's it: your looks are exchanged whenever you are within range of each other.
 
 ---
 
+## Groups
+
+A group syncs all its members with each other, without pairing them one by one: a free company, a roleplay circle. Everything happens on the **Groupes** (Groups) page of the window.
+
+- **Create**: **Créer un groupe** (create a group), give it a name, optionally a password, then **Créer** (create). With a password, any member online lets in whoever knows it. Without one, you or a moderator approve each newcomer.
+- **Share the code**: under the group name, the code (`ABCD-EFGH-JKLM@service`) and its **Copier le code** (copy the code) button. Send it by /tell. The page shows it to the owner and the moderators only.
+- **Join**: **Rejoindre** (join), paste the code, the password if the group has one, then **Rejoindre**. A member must be online to answer, or a moderator if the group approves each newcomer. Joining needs **Me signaler aux autres joueurs** (let other players see me) turned on: that is how the group answers you.
+- **Approve**: requests to join show up on the **Demandes** (Requests) page for the owner and the moderators, with **Accepter** (accept) and **Refuser** (decline).
+- **Moderate**: on a member's row, **Exclure** (exclude) takes two clicks, and the owner can **Nommer modérateur** (make moderator). Under **Gestion** (management): **Nouveau code** (new code), **Changer le mot de passe** (change password), the **Exclus** (excluded) list with **Lever** (lift), and for the owner the **Mode d'admission** (admission mode): **Mot de passe** (password) or **Validation par un modérateur** (approval by a moderator).
+- **Leave or dissolve**: **Quitter le groupe** (leave the group). The owner doesn't leave: they dissolve the group with **Dissoudre** (dissolve), under **Gestion**. Members find out when they next meet the owner, so keep the group in your list until they have, then **Retirer de la liste** (remove from the list).
+
+The code is a door, not a key: on its own, it lets no one in. After excluding someone who knew the password, change the code and the password.
+
+---
+
 ## Privacy
 
 - Your files leave your game only for the peers you accepted, end-to-end encrypted.
 - For two players to find each other, Linkpearl goes through a **rendezvous service**. It never sees your files or your looks. It does see pairing requests go by, with the characters' names and public keys, and the IP addresses of those who use it.
 - If you keep **Me signaler aux autres joueurs** (let other players see me, on by default), the service can know that your character is online: that is what lets others recognise you. You can turn it off in **Réglages > Visibilité** (Settings > Visibility).
+- Joining a group also goes through the rendezvous service, which sees the code and the character's name and world. As with pairing, trust is established on first contact: for a group with a password, a long password is what really protects it.
 - You can host your own rendezvous service: see the [self-hosting guide](https://linkpearl-sync.github.io/expert.html#self-host). You and your friends just need to share at least one.
 
 ---

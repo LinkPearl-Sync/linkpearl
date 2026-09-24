@@ -155,13 +155,17 @@ Ce que le groupe dit de lui-même, signé :
 | `Signature` | ECDSA P-256 sur l'encodage canonique de tout ce qui précède |
 
 Une politique est valide si, en plus des bornes :
-- le signataire est la clé du groupe (`OwnerKey`), ou un modérateur de la
-  **version précédente connue** ;
-- signée par un modérateur, elle garde la liste des modérateurs et le mode
-  d'admission identiques à la version précédente : seul le propriétaire les
-  change ;
-- elle ne bannit ni le propriétaire ni, si elle vient d'un modérateur, un autre
-  modérateur.
+- le signataire est la clé du groupe (`OwnerKey`), ou un modérateur nommé par
+  l'**attestation** qu'elle embarque. L'attestation (propriétaire, modérateurs,
+  mode d'admission) est signée par la clé du groupe : un membre qui vient
+  d'entrer n'a aucune version précédente sur laquelle s'appuyer, et un
+  modérateur ne peut ainsi changer ni les modérateurs ni le mode d'admission ;
+- elle ne bannit par clé ni le propriétaire ni un modérateur attesté, quel que
+  soit le signataire ;
+- seule la clé du groupe dissout.
+
+Le détail (encodage, règles, ordre) est dans `docs/protocol.md`, section
+« Groupes privés ».
 
 Le mot de passe voyage dans la politique : tous les membres le connaissent,
 c'est ce qui permet à n'importe lequel d'admettre. Elle ne circule que dans une
@@ -171,7 +175,9 @@ Le décodage passe par `Core/Safety` : une seule règle violée et la politique
 entière est rejetée.
 
 **Deux modérateurs qui publient la même version** : la politique retenue est
-celle dont la signature a le plus petit SHA-256. Une des deux modifications est
+celle dont le contenu signé a le plus petit SHA-256 (pas la signature, qu'ECDSA
+tire au hasard). L'ordre compare d'abord la dissolution, puis la version
+d'attestation, puis la version. Une des deux modifications est
 perdue ; le modérateur qui la voit disparaître la refait. Rare à cette échelle,
 et moins coûteux qu'un journal d'opérations.
 
@@ -184,7 +190,9 @@ caractères Base32 Crockford avec contrôle, puis le service du groupe. Sans
 suffixe, le premier service configuré. Le propriétaire et les modérateurs le
 voient avec un bouton de copie, pour l'envoyer par /tell.
 
-Chaque membre en ligne ouvre la **boîte d'admission** :
+Chaque membre en ligne qui peut admettre (tous en mode mot de passe, le
+propriétaire et les modérateurs en mode validation) ouvre la **boîte
+d'admission** :
 
 ```
 adresse = SHA-256("linkpearl:group-join:v1" || code (6) || fenêtre (8 BE))[0..6]
@@ -201,14 +209,18 @@ sous les 512 octets :
 
 | Type | Sens | Contenu |
 |---|---|---|
-| `0x05` demande | candidat → boîte d'admission | clé publique (33), éphémère (33), aléa (12), monde (2), nom (≤ 64) |
+| `0x05` demande | candidat → boîte d'admission | code (6), clé publique (33), éphémère (33), aléa (12), monde (2), nom (≤ 64) |
 | `0x06` défi | membre → boîte du candidat | aléa de la demande (12), éphémère du membre (33) |
-| `0x07` preuve | candidat → boîte d'admission | aléa (12), AES-GCM(mot de passe) |
-| `0x08` bienvenue | membre → boîte du candidat | aléa (12), éphémère du membre (33) en mode validation, AES-GCM(GroupId, secret, clé du groupe, nom) |
+| `0x07` preuve | candidat → boîte d'admission | code (6), aléa (12), éphémère du membre (33), étiquette HMAC (32) |
+| `0x08` bienvenue | membre → boîte du candidat | aléa (12), éphémère du membre (33), AES-GCM(GroupId, secret, clé du groupe, nom) |
 | `0x09` refus | membre → boîte du candidat | aléa (12), motif (octet : mot de passe faux, trop d'essais, refusé par un modérateur) |
 
-La clé de scellement est `HKDF(ECDH(éphémères) || aléa, "linkpearl:group-admit:v1")`,
-comme `PairRequestMessage.AgreeOnPairing`. La boîte du candidat est sa boîte
+La clé est `HKDF(ECDH(éphémères) || aléa)`, comme
+`PairRequestMessage.AgreeOnPairing`, dérivée par usage
+(`"linkpearl:group-admit:v1:proof"`, `"linkpearl:group-admit:v1:welcome"`). La
+preuve n'est pas le mot de passe scellé mais une étiquette HMAC liée au mot de
+passe : un faux défieur n'en tire qu'une empreinte attaquable par dictionnaire,
+jamais le mot de passe en clair. La boîte du candidat est sa boîte
 personnelle, déjà ouverte. La bienvenue ne porte aucun service : quatre
 adresses de 255 caractères ne tiendraient pas dans 512 octets. Le candidat
 utilise celui du code jusqu'à ce que la politique lui donne les autres.
@@ -216,11 +228,12 @@ utilise celui du code jusqu'à ce que la politique lui donne les autres.
 ### Mode mot de passe
 
 1. Le candidat dépose une demande.
-2. Tout membre en ligne qui la reçoit tire un délai aléatoire de 0 à 2 s, puis
-   répond par un défi s'il n'a pas vu passer de défi pour cet aléa. Le candidat
-   retient le premier défi et ignore les autres.
-3. Le candidat renvoie la preuve, scellée pour ce membre-là.
-4. Le membre compare le mot de passe en temps constant, puis répond bienvenue ou
+2. Tout membre en ligne qui la reçoit répond par un défi. Les défis vont dans
+   la boîte personnelle du candidat, que les autres membres ne voient pas : un
+   délai pour s'abstenir ne servirait à rien. Le candidat retient le premier
+   défi et ignore les autres.
+3. Le candidat renvoie la preuve, liée à l'éphémère de ce membre-là.
+4. Le membre compare l'étiquette en temps constant, puis répond bienvenue ou
    refus.
 
 Au-delà de **5 échecs par fenêtre** pour une même clé de candidat, le membre
@@ -237,7 +250,8 @@ le défi le renvoie à l'identique au redépôt, ce qui rattrape une preuve perd
 
 1. Le candidat dépose une demande, et la redépose **chaque minute pendant
    10 minutes** : les boîtes ne gardent rien, et un modérateur peut se
-   connecter entre-temps. Son écran dit « en attente d'un modérateur ».
+   connecter entre-temps. Son écran dit qu'il attend un membre en ligne, ou un
+   modérateur si le groupe valide chaque entrée.
 2. Seuls le propriétaire et les modérateurs l'affichent, dans la page Demandes :
    « Untel veut rejoindre Groupe », avec la puce « visible autour de vous »
    existante.
@@ -249,8 +263,9 @@ le défi le renvoie à l'identique au redépôt, ce qui rattrape une preuve perd
 
 - Un candidat dont la clé ou l'empreinte est bannie ne reçoit **aucune** réponse.
 - Un groupe dissous ne répond plus.
-- Le candidat qui reçoit la bienvenue crée son `GroupRecord` avec une politique
-  vide de version 0 ; la vraie arrive à sa première session avec un membre.
+- Le candidat qui reçoit la bienvenue crée son `GroupRecord` sans politique
+  (« en attente de sa politique ») ; elle arrive à sa première session avec un
+  membre.
   Jusque-là, il ne connaît ni les bannis ni les modérateurs, ce qui ne lui
   permet rien de plus que d'être vu.
 
@@ -321,21 +336,21 @@ Envoyé à l'ouverture de chaque session de groupe, puis à chaque nouvelle vers
 Le receveur garde la plus haute version valide, et renvoie la sienne si elle est
 plus haute que celle reçue. Un client plus ancien l'ignore.
 
-Nouveau `MessageKind.GroupCard = 0x11` : `GroupId || nom affiché || rôle`, envoyé
-à l'ouverture, pour que l'autre remplisse `Members` sans lire de nom en clair
-ailleurs que dans une session chiffrée.
+Pas de `MessageKind.GroupCard` (`0x11`), écarté en écrivant le plan de
+l'incrément 2 : le nom d'un membre vient déjà du jeu, et son rôle se déduit de
+la politique.
 
 ## Gouvernance
 
 | Geste | Qui | Effet |
 |---|---|---|
-| Créer | tous | Clé de signature, secret, code, politique v1 en mode mot de passe |
+| Créer | tous | Clé de signature, secret, code, politique v1 : en mode mot de passe si un mot de passe est donné, en validation sinon |
 | Nommer ou retirer un modérateur | propriétaire | Nouvelle politique |
 | Changer le code, le mot de passe | propriétaire, modérateur | Nouvelle politique ; l'ancien code ne mène plus nulle part |
 | Changer le mode d'admission | propriétaire | Nouvelle politique |
 | Exclure | propriétaire, modérateur | Bannit la clé et l'empreinte. L'exclu qui reçoit la politique quitte le groupe de lui-même et le dit ; s'il ne coopère pas, les autres refusent sa clé et son personnage |
 | Lever un bannissement | propriétaire, modérateur | Nouvelle politique |
-| Dissoudre | propriétaire | `Dissolved`. Chaque membre qui la reçoit quitte le groupe |
+| Dissoudre | propriétaire | `Dissolved`. Chaque membre qui la reçoit quitte le groupe, sans la relayer : seul le propriétaire la transmet, et il garde le groupe dans sa liste jusqu'à ce que les membres l'aient vu |
 | Quitter | tous | Local : le `GroupRecord` disparaît. Le propriétaire qui quitte dissout |
 | Mettre en pause, bloquer les effets d'un membre | tous | Local, dans `Members` |
 
@@ -406,9 +421,15 @@ les cite avec leur traduction.
 ## Modèle de confiance et prix assumés
 
 - **Admission en confiance au premier contact.** L'éphémère du candidat et celui
-  du membre passent en clair par le service, qui peut s'intercaler, apprendre le
-  mot de passe et le secret. C'est le TOFU du pairage, déjà assumé : ne pas
-  ajouter de vérification hors bande.
+  du membre passent en clair par le service, qui peut s'intercaler. Il
+  n'apprend pas le mot de passe directement : en se faisant passer pour un
+  membre, il obtient une étiquette liée au mot de passe, attaquable par
+  dictionnaire hors ligne ; un mot de passe faible tombe, et avec lui l'entrée
+  dans le vrai groupe, donc le secret. En mode validation, le modérateur
+  approuve un nom affiché, et la bienvenue va à qui a déposé la demande. Un
+  porteur du code qui devance les membres peut aussi faire entrer le candidat
+  dans un faux groupe, que le nom affiché à l'entrée trahit. C'est le TOFU du
+  pairage, déjà assumé : ne pas ajouter de vérification hors bande.
 - **Un banni garde l'ancien secret.** Les membres refusent sa clé et son
   personnage, mais il peut encore interroger les boîtes de présence et savoir
   quels membres, dont il connaît les noms, sont en ligne. C'est le prix de

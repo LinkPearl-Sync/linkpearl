@@ -95,11 +95,27 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 
 ---
 
+## Groupes
+
+Un groupe synchronise tous ses membres entre eux, sans les pairer un à un : une compagnie libre, un cercle de jeu de rôle. Tout se passe sur la page **Groupes** de la fenêtre.
+
+- **Créer** : **Créer un groupe**, donnez-lui un nom, un mot de passe si vous le souhaitez, puis **Créer**. Avec un mot de passe, n'importe quel membre en ligne fait entrer qui le connaît. Sans mot de passe, vous ou un modérateur validez chaque entrée.
+- **Partager le code** : sous le nom du groupe, le code (`ABCD-EFGH-JKLM@service`) et son bouton **Copier le code**. Envoyez-le par /tell. La page ne le montre qu'au propriétaire et aux modérateurs.
+- **Rejoindre** : **Rejoindre**, collez le code, le mot de passe si le groupe en a un, puis **Rejoindre**. Un membre doit être en ligne pour vous répondre, ou un modérateur si le groupe valide chaque entrée. Il faut que **Me signaler aux autres joueurs** soit activé : c'est par là que le groupe vous répond.
+- **Valider** : les demandes d'entrée arrivent sur la page **Demandes** du propriétaire et des modérateurs, avec **Accepter** et **Refuser**.
+- **Modérer** : sur la ligne d'un membre, **Exclure** se fait en deux clics, et le propriétaire peut **Nommer modérateur**. Sous **Gestion** : **Nouveau code**, **Changer le mot de passe**, la liste **Exclus** avec **Lever**, et pour le propriétaire le **Mode d'admission** : **Mot de passe** ou **Validation par un modérateur**.
+- **Quitter ou dissoudre** : **Quitter le groupe**. Le propriétaire ne quitte pas : il dissout le groupe avec **Dissoudre**, sous **Gestion**. Les membres l'apprennent en le croisant, gardez donc le groupe dans la liste jusqu'à ce qu'ils l'aient vu, puis **Retirer de la liste**.
+
+Le code est une porte, pas une clé : seul, il ne fait entrer personne. Après avoir exclu quelqu'un qui connaissait le mot de passe, changez le code et le mot de passe.
+
+---
+
 ## Vie privée
 
 - Vos fichiers ne quittent votre jeu que vers les pairs que vous avez acceptés, chiffrés de bout en bout.
 - Pour que deux joueurs se trouvent, Linkpearl passe par un **service de rendez-vous**. Il ne voit jamais vos fichiers ni vos apparences. Il voit en revanche passer les demandes de pairage, avec les noms des personnages et leurs clés publiques, ainsi que les adresses IP de ceux qui l'utilisent.
 - Si vous activez **Me signaler aux autres joueurs** (réglage par défaut), le service peut savoir que votre personnage est en ligne : c'est ce qui permet aux autres de vous reconnaître. Vous pouvez le désactiver dans **Réglages > Visibilité**.
+- Rejoindre un groupe passe aussi par le service de rendez-vous, qui voit le code, ainsi que le nom et le monde du personnage. Comme pour le pairage, la confiance s'établit au premier contact : pour un groupe à mot de passe, c'est un mot de passe long qui le protège vraiment.
 - Vous pouvez héberger votre propre service de rendez-vous : voir le [guide d'auto-hébergement](https://linkpearl-sync.github.io/expert.html#self-host). Vous et vos amis devez simplement en partager au moins un.
 
 ---

@@ -24,8 +24,8 @@ Chaque section renvoie au fichier qui fait foi.
   fait échouer l'opération : il n'y a pas de repli sur une source plus faible.
 - Les horodatages sont des secondes Unix sur 64 bits signés.
 - Un point P-256 voyage **non compressé** (`0x04 || X(32) || Y(32)`, 65 octets),
-  sauf dans les demandes de pairage où il est **compressé** (`0x02|0x03 || X(32)`,
-  33 octets).
+  sauf dans les demandes de pairage, les dépôts d'admission et les politiques de
+  groupe, où il est **compressé** (`0x02|0x03 || X(32)`, 33 octets).
 - `||` est la concaténation. `[a..b]` désigne les octets `a` inclus à `b` exclu.
 
 ## Primitives
@@ -97,6 +97,36 @@ avant le vrai : voir [Groupes (noyau)](#groupes-noyau). Pour un cercle qui hébe
 l'opérateur est l'un d'eux, et c'est assumé dans `pairage.md`. Pour le service
 public, c'est la limite principale du protocole.
 
+**L'admission dans un groupe privé est, elle aussi, une confiance au premier
+contact.** Le candidat n'a que le code : rien ne lui permet de reconnaître la
+clé du vrai groupe, ni à un membre de reconnaître le candidat. Les dépôts
+passent par le service, en clair sauf l'étiquette de preuve et l'octroi scellé
+(voir [Groupes privés](#groupes-privés)). Aucune vérification hors bande n'est
+proposée, par décision : les joueurs ne se parlent pas hors du jeu.
+
+| Adversaire | Peut | Ne peut pas |
+|---|---|---|
+| Service honnête mais curieux | lire le code, le nom, le monde et la clé de chaque demande qu'il voit passer, donc déposer lui-même des demandes | lire le mot de passe, l'octroi, le secret |
+| Service qui s'intercale, ou porteur du code qui devance les membres, **en mode mot de passe** | se faire passer pour un membre et obtenir une étiquette liée au mot de passe, attaquable par dictionnaire hors ligne ; un mot de passe faible tombe, et avec lui l'entrée dans le vrai groupe, donc le secret | lire le mot de passe en clair dans la preuve, ni sa longueur |
+| Le même, **en mode validation** | substituer sa propre clé et son propre éphémère dans la demande, ou déposer sous le nom d'un autre : le modérateur approuve un nom affiché, et la bienvenue, donc le secret, va à qui a déposé | faire entrer quelqu'un sans qu'un modérateur approuve |
+| Le même, face au candidat | le faire entrer dans un **faux groupe** en répondant avant les membres : le candidat n'a aucune ancre vers la clé du vrai groupe ; le nom affiché à l'entrée le trahit s'il diffère de celui qu'on lui a annoncé | falsifier un groupe déjà rejoint : sa clé est fixée à l'entrée, et toute politique doit s'y vérifier |
+| Qui connaît `nom@monde` du candidat | lire dans sa boîte personnelle les défis et la bienvenue scellée, y déposer des refus | ouvrir la bienvenue, produire la preuve |
+
+Tout ce qu'apprend ainsi un intrus au premier contact, secret du groupe
+compris, lui ouvre ensuite les boîtes de présence et les secrets de paire de
+tous les membres, et le premier contact avec chacun d'eux : voir
+[Groupes (noyau)](#groupes-noyau).
+
+**Le mot de passe est connu de tous les membres.** Il voyage dans la politique,
+qui ne circule que dans des sessions chiffrées entre membres, et c'est ce qui
+permet à n'importe lequel d'admettre. Il protège l'entrée contre les inconnus,
+pas contre un membre qui le donnerait. Sa seule protection contre la devinette
+est son entropie.
+
+**Un exclu garde le secret.** Il n'y a pas de rotation : les membres refusent
+sa clé et son personnage, mais il peut encore interroger les boîtes de
+présence et savoir lesquels des membres dont il connaît le nom sont en ligne.
+
 ## Pairage
 
 Fichiers : `Core/Sync/PairRequestMessage.cs`, `Integration/PresenceService.cs`,
@@ -165,7 +195,8 @@ l'initiateur en comparant ordinalement les empreintes en hexadécimal.
 GroupId = SHA-256(matériau)[0..16]
 ```
 
-où le matériau est le secret du groupe (32 octets) pour un groupe partagé, ou sa clé de signature pour un groupe privé.
+où le matériau est le secret du groupe (32 octets) pour un groupe fabriqué à partir d'un secret seul, ou la clé
+publique **compressée** du groupe (33 octets) pour un groupe privé (voir [Groupes privés](#groupes-privés)).
 
 Exemple : secret = octets 0x00 à 0x1f, `GroupId` = `630dcd2966c4336691125448bbb25b4f`.
 
@@ -225,6 +256,315 @@ donc seulement par qui détient la partie privée. Une fois la clé épinglée, 
 rendez-vous peut faire échouer une connexion, pas la remplacer. Le service
 apprend qu'un joueur tient une boîte supplémentaire, jamais laquelle ni quel
 groupe elle porte.
+
+## Groupes privés
+
+Fichiers : `Core/Groups/GroupPolicy.cs`, `Core/Groups/GroupPolicyCodec.cs`,
+`Core/Groups/GroupPolicyRules.cs`, `Core/Groups/GroupGovernance.cs`,
+`Core/Groups/AdmissionMessages.cs`, `Core/Groups/AdmissionHost.cs`,
+`Core/Groups/AdmissionCandidate.cs`, `Core/Protocol/MessageKind.cs`,
+`Integration/PresenceService.cs`.
+
+Un groupe privé ajoute au noyau une **clé du groupe** (ECDSA P-256), tirée à la
+création chez le propriétaire et qui ne sert jamais d'identité, une
+**politique** signée qui dit qui gouverne et qui est exclu, et une **admission**
+par code. Le secret de 32 octets reste ce qui fait le membre : la politique ne
+le porte pas, seul l'octroi le remet.
+
+```
+GroupId = SHA-256(clé publique du groupe, compressée (33))[0..16]
+```
+
+### Le code
+
+`InvitationTicketText` : douze caractères Base32 Crockford avec contrôle, qui
+portent 6 octets, suivis de `@service`. Montré par groupes de quatre
+(`ABCD-EFGH-JKLM@rdv.exemple`), accepté avec ou sans tirets ; sans suffixe, le
+premier service actif. Le code est dans la politique : le changer déplace la
+boîte d'admission, et l'ancien ne mène plus nulle part.
+
+### La boîte d'admission
+
+```
+adresse = SHA-256("linkpearl:group-join:v1" || code (6) || fenêtre (8))[0..6]
+```
+
+Mêmes fenêtres de trente minutes que la boîte personnelle, la courante et la
+suivante. Elle dérive du code et non du secret : le candidat ne connaît que le
+code.
+
+Exemple : code = `01 02 03 04 05 06`, le 2026-09-22 12:00:00 UTC (fenêtre
+994488), adresse = `e5153db1e51e`.
+
+Un membre ne l'ouvre que s'il peut admettre : le groupe a une clé et une
+politique non dissoute, et soit le mode est « mot de passe », soit il en est
+le propriétaire ou un modérateur. En mode validation, un simple membre ne fait
+pas payer au service des dépôts qu'il jetterait. Les boîtes ne s'ouvrent
+qu'avec la détection active (réglage « Me signaler aux autres joueurs ») :
+c'est elle qui tient la connexion au service.
+
+### Les dépôts
+
+Cinq types, à la suite de ceux du pairage (`0x03`, `0x04`), chacun sous les
+512 octets d'une boîte :
+
+```
+0x05 demande   : code (6) | clé (33) | éphémère (33) | aléa (12) | monde (2) | nom (1 à 64)
+0x06 défi      : aléa (12) | éphémère du membre (33)
+0x07 preuve    : code (6) | aléa (12) | éphémère du membre (33) | étiquette (32)
+0x08 bienvenue : aléa (12) | éphémère du membre (33) | octroi scellé (99 à 226)
+0x09 refus     : aléa (12) | motif (1)
+```
+
+Clés et éphémères compressés. Le nom est de l'UTF-8 strict (un octet invalide
+fait refuser la demande, jamais remplacer), sans caractère de contrôle ni de
+catégorie Format (les marques bidi comme U+202E inverseraient l'affichage), et
+pas seulement des blancs. La preuve a une taille fixe. Motifs de refus :
+`0x01` mot de passe faux, `0x02` trop d'essais, `0x03` refusé par un
+modérateur ; tout autre octet fait refuser le dépôt.
+
+La demande et la preuve vont dans la boîte d'admission, sur le service du code.
+Le défi, la bienvenue et le refus vont dans la **boîte personnelle** du
+candidat, dont l'adresse se calcule depuis le nom et le monde de la demande,
+sur les services de la politique.
+
+### Le scellement
+
+```
+materiau  = ECDH(éphémère du candidat, éphémère du membre) || aléa (12)
+cle(usage)= HKDF-SHA256(ikm = materiau, sel vide, info = "linkpearl:group-admit:v1:" || usage, 32)
+associé(t)= t (1) || aléa (12) || éphémère du membre compressé (33)
+```
+
+Les usages sont `proof` et `welcome` : une preuve ne s'ouvre jamais comme une
+bienvenue.
+
+Exemple : partagé = octets 0x00 à 0x1f, aléa = octets 0x64 à 0x6f :
+
+| Usage | Clé |
+|---|---|
+| `proof` | `8341723f2280566dcb34344d5eded1c5f25eb0287a702e68c529c3067fa1b482` |
+| `welcome` | `657e3195b920ee89df8d42bf96d75de2a3ab0f79a807a4e4305d1db51250c0ac` |
+
+**La preuve n'est pas le mot de passe scellé**, mais une étiquette :
+
+```
+étiquette = HMAC-SHA256(cle(proof), associé(0x07) || SHA-256(UTF-8(NFC(mot de passe))))
+```
+
+Les deux côtés la calculent, l'accord ECDH étant symétrique, et le membre
+compare en temps constant. La normalisation NFC fait qu'un « café » saisi en
+NFD donne la même étiquette. Un faux défieur n'obtient ainsi qu'une empreinte,
+attaquable par dictionnaire hors ligne (voir
+[Modèle de confiance](#modèle-de-confiance)), jamais le mot de passe en clair
+ni sa longueur.
+
+**L'octroi**, scellé dans la bienvenue :
+
+```
+octroi   = GroupId (16) | secret (32) | clé du groupe compressée (33) | n (1) | nom (n)
+scellé   = AES-256-GCM(cle(welcome), nonce = 0, octroi, donnée associée = associé(0x08))
+```
+
+Le nonce nul est sûr parce que chaque clé ne scelle qu'une fois : l'éphémère du
+membre n'a servi qu'à ce défi-là, et une validation par un modérateur tire un
+éphémère neuf. Le candidat vérifie que la clé du groupe est un point valide,
+que `SHA-256(clé)[0..16]` égale le `GroupId`, et que le nom suit les règles
+d'un nom de groupe. Ce contrôle prouve la cohérence de l'octroi, pas son lien
+avec le code : voir le faux groupe au [Modèle de confiance](#modèle-de-confiance).
+
+L'octroi ne porte aucun service : le candidat garde celui du code jusqu'à ce
+que la politique lui donne les autres. Il ne porte pas non plus de politique :
+le groupe reste « en attente de sa politique » jusqu'à la première session
+avec un membre.
+
+### Mode mot de passe
+
+1. Le candidat tire un éphémère et un aléa neufs, et dépose sa demande.
+2. **Chaque membre en ligne** qui la reçoit répond par un défi, avec un éphémère
+   neuf. Les défis vont dans la boîte personnelle du candidat, que les membres
+   ne voient pas : aucun ne peut savoir qu'un autre a déjà défié.
+3. Le candidat retient le premier défi et dépose la preuve. Les autres membres
+   reconnaissent à l'éphémère que la preuve ne leur est pas destinée.
+4. Le membre revérifie tout contre la politique courante et le code **de la
+   demande mémorisée**, jamais celui de la preuve, qu'aucune donnée associée ne
+   couvre : groupe non dissous, toujours en mode mot de passe, code inchangé,
+   candidat non banni. Puis il compare l'étiquette, et répond bienvenue ou refus.
+
+Un redépôt identique de la même demande fait renvoyer le même défi, au plus une
+fois par 30 secondes et par aléa ; une demande différente sous le même aléa est
+un rejeu et n'obtient rien. Un défi vit dix minutes. Côté candidat, sans
+bienvenue ni refus soixante secondes après le défi, la candidature revient en
+attente avec la même demande et accepte un autre défi : un membre qui s'est
+déconnecté ne la gèle pas.
+
+Au-delà de **5 échecs** dans la fenêtre de trente minutes pour une même clé de
+candidat, le membre répond « trop d'essais » sans vérifier. Le compte est tenu
+par chaque membre, en mémoire. Il freine l'erreur honnête répétée, il ne
+protège pas de la devinette : voir [Modèle de confiance](#modèle-de-confiance).
+
+### Mode validation
+
+Le candidat redépose sa demande chaque minute pendant dix minutes : les boîtes
+ne gardent rien, et un modérateur peut se connecter entre-temps. Seuls le
+propriétaire et les modérateurs la voient, page « Demandes ». Un redépôt ne la
+rafraîchit que s'il est identique à la demande gardée (clé, éphémère, nom,
+monde, code) ; sinon il est ignoré, pour qu'un intrus ne fasse pas sceller la
+bienvenue pour son propre éphémère. Elle disparaît après trois minutes sans
+redépôt. Accepter envoie la bienvenue avec un éphémère neuf, après avoir
+revérifié les bannis ; refuser envoie le refus `0x03`. Le premier modérateur
+qui répond l'emporte.
+
+### Dans les deux modes
+
+- Une demande dont la clé ou le personnage est banni, ou qui vient de nous, ne
+  reçoit **aucune** réponse. Un groupe dissous ne répond plus.
+- Un membre se souvient quinze minutes d'avoir répondu à un aléa, et n'y
+  répond plus.
+- Au plus **64 défis vivants** et **64 demandes en attente de validation** par
+  membre ; au-delà, silence. Réponses et comptes d'échecs gardés : 256 au plus,
+  les plus anciens sortent d'abord.
+- Au plus **20 réponses d'admission par minute** et par client, le surplus
+  jeté : le service compte 60 trames par minute et par adresse IP, et des
+  demandes forgées en nombre feraient sinon déconnecter le membre.
+- La candidature expire après dix minutes sans réponse. Une seule à la fois,
+  oubliée au changement de personnage, comme les défis et attentes de l'hôte.
+
+### La politique
+
+Deux encodages canoniques, binaires, entiers en gros-boutiste, textes précédés
+d'un octet de longueur :
+
+```
+attestation : format (1) | groupe (16) | version (8) | admission (1) | propriétaire (33)
+              | n (1) | n × modérateur (33) | signature (64)
+politique   : format (1) | groupe (16) | version (8) | nom (1+) | code (6)
+              | n (1) | n × service (1+) | mot de passe (1+) | n (2) | n × banni
+              | dissous (1) | taille (2) | attestation | signataire (33) | signature (64)
+banni       : drapeaux (1, 1 = clé, 2 = personnage) | PeerId (16)? | empreinte (16)?
+
+signature de l'attestation = ECDSA(clé du groupe, "linkpearl:group-attest:v1" || attestation sans sa signature)
+signature de la politique  = ECDSA(signataire,    "linkpearl:group-policy:v1" || politique sans sa signature)
+```
+
+`format` vaut `0x01`. `admission` vaut `0x01` (mot de passe) ou `0x02`
+(validation). `propriétaire` est la clé d'**identité** du propriétaire en tant
+que membre, distincte de la clé du groupe : elle sert à le protéger d'un
+bannissement et à afficher son rôle. `modérateur` : au plus 16 clés d'identité.
+
+**L'attestation** est ce que seul le propriétaire décide : propriétaire,
+modérateurs, mode d'admission. Signée par la clé du groupe, elle est embarquée
+dans chaque politique, pour qu'un membre qui vient d'entrer vérifie un
+modérateur sans rien connaître de l'historique.
+
+Bornes au décodage : nom de 1 à 32 caractères (128 octets UTF-8 au plus), sans
+caractère de contrôle ni seulement des blancs ; 1 à 4 services de 255 octets au
+plus ; mot de passe de 64 octets UTF-8 au plus, sans caractère de contrôle ;
+256 bannis au plus, drapeaux 1 à 3 ; `dissous` 0 ou 1 ; 16 Kio en tout ; aucun
+octet en trop. **Une seule forme d'octets par politique** : le décodage
+réencode ce qu'il a lu et exige les mêmes octets, sans quoi plusieurs trames
+distinctes décoderaient vers la même politique.
+
+**Règles d'acceptation** (`GroupPolicyRules.TryAccept`), une seule violée et
+la politique entière est rejetée :
+
+1. la clé du groupe donne le `GroupId` attendu, et la politique comme
+   l'attestation portent ce `GroupId` ;
+2. en mode mot de passe, le mot de passe n'est pas vide ;
+3. l'attestation est signée par la clé du groupe ;
+4. le signataire est la clé du groupe ou un modérateur **de l'attestation
+   embarquée**, et la signature de la politique se vérifie sous sa clé ;
+5. toutes les clés de l'attestation sont des points valides ;
+6. aucun bannissement par clé ne vise le propriétaire-membre ni un modérateur
+   attesté, quel que soit le signataire : pour exclure un modérateur, le
+   propriétaire le retire d'abord des modérateurs, dans la même politique ;
+7. seule la clé du groupe dissout.
+
+Un modérateur ne peut donc changer ni les modérateurs ni le mode d'admission :
+ils sont dans l'attestation, qu'il ne sait pas signer. Un bannissement par
+empreinte seule peut viser le personnage d'un pair protégé ; il ne s'applique
+pas à sa clé (`GroupPolicy.IsBanned`).
+
+**Ordre entre deux politiques valides** (`GroupPolicyRules.IsNewer`) :
+
+1. la dissolution l'emporte, et reste acquise : un modérateur retiré, qui garde
+   une attestation où il figure, ne ressuscite pas un groupe dissous ;
+2. puis la plus haute version d'attestation : un modérateur retiré ne reprend
+   pas la main sous l'ancienne ;
+3. puis la plus haute version ;
+4. puis le plus petit SHA-256 **du contenu signé**, et non de la signature :
+   ECDSA est aléatoire et malléable, deux signatures du même contenu ne
+   départagent pas. À contenu identique, aucune ne l'emporte.
+
+Toute modification du propriétaire re-signe l'attestation en haussant sa
+version, même à contenu inchangé : elle l'emporte toujours, y compris sur un
+modérateur hostile qui aurait poussé la version du corps au maximum. Une
+modification de modérateur hausse la version de un, et échoue lisiblement à
+l'épuisement.
+
+### Propagation
+
+`MessageKind.GroupPolicy = 0x10`, sur une session de groupe seulement :
+
+```
+charge = GroupId (16) || politique encodée
+```
+
+Chaque côté envoie la sienne à l'ouverture de la session, puis à chaque
+nouvelle version. Le receveur ignore un `GroupId` qui n'est pas celui de la
+session, garde au plus quatre charges en attente par session, et les traite au
+tic suivant : acceptée et plus récente, elle est adoptée (le nom et les
+services du groupe la suivent) ; plus ancienne, il renvoie la sienne ; même
+contenu, rien. Deux membres qui se croisent repartent avec la même. Un client
+qui ne connaît pas `0x10` l'ignore.
+
+Un membre qui adopte une politique où il est banni, ou une politique dissoute,
+quitte le groupe et le dit au joueur. Il ne la relaie donc pas : **la
+dissolution n'atteint que les membres que le propriétaire croise lui-même**,
+et c'est pourquoi un groupe dissous reste dans la liste du propriétaire
+jusqu'à ce qu'il le retire.
+
+### Gouvernance concurrente
+
+Pas de journal d'opérations : la politique la plus récente remplace l'autre en
+entier. Il en découle, et c'est assumé :
+
+- deux modérateurs qui publient la même version : une des deux modifications
+  est perdue, le modérateur qui la voit disparaître la refait ;
+- une modification du propriétaire faite depuis un état périmé écrase une
+  modification de modérateur qu'il n'a pas encore reçue, puisque l'attestation
+  domine l'ordre : un bannissement prononcé par un modérateur peut ainsi
+  sauter si le propriétaire agit avant de l'avoir vu ;
+- un modérateur hostile qui pousse la version du corps au maximum gèle les
+  autres modérateurs jusqu'à la prochaine action du propriétaire ;
+- un membre qui vient d'entrer accepte la première politique valide qu'on lui
+  présente, même sous une attestation ancienne, jusqu'à croiser un membre qui
+  en a une plus récente.
+
+### Ce que l'admission ne garantit pas
+
+Dans la ligne du [Modèle de confiance](#modèle-de-confiance), et sans
+vérification hors bande :
+
+- **Le nom et la clé d'une demande ne sont pas authentifiés.** Un modérateur
+  approuve un nom affiché ; la puce « visible autour de vous » dit qu'un
+  personnage de ce nom est là, pas que la demande vient de lui.
+- **Le code circule en clair** dans la demande et la preuve : tout service qui
+  voit passer une demande connaît le code, et peut déposer à son tour.
+- **Les bannissements se contournent à l'admission** : ils ne visent que la clé
+  et le personnage déclarés. Un exclu qui connaît encore le code et le mot de
+  passe revient sous une clé neuve et un autre personnage. Changer le code et
+  le mot de passe après une exclusion ferme cette porte-là.
+- **Le plafond de 5 échecs** se contourne par une clé neuve à chaque essai. Un
+  porteur du code peut aussi s'en servir contre une victime : épuiser les
+  essais sous sa clé s'il la connaît, ou, en lisant sa boîte personnelle, déposer une fausse
+  preuve qui consomme le vrai défi et lui vaut un refus.
+- **Les refus ne sont pas authentifiés** : qui connaît `nom@monde` du candidat
+  et l'aléa peut en déposer un.
+
+Le verrouillage d'une victime, la fausse preuve et le faux refus sont du déni
+de service par un porteur du code ou un tiers : ils coûtent au candidat un
+nouvel essai, jamais un accès à qui n'en a pas.
 
 ## Rendez-vous et connexion
 
@@ -463,6 +803,12 @@ Ce qu'un tiers ou un rendez-vous peut faire consommer, et ce qui l'arrête.
 | Trame du handshake attendue | 15 s | `PeerSession` |
 | Message reconstitué sur le relais | 16 Mio | `RelayPeerLink` |
 | Nouvelle tentative après échec | 5 s, doublée jusqu'à 5 min | `SyncEngineSettings` |
+| Politique de groupe | 16 Kio, 4 services, 16 modérateurs, 256 bannis | `GroupPolicyCodec` |
+| Politiques en attente de traitement, par session | 4 | `SyncEngine` |
+| Défis vivants, demandes en attente de validation | 64 chacun, par membre | `AdmissionHost` |
+| Renvoi d'un même défi | une fois par 30 s | `AdmissionHost` |
+| Réponses d'admission déposées | 20 par minute | `PresenceService` |
+| Échecs de mot de passe | 5 par clé de candidat et par fenêtre de 30 min, par membre | `AdmissionHost` |
 
 Un rendez-vous malveillant peut toujours refuser tout service : c'est la
 raison d'être de la liste de services. Un pair malveillant, déjà au carnet,
@@ -481,7 +827,8 @@ Le chiffrement protège le contenu, pas les métadonnées.
 | Le réseau | les deux adresses, les volumes, les horaires | votre adresse et celle du service |
 
 S'y ajoute, au pairage, tout le contenu des demandes (voir
-[Pairage](#pairage)), et en permanence l'existence de votre boîte, dont
+[Pairage](#pairage)), à l'admission dans un groupe le code, le nom, le monde et
+la clé du candidat (voir [Groupes privés](#groupes-privés)), et en permanence l'existence de votre boîte, dont
 l'adresse se calcule depuis votre nom : le service sait qui est en ligne et
 quand.
 
@@ -496,6 +843,9 @@ quand.
   avec le format 1. Deux clients de formats différents échouent à ouvrir le
   bloc l'un de l'autre et ne se connectent pas ; il faut que les deux soient à
   jour.
+- **Groupes privés** : dépôts `0x05` à `0x09`, politique et attestation au
+  format `0x01`, message `0x10`, depuis le 24 septembre 2026. Un client plus
+  ancien ignore `0x10` et ne reconnaît pas les dépôts d'admission.
 - Les chaînes de dérivation portent leur version (`…:v1`, `…:v2`) : un
   changement de format change l'étiquette.
 - Une incompatibilité se signale par un refus, jamais par une lecture
@@ -514,21 +864,27 @@ Par ordre d'importance.
    [Modèle de confiance](#modèle-de-confiance). Aucune vérification hors bande
    n'est proposée : c'est une limite d'authentification, pas seulement de
    confidentialité.
-2. **Les paires formées avant le 24 septembre 2026** ont un secret dérivé de
+2. **L'admission dans un groupe privé hérite de cette limite** : le
+   candidat ne peut pas reconnaître le vrai groupe, un modérateur approuve un
+   nom affiché, et un faux défieur obtient de quoi attaquer le mot de passe
+   hors ligne. Un exclu garde le secret, faute de rotation. Voir
+   [Modèle de confiance](#modèle-de-confiance) et
+   [Ce que l'admission ne garantit pas](#ce-que-ladmission-ne-garantit-pas).
+3. **Les paires formées avant le 24 septembre 2026** ont un secret dérivé de
    l'aléa seul, que tout service ayant vu leur pairage connaît. Ces services
    peuvent relier leurs présences dans le temps et lire leurs adresses
    candidates. Se pairer à nouveau suffit ; rien ne l'impose aujourd'hui.
-3. **Le contenu des demandes est visible du service** : nom, monde et clé
+4. **Le contenu des demandes est visible du service** : nom, monde et clé
    publique, déposés sur tous les services de la liste du demandeur. C'est le
    nom en clair qui permet au destinataire de reconnaître le demandeur.
-4. **Aucune rotation d'identité** : une clé compromise ne peut pas être
+5. **Aucune rotation d'identité** : une clé compromise ne peut pas être
    révoquée auprès des pairs. Voir [Secrets locaux](#secrets-locaux).
-5. **Une sauvegarde sans mot de passe vaut l'identité**, en clair.
-6. La clé privée d'identité sert aussi, par HKDF, à masquer les GUID Moodles.
-7. L'effacement des secrets en mémoire n'est pas garanti (C# managé).
-8. Pas de renouvellement de clé en cours de session, pas de négociation du
+6. **Une sauvegarde sans mot de passe vaut l'identité**, en clair.
+7. La clé privée d'identité sert aussi, par HKDF, à masquer les GUID Moodles.
+8. L'effacement des secrets en mémoire n'est pas garanti (C# managé).
+9. Pas de renouvellement de clé en cours de session, pas de négociation du
    mineur.
-9. `Core/Crypto/ShortAuthString.cs` (six mots tirés d'une liste de 64, soit
+10. `Core/Crypto/ShortAuthString.cs` (six mots tirés d'une liste de 64, soit
    36 bits dérivés de `sid`) existe mais **n'est affiché nulle part**. Il
    n'apporte donc aucune protection aujourd'hui, et rien dans ce document ne
    doit être lu comme s'il en apportait une.
@@ -538,6 +894,12 @@ Par ordre d'importance.
 `Linkpearl.Core.Tests/Fixtures/protocol-vectors.json` couvre la dérivation de
 clés et le format de trame du canal, qui sont déterministes. Le handshake tire
 des éphémères et des aléas, ses trames ne sont donc pas reproductibles.
+
+Les vecteurs des groupes (boîtes de présence et d'admission, secret de paire de
+groupe, clés de scellement de l'admission) sont figés dans les tests de
+`Linkpearl.Core.Tests/Groups/` (ceux de l'admission recalculés en Python) ; leurs
+valeurs sont reprises dans [Groupes (noyau)](#groupes-noyau) et
+[Groupes privés](#groupes-privés).
 
 Régénérer : `dotnet run --project Linkpearl.Harness -- vectors`. **Une
 modification de ce fichier est un changement de protocole sur le fil**, et doit
