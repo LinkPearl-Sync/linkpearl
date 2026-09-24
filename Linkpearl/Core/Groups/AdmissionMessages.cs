@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Linkpearl.Core.Crypto;
@@ -41,8 +42,12 @@ public sealed record AdmissionRequest(
 /// <summary>Membre vers la boîte du candidat : « prouve que tu connais le mot de passe ».</summary>
 public sealed record AdmissionChallenge(byte[] Nonce, byte[] MemberEphemeral) : AdmissionMessage;
 
-/// <summary>Candidat vers la boîte d'admission : le mot de passe, scellé pour le membre qui a défié.</summary>
-public sealed record AdmissionProof(byte[] Code, byte[] Nonce, byte[] MemberEphemeral, byte[] SealedPassword) : AdmissionMessage;
+/// <summary>Candidat vers la boîte d'admission : une étiquette prouvant qu'il connaît le mot de passe.</summary>
+/// <param name="Tag">
+/// HMAC de 32 octets, jamais le mot de passe lui-même : un faux défieur (voir
+/// <see cref="AdmissionSealing.ProofTag"/>) n'en tire qu'une empreinte, pas le secret.
+/// </param>
+public sealed record AdmissionProof(byte[] Code, byte[] Nonce, byte[] MemberEphemeral, byte[] Tag) : AdmissionMessage;
 
 /// <summary>Membre vers la boîte du candidat : l'octroi du groupe, scellé.</summary>
 public sealed record AdmissionWelcome(byte[] Nonce, byte[] MemberEphemeral, byte[] SealedGrant) : AdmissionMessage;
@@ -59,7 +64,7 @@ public sealed record AdmissionRefusal(byte[] Nonce, byte Reason) : AdmissionMess
 /// <code>
 /// demande   : code (6) | clé (33) | éphémère (33) | aléa (12) | monde (2) | nom (reste, 1 à 64)
 /// défi      : aléa (12) | éphémère du membre (33)
-/// preuve    : code (6) | aléa (12) | éphémère du membre (33) | mot de passe scellé (reste)
+/// preuve    : code (6) | aléa (12) | éphémère du membre (33) | étiquette (32, taille fixe)
 /// bienvenue : aléa (12) | éphémère du membre (33) | octroi scellé (reste)
 /// refus     : aléa (12) | motif (1)
 /// </code>
@@ -72,15 +77,13 @@ public static class AdmissionCodec
 
     private const int CodeLength = InvitationTicket.SizeInBytes;
     private const int PointLength = CryptoPrimitives.CompressedPointLength;
-    private const int TagLength = CryptoPrimitives.TagLength;
 
     public static byte[] Encode(AdmissionMessage message) => message switch
     {
         AdmissionRequest request => EncodeRequest(request),
         AdmissionChallenge challenge =>
             [AdmissionKind.Challenge, .. challenge.Nonce, .. CryptoPrimitives.Compress(challenge.MemberEphemeral)],
-        AdmissionProof proof =>
-            [AdmissionKind.Proof, .. proof.Code, .. proof.Nonce, .. CryptoPrimitives.Compress(proof.MemberEphemeral), .. proof.SealedPassword],
+        AdmissionProof proof => EncodeProof(proof),
         AdmissionWelcome welcome =>
             [AdmissionKind.Welcome, .. welcome.Nonce, .. CryptoPrimitives.Compress(welcome.MemberEphemeral), .. welcome.SealedGrant],
         AdmissionRefusal refusal => [AdmissionKind.Refusal, .. refusal.Nonce, refusal.Reason],
@@ -100,6 +103,16 @@ public static class AdmissionCodec
         return [
             AdmissionKind.Request, .. request.Code, .. CryptoPrimitives.Compress(request.PublicKey),
             .. CryptoPrimitives.Compress(request.Ephemeral), .. request.Nonce, .. world, .. name,
+        ];
+    }
+
+    private static byte[] EncodeProof(AdmissionProof proof)
+    {
+        if (proof.Tag.Length != AdmissionSealing.TagLength)
+            throw new ArgumentException($"une étiquette de preuve fait {AdmissionSealing.TagLength} octets", nameof(proof));
+
+        return [
+            AdmissionKind.Proof, .. proof.Code, .. proof.Nonce, .. CryptoPrimitives.Compress(proof.MemberEphemeral), .. proof.Tag,
         ];
     }
 
@@ -123,9 +136,14 @@ public static class AdmissionCodec
                     if (body.Length <= header || body.Length > header + MaxNameBytes)
                         return Refuse("demande d'admission hors bornes", out rejection);
 
-                    var name = Encoding.UTF8.GetString(body[header..]);
+                    // UTF-8 strict : un octet invalide est refusé plutôt que
+                    // remplacé par un caractère de substitution qui masquerait
+                    // l'anomalie. Format (Cf) écarte les marques bidi comme
+                    // U+202E, qui inverseraient l'affichage du nom à l'écran.
+                    var name = new UTF8Encoding(false, true).GetString(body[header..]);
 
-                    if (name.Any(char.IsControl) || string.IsNullOrWhiteSpace(name))
+                    if (name.Any(c => char.IsControl(c) || CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.Format)
+                        || string.IsNullOrWhiteSpace(name))
                         return Refuse("nom de personnage hors règles", out rejection);
 
                     message = new AdmissionRequest(
@@ -148,9 +166,11 @@ public static class AdmissionCodec
                 case AdmissionKind.Proof:
                 {
                     const int header = CodeLength + NonceLength + PointLength;
-                    var sealedLength = body.Length - header;
 
-                    if (sealedLength < TagLength || sealedLength > TagLength + GroupPolicyCodec.MaxPasswordBytes)
+                    // Taille fixe (pas de « au moins ») : l'étiquette ne varie
+                    // jamais, contrairement à l'ancien mot de passe scellé dont
+                    // la longueur se lisait dans la trame.
+                    if (body.Length != header + AdmissionSealing.TagLength)
                         return Refuse("preuve hors bornes", out rejection);
 
                     message = new AdmissionProof(
@@ -187,6 +207,10 @@ public static class AdmissionCodec
         catch (CryptographicException e)
         {
             return Refuse($"clé invalide : {e.Message}", out rejection);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Refuse("nom de personnage illisible", out rejection);
         }
 
         rejection = null;
@@ -242,9 +266,27 @@ public static class GroupGrantCodec
             return false;
         }
 
-        // L'identifiant doit dériver de la clé : sinon un membre malveillant
-        // ferait croire au candidat qu'il entre dans un groupe alors qu'il entre
-        // dans un autre.
+        // La clé du groupe doit être un point valide de la courbe : sinon
+        // aucun handshake ultérieur ne pourrait s'en servir, et l'échec se
+        // découvrirait bien plus tard qu'ici.
+        try
+        {
+            CryptoPrimitives.Decompress(ownerKey);
+        }
+        catch (CryptographicException)
+        {
+            rejection = "clé de groupe invalide";
+            return false;
+        }
+
+        // Ce contrôle prouve seulement qu'un octroi est cohérent avec sa
+        // propre clé : un membre malveillant qui fabrique une clé et un nom
+        // de toutes pièces passe ce test aussi bien qu'un membre honnête. Le
+        // lien entre le code d'admission et le groupe qu'il ouvre n'est pas
+        // vérifiable par le candidat, exactement comme le TOFU du pairage
+        // (voir la section « Modèle de confiance » de docs/protocol.md) : un
+        // rendez-vous ou un membre malveillant peut égarer un candidat vers
+        // un faux groupe, jamais falsifier un groupe déjà rejoint.
         if (GroupId.Of(ownerKey) != group || GroupPolicyCodec.IsValidName(name) is false)
         {
             rejection = "octroi incohérent";
@@ -263,13 +305,21 @@ public static class GroupGrantCodec
 /// <remarks>
 /// La clé vient de l'accord des éphémères suivi de l'aléa, comme le pairage,
 /// dérivée par usage : une preuve ne s'ouvre jamais comme une bienvenue. Chaque
-/// clé ne sert qu'une fois, d'où l'aléa AES-GCM fixe à zéro. Les données
-/// associées lient le scellé à son en-tête.
+/// clé ne sert qu'une fois, d'où l'aléa AES-GCM fixe à zéro pour <see cref="Seal"/>
+/// et <see cref="TryOpen"/> (qui ne servent plus qu'à la bienvenue, le mot de
+/// passe n'étant plus scellé). L'invariant tient parce que chaque bienvenue
+/// consomme un éphémère de membre qui n'a servi qu'à ce défi précis, ou un
+/// éphémère neuf si le membre valide sans avoir défié : jamais deux scellements
+/// sous le même accord de clés. Les données associées lient le scellé à son
+/// en-tête.
 /// </remarks>
 public static class AdmissionSealing
 {
     public const string Proof = "proof";
     public const string Welcome = "welcome";
+
+    /// <summary>Taille de l'étiquette HMAC-SHA256 de <see cref="ProofTag"/>.</summary>
+    public const int TagLength = 32;
 
     private static readonly byte[] ZeroNonce = new byte[CryptoPrimitives.NonceLength];
 
@@ -305,6 +355,35 @@ public static class AdmissionSealing
 
     public static byte[] Associated(byte kind, ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> memberEphemeral)
         => [kind, .. nonce, .. CryptoPrimitives.Compress(memberEphemeral)];
+
+    /// <summary>
+    /// L'étiquette de preuve : les deux côtés la calculent de la même façon,
+    /// l'accord ECDH étant symétrique.
+    /// </summary>
+    /// <remarks>
+    /// Un faux défieur, qui devance les vrais membres pour intercepter la
+    /// preuve, n'obtient ainsi qu'une empreinte HMAC du mot de passe : elle ne
+    /// se retourne que par dictionnaire hors ligne, jamais en lisant le mot de
+    /// passe en clair comme avec l'ancien scellement AES-GCM. La taille fixe de
+    /// l'étiquette ne trahit pas non plus la longueur du mot de passe.
+    /// </remarks>
+    public static byte[] ProofTag(
+        ECDiffieHellman ours, ReadOnlySpan<byte> theirEphemeral, ReadOnlySpan<byte> nonce, string password,
+        ReadOnlySpan<byte> associated)
+    {
+        var key = Key(ours, theirEphemeral, nonce, Proof);
+
+        try
+        {
+            var passwordDigest = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+            byte[] material = [.. associated, .. passwordDigest];
+            return HMACSHA256.HashData(key, material);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
 
     public static byte[] Seal(byte[] key, ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associated)
         => CryptoPrimitives.Seal(key, ZeroNonce, plaintext, associated);
