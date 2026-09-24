@@ -140,20 +140,22 @@ public sealed class GroupBook(IClock clock) : IGroupGate
             if (_groups.TryGetValue(id, out var group) is false)
                 return GroupAdmission.UnknownGroup;
 
+            if (group.Members.TryGetValue(member, out var known) && known.Id is { } pinned)
+            {
+                // Une clé contestée ne prouve rien : n'importe quel membre connaît le
+                // secret partagé et peut prétendre être n'importe quelle empreinte
+                // avec une clé bidon, sans jamais réussir le handshake. La laisser
+                // rafraîchir LastSeenAt fausserait l'ordre d'éviction de ForgetOldest
+                // sans qu'aucune preuve n'ait été apportée.
+                return pinned == key ? GroupAdmission.Admitted : GroupAdmission.Disputed;
+            }
+
             var members = new Dictionary<PlayerFingerprint, GroupMember>(group.Members);
 
-            if (members.TryGetValue(member, out var known))
+            if (known is not null)
             {
-                if (known.Id is { } pinned)
-                {
-                    verdict = pinned == key ? GroupAdmission.Admitted : GroupAdmission.Disputed;
-                    members[member] = known with { LastSeenAt = clock.UtcNow };
-                }
-                else
-                {
-                    verdict = GroupAdmission.Pinned;
-                    members[member] = known with { Id = key, LastSeenAt = clock.UtcNow };
-                }
+                verdict = GroupAdmission.Pinned;
+                members[member] = known with { Id = key, LastSeenAt = clock.UtcNow };
             }
             else
             {
