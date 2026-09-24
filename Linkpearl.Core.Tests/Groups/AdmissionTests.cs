@@ -131,6 +131,9 @@ public sealed class AdmissionTests : IDisposable
         var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
 
         var first = Assert.Single(host.OnRequest(request, Candidate));
+
+        // Au rythme réel du candidat, qui redépose chaque minute.
+        _clock.Advance(AdmissionCandidate.RedepositInterval);
         var again = Assert.Single(host.OnRequest(request, Candidate));
 
         Assert.Equal(first.Payload, again.Payload);
@@ -396,6 +399,27 @@ public sealed class AdmissionTests : IDisposable
 
         var welcome = Assert.Single(host.OnProof(Decode<AdmissionProof>(proof!)));
         Assert.True(candidate.OnWelcome(Decode<AdmissionWelcome>(welcome.Payload)));
+    }
+
+    [Fact]
+    public void Un_meme_defi_n_est_renvoye_qu_une_fois_par_intervalle()
+    {
+        var (host, _, created) = Member();
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune"));
+        Assert.Single(host.OnRequest(request, Candidate));
+
+        // Rejouée aussitôt, par un autre service ou par un porteur du code : rien.
+        Assert.Empty(host.OnRequest(request, Candidate));
+
+        _clock.Advance(AdmissionHost.ChallengeResendInterval);
+        Assert.Single(host.OnRequest(request, Candidate));
+
+        // Deux redépôts à moins de trente secondes : un seul renvoi.
+        _clock.Advance(AdmissionHost.ChallengeResendInterval - TimeSpan.FromSeconds(1));
+        Assert.Empty(host.OnRequest(request, Candidate));
+
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Single(host.OnRequest(request, Candidate));
     }
 
     [Fact]

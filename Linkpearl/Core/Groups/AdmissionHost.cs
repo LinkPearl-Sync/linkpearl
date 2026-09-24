@@ -61,6 +61,17 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
     /// <summary>Le temps pour un candidat de répondre à un défi.</summary>
     public static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(10);
 
+    /// <summary>Délai minimal entre deux renvois du même défi, par aléa.</summary>
+    /// <remarks>
+    /// Chaque renvoi est un dépôt, et le service compte 60 trames par minute
+    /// et par adresse IP (RendezvousLimits.AnnouncementsPerMinute) : un porteur
+    /// du code qui rejoue la même demande en boucle, ou la même demande reçue
+    /// par plusieurs services, épuiserait sinon ce quota et ferait déconnecter
+    /// le membre. Le candidat honnête ne redépose qu'une fois par minute
+    /// (AdmissionCandidate.RedepositInterval) : trente secondes ne le freinent pas.
+    /// </remarks>
+    public static readonly TimeSpan ChallengeResendInterval = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// Une demande en validation disparaît si elle n'est plus redéposée.
     /// </summary>
@@ -77,9 +88,10 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
     private readonly Dictionary<PeerId, Failures> _failures = [];
     private bool _disposed;
 
+    /// <param name="LastSent">Le dernier envoi de ce défi, pour espacer les renvois (voir <see cref="ChallengeResendInterval"/>).</param>
     private sealed record Challenge(
         GroupId Group, AdmissionRequest Request, PlayerFingerprint Candidate, ECDiffieHellman Ephemeral,
-        AdmissionOutbound Outbound, DateTimeOffset Created);
+        AdmissionOutbound Outbound, DateTimeOffset Created, DateTimeOffset LastSent);
 
     private sealed record Waiting(GroupId Group, AdmissionRequest Request, PlayerFingerprint Candidate, DateTimeOffset LastSeen);
 
@@ -164,7 +176,13 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
             // le laisse la rejouer. Toute autre demande de même aléa est un
             // rejeu, qui n'obtient rien.
             if (_challenges.TryGetValue(key, out var live))
-                return SameRequest(live.Request, request) ? [live.Outbound with { Payload = [.. live.Outbound.Payload] }] : [];
+            {
+                if (SameRequest(live.Request, request) is false || now - live.LastSent < ChallengeResendInterval)
+                    return [];
+
+                _challenges[key] = live with { LastSent = now };
+                return [live.Outbound with { Payload = [.. live.Outbound.Payload] }];
+            }
 
             if (_challenges.Count >= MaxLiveChallenges)
                 return [];
@@ -172,7 +190,7 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
             var ephemeral = CryptoPrimitives.GenerateEphemeral();
             var challenge = new AdmissionChallenge(request.Nonce, CryptoPrimitives.ExportPublicPoint(ephemeral));
             var outbound = new AdmissionOutbound(request.CharacterName, request.WorldId, group.Rendezvous, AdmissionCodec.Encode(challenge));
-            _challenges[key] = new Challenge(group.Id, request, candidate, ephemeral, outbound, now);
+            _challenges[key] = new Challenge(group.Id, request, candidate, ephemeral, outbound, now, now);
 
             return [outbound with { Payload = [.. outbound.Payload] }];
         }

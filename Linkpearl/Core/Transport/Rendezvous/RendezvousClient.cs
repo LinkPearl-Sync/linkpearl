@@ -19,6 +19,15 @@ public sealed class RendezvousClient : IAsyncDisposable
     private readonly TcpClient _tcp = new();
     private NetworkStream? _stream;
 
+    /// <summary>Une seule trame écrite à la fois.</summary>
+    /// <remarks>
+    /// La présence dépose depuis plusieurs tâches (réponses d'admission, redépôts,
+    /// interrogations) sur la même connexion : deux écritures concurrentes sur un
+    /// flux peuvent s'entrelacer, et le service lirait alors une trame corrompue
+    /// puis fermerait la connexion.
+    /// </remarks>
+    private readonly SemaphoreSlim _writing = new(1, 1);
+
     public async Task ConnectAsync(string host, int port, CancellationToken ct)
     {
         await _tcp.ConnectAsync(host, port, ct).ConfigureAwait(false);
@@ -321,7 +330,32 @@ public sealed class RendezvousClient : IAsyncDisposable
     }
 
     private async Task SendAsync(byte[] body, CancellationToken ct)
-        => await _stream!.WriteAsync(RendezvousWire.Frame(body), ct).ConfigureAwait(false);
+    {
+        var frame = RendezvousWire.Frame(body);
+        await _writing.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await _stream!.WriteAsync(frame, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseWriting();
+        }
+    }
+
+    private void ReleaseWriting()
+    {
+        try
+        {
+            _writing.Release();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Le client a été disposé pendant l'écriture, qui a elle-même levé
+            // sur le flux fermé : c'est cette exception-là que l'appelant doit voir.
+        }
+    }
 
     private async Task<byte[]?> ReadFrameAsync(CancellationToken ct)
     {
@@ -359,8 +393,11 @@ public sealed class RendezvousClient : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        // Le flux d'abord : une écriture en cours lève et rend le sémaphore,
+        // qu'on peut alors libérer sans laisser d'attente suspendue.
         _stream?.Dispose();
         _tcp.Dispose();
+        _writing.Dispose();
         return ValueTask.CompletedTask;
     }
 }

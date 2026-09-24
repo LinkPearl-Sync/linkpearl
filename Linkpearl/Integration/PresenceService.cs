@@ -79,6 +79,20 @@ public sealed class PresenceService : IDisposable
     /// </remarks>
     private readonly SemaphoreSlim _opening = new(1, 1);
 
+    /// <summary>Réponses d'admission déposées pour le compte de l'hôte, par minute glissante.</summary>
+    /// <remarks>
+    /// Le service compte 60 trames par minute et par adresse IP
+    /// (RendezvousLimits.AnnouncementsPerMinute), et nos propres interrogations
+    /// de présence et réouvertures en consomment déjà. Des demandes forgées en
+    /// nombre, chacune avec un aléa neuf, feraient sinon répondre l'hôte jusqu'à
+    /// épuiser ce quota et nous faire déconnecter. Vingt laisse la place à
+    /// plusieurs candidatures honnêtes simultanées.
+    /// </remarks>
+    private const int MaxAdmissionAnswersPerMinute = 20;
+
+    /// <summary>Les instants des dernières réponses d'admission, gardés par <see cref="_gate"/>.</summary>
+    private readonly Queue<DateTimeOffset> _admissionAnswers = new();
+
     /// <summary>
     /// Boîtes qu'on s'autorise sur une connexion avant de la refaire à neuf.
     /// </summary>
@@ -400,8 +414,9 @@ public sealed class PresenceService : IDisposable
         // nous déposons la demande, et, n'étant pas encore membres, rien
         // d'autre ne nous y relie. Les réponses arrivent dans notre boîte
         // personnelle, que cette même session tient ouverte.
-        if (_candidate is { State: CandidacyState.Waiting or CandidacyState.NeedsPassword or CandidacyState.Proving,
-                Service: { } candidacy })
+        // Sans NeedsPassword : cet état attend le joueur, pas le réseau, et une
+        // nouvelle candidature rouvrira la session.
+        if (_candidate is { State: CandidacyState.Waiting or CandidacyState.Proving, Service: { } candidacy })
             active.Add(candidacy);
 
         lock (_gate)
@@ -425,6 +440,23 @@ public sealed class PresenceService : IDisposable
 
     private async Task OpenAsync(Session session, PlayerFingerprint fingerprint, CancellationToken ct)
     {
+        // Le service refuse au-delà de RendezvousLimits.MaxMailboxesPerSession
+        // (64) : se connecter pour se faire refuser, puis recommencer à chaque
+        // ronde, ne mènerait nulle part. On le dit plutôt, sans rien envoyer.
+        var planned = Addresses(fingerprint, _groups, AdmissionCodes()).Count;
+
+        if (planned > MailboxBudget)
+        {
+            lock (_gate)
+            {
+                session.Failure = "trop de groupes pour un seul service";
+                session.NextAttempt = _clock.UtcNow + TimeSpan.FromSeconds(30);
+            }
+
+            _log.Warning($"{planned} boîtes à ouvrir sur {session.At}, au-delà de {MailboxBudget} : ouverture refusée.");
+            return;
+        }
+
         try
         {
             var client = new RendezvousClient();
@@ -990,11 +1022,37 @@ public sealed class PresenceService : IDisposable
         Detach(() => DepositOnAsync([at], address, proof, CancellationToken.None), "Envoi de la preuve d'admission");
     }
 
-    /// <summary>Dépose les réponses de l'hôte, hors du fil d'écoute.</summary>
+    /// <summary>Dépose les réponses de l'hôte, hors du fil d'écoute, dans la limite du plafond.</summary>
     private void SendAnswers(IReadOnlyList<AdmissionOutbound> answers)
     {
         foreach (var answer in answers)
+        {
+            if (TakeAnswerSlot() is false)
+            {
+                _log.Debug("Réponse d'admission jetée : plafond par minute atteint.");
+                continue;
+            }
+
             Detach(() => AnswerAsync(answer, CancellationToken.None), "Réponse d'admission");
+        }
+    }
+
+    /// <summary>Réserve une place parmi les réponses de la dernière minute.</summary>
+    private bool TakeAnswerSlot()
+    {
+        var now = _clock.UtcNow;
+
+        lock (_gate)
+        {
+            while (_admissionAnswers.TryPeek(out var oldest) && now - oldest >= TimeSpan.FromMinutes(1))
+                _admissionAnswers.Dequeue();
+
+            if (_admissionAnswers.Count >= MaxAdmissionAnswersPerMinute)
+                return false;
+
+            _admissionAnswers.Enqueue(now);
+            return true;
+        }
     }
 
     /// <summary>
