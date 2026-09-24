@@ -1,4 +1,5 @@
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Safety;
 using Linkpearl.Core.Transport.Rendezvous;
 
@@ -122,6 +123,18 @@ public sealed record PairRecord
     /// faire appliquer ses fichiers sur ce tiers, visible chez nous seuls.
     /// </remarks>
     public PlayerFingerprint? PinnedFingerprint { get; init; }
+
+    /// <summary>
+    /// Le groupe par lequel on joint ce pair, ou null pour une paire du carnet.
+    /// </summary>
+    /// <remarks>
+    /// Un pair de groupe n'est jamais écrit dans le carnet : il naît quand on le
+    /// voit, et disparaît cinq minutes après. Son <see cref="Id"/> n'est pas le
+    /// hash de sa clé, qu'on ne connaît pas encore, mais un identifiant tiré du
+    /// secret du couple (<see cref="GroupDerivation.RuntimeId"/>) : c'est
+    /// pourquoi le handshake l'autorise autrement.
+    /// </remarks>
+    public GroupOrigin? Group { get; init; }
 }
 
 /// <summary>
