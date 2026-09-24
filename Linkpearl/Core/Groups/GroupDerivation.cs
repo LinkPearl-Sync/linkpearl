@@ -19,6 +19,7 @@ public static class GroupDerivation
     private static ReadOnlySpan<byte> PresenceContext => "linkpearl:group-presence:v1"u8;
     private static ReadOnlySpan<byte> PairInfo => "linkpearl:group-pair:v1"u8;
     private static ReadOnlySpan<byte> RuntimeContext => "linkpearl:group-runtime:v1"u8;
+    private static ReadOnlySpan<byte> AdmissionContext => "linkpearl:group-join:v1"u8;
 
     /// <summary>
     /// La boîte qu'un membre ouvre pour dire « je suis là » à son groupe.
@@ -104,4 +105,34 @@ public static class GroupDerivation
 
         return PeerId.FromBytes(digest[..PeerId.SizeInBytes]);
     }
+
+    /// <summary>
+    /// La boîte où un candidat dépose sa demande, et que chaque membre ouvre.
+    /// </summary>
+    /// <remarks>
+    /// Elle dérive du code et non du secret : le candidat ne connaît que le code.
+    /// Changer le code dans la politique déplace la boîte, et l'ancien code ne
+    /// mène plus nulle part.
+    /// </remarks>
+    public static MailboxAddress AdmissionAddress(ReadOnlySpan<byte> code, DateTimeOffset now, int windowOffset = 0)
+    {
+        if (code.Length != InvitationTicket.SizeInBytes)
+            throw new ArgumentException($"un code fait {InvitationTicket.SizeInBytes} octets", nameof(code));
+
+        var index = MailboxAddress.IndexAt(now) + windowOffset;
+        var windowAt = AdmissionContext.Length + code.Length;
+
+        Span<byte> input = stackalloc byte[windowAt + sizeof(long)];
+        AdmissionContext.CopyTo(input);
+        code.CopyTo(input[AdmissionContext.Length..]);
+        BinaryPrimitives.WriteInt64BigEndian(input[windowAt..], index);
+
+        Span<byte> digest = stackalloc byte[32];
+        SHA256.HashData(input, digest);
+
+        return MailboxAddress.FromBytes(digest[..MailboxAddress.SizeInBytes]);
+    }
+
+    public static IReadOnlyList<MailboxAddress> AdmissionAround(ReadOnlySpan<byte> code, DateTimeOffset now)
+        => [AdmissionAddress(code, now), AdmissionAddress(code, now, 1)];
 }
