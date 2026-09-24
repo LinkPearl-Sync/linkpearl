@@ -105,7 +105,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PresenceService _presence;
     private readonly GroupBook _groups;
     private readonly GroupDialPlanner _groupPlanner;
-    private GroupStore? _groupStore;
+    // Volatile : écrit par le thread du jeu au changement de personnage, lu par
+    // le fil du handshake qui épingle un membre de groupe.
+    private volatile GroupStore? _groupStore;
     private readonly DalamudObjectSource _objectSource;
     private readonly PluginState _state = new();
     private readonly DiscoveryState _discovery = new();
@@ -204,8 +206,23 @@ public sealed class Plugin : IDalamudPlugin
         _groupPlanner = new GroupDialPlanner(clock);
 
         // Un épinglage arrive d'un handshake, hors du thread du jeu : l'écriture
-        // se fait là où il arrive, le stockage se protège seul.
-        _groups.Changed += () => _groupStore?.Save(_groups);
+        // se fait là où il arrive, le stockage se protège seul. Un disque plein
+        // ou un droit refusé ne doit pas faire échouer le handshake qui a
+        // épinglé : l'épinglage reste en mémoire, et le prochain changement
+        // retentera l'écriture.
+        _groups.Changed += () =>
+        {
+            try
+            {
+                _groupStore?.Save(_groups);
+            }
+            catch (Exception e)
+            {
+                // Le type seul : le message d'une erreur d'entrée-sortie porte
+                // le chemin complet du profil, qui n'a rien à faire au journal.
+                Log.Warning($"Enregistrement des groupes en échec ({e.GetType().Name}).");
+            }
+        };
 
         // Le moteur et ce qu'il lui faut. Une seule socket pour tous les pairs :
         // c'est son adresse publique que le rendez-vous rend, donc elle seule
