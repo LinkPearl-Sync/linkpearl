@@ -34,6 +34,8 @@ internal static class Icons
     public const FontAwesomeIcon Blocked    = FontAwesomeIcon.Ban;
     public const FontAwesomeIcon Verified   = FontAwesomeIcon.ShieldAlt;
     public const FontAwesomeIcon Unverified = FontAwesomeIcon.QuestionCircle;
+    public const FontAwesomeIcon Direct     = FontAwesomeIcon.ExchangeAlt;
+    public const FontAwesomeIcon Relayed    = FontAwesomeIcon.Server;
 
     // ─── Contexte en jeu ──────────────────────────────────────────────────────
     public const FontAwesomeIcon Character   = FontAwesomeIcon.User;
@@ -82,6 +84,7 @@ internal static class Icons
     [
         Nearby, Pairs, Requests, Settings,
         Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
+        Direct, Relayed,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
         Animations, Vfx, Sounds, Effects,
         Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore,

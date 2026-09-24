@@ -108,7 +108,11 @@ public sealed record SyncEngineSettings
     public TimeSpan EvictionInterval { get; init; } = TimeSpan.FromSeconds(30);
 }
 
+/// <summary>Par où passe une session, et à quelle latence.</summary>
+public readonly record struct PeerRoute(bool Relayed, int RoundTripMs);
+
 /// <summary>L'état d'un pair, tel que l'interface l'affiche.</summary>
+/// <param name="Route">Absent tant qu'aucune session n'est ouverte.</param>
 public sealed record PeerStatus(
     PeerId Peer,
     string DisplayName,
@@ -117,7 +121,8 @@ public sealed record PeerStatus(
     bool Applied,
     bool FingerprintDisputed,
     string? LastFailure,
-    DateTimeOffset? NextAttempt);
+    DateTimeOffset? NextAttempt,
+    PeerRoute? Route = null);
 
 /// <summary>
 /// Le moteur : il fait vivre une session par pair et décide quoi poser à l'écran.
@@ -219,7 +224,8 @@ public sealed class SyncEngine : IAsyncDisposable
             entry.Value.AppliedOn is not null,
             entry.Value.Disputed,
             entry.Value.LastFailure,
-            entry.Value.Session is null ? entry.Value.NextAttempt : null))
+            entry.Value.Session is null ? entry.Value.NextAttempt : null,
+            entry.Value.Session?.Link is { } link ? new PeerRoute(link.IsRelayed, link.RoundTripMs) : null))
         .ToList();
 
     private static PeerView EmptyView { get; } = new(null, null, null, 0, 0, false);

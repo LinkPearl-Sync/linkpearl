@@ -133,6 +133,12 @@ internal sealed class PairsPage(
         AlignToFrame();
         ImGui.TextColored(Theme.Text, Glyphs.Safe(pair.DisplayName));
 
+        if (status is { State: not PeerSessionState.Disconnected, Route: { } route })
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            DrawRoute(pair, route);
+        }
+
         if (status is { FingerprintDisputed: true })
         {
             ImGui.SameLine(0f, Theme.S(Theme.GapS));
@@ -244,6 +250,37 @@ internal sealed class PairsPage(
          : status is null || status.State is PeerSessionState.Disconnected ? Theme.TextFaint
          : status.Applied ? Theme.Online
          : Theme.Accent;
+
+    /// <summary>
+    /// Direct ou par le relais, et la latence.
+    /// </summary>
+    /// <remarks>
+    /// Discret, parce que le chemin ne change rien à ce que l'on voit. Mais il
+    /// dit qui connaît l'adresse de qui, et un joueur en relais seul doit
+    /// pouvoir vérifier que c'est bien le cas.
+    /// </remarks>
+    private static void DrawRoute(PairRecord pair, PeerRoute route)
+    {
+        var latency = route.RoundTripMs > 0 ? $", {route.RoundTripMs} ms" : "";
+
+        if (route.Relayed is false)
+        {
+            Text.Icon(Icons.Direct, Theme.TextFaint);
+            Feedback.TooltipOnHover($"Connexion directe{latency}. Ce pair connaît votre adresse IP.");
+            return;
+        }
+
+        // Relayé après un perçage raté, les adresses ont déjà circulé : seul le
+        // relais choisi d'emblée garde la nôtre pour nous. Le dire autrement
+        // promettrait une protection qui n'a pas eu lieu.
+        var privacy = pair.Policy is ConnectionPolicy.RelayOnly
+            ? "Votre adresse IP n'a pas été communiquée à ce pair."
+            : "La connexion directe a échoué, mais vos adresses ont été échangées pendant la tentative.";
+
+        Text.Icon(Icons.Relayed, Theme.TextFaint);
+        Feedback.TooltipOnHover(
+            $"Via le relais du rendez-vous{latency}. Le service transporte sans pouvoir lire. {privacy}");
+    }
 
     /// <summary>La puce d'état, qui résume ce que le moteur sait du pair.</summary>
     private static void DrawState(PairRecord pair, PeerStatus? status)
