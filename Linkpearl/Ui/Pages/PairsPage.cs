@@ -99,7 +99,7 @@ internal sealed class PairsPage(
                                  .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
                                  .Push(ImGuiCol.HeaderActive, Theme.BgRaised);
 
-        if (ImGui.CollapsingHeader($"{title} ({pairs.Count})##groupe_{title}", flags) is false)
+        if (ImGui.CollapsingHeader($"{title} ({pairs.Count})###groupe_{title}", flags) is false)
             return;
 
         using var table = ImRaii.Table($"pairs_{title}", 4, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX);

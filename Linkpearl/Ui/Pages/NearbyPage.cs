@@ -92,7 +92,7 @@ internal sealed class NearbyPage(
                                  .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
                                  .Push(ImGuiCol.HeaderActive, Theme.BgRaised);
 
-        if (ImGui.CollapsingHeader($"{title} ({players.Count})##groupe_{title}", ImGuiTreeNodeFlags.DefaultOpen) is false)
+        if (ImGui.CollapsingHeader($"{title} ({players.Count})###groupe_{title}", ImGuiTreeNodeFlags.DefaultOpen) is false)
             return;
 
         using var table = ImRaii.Table($"autour_{title}", 3, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX);

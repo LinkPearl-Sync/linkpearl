@@ -41,7 +41,7 @@ internal sealed class RequestsPage(
         var pending = admissions();
 
         Text.Title("Demandes");
-        Text.Small("Quelqu'un souhaite que vous vous voyiez mutuellement avec vos mods.");
+        Text.Small("Quelqu'un souhaite que vous vous voyiez mutuellement avec vos mods, ou entrer dans un de vos groupes.");
         ImGui.Dummy(Theme.S(0f, Theme.GapL));
 
         if (requests.Count == 0 && pending.Count == 0)

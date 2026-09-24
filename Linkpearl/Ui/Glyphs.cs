@@ -69,6 +69,17 @@ internal static class Glyphs
         return result;
     }
 
+    /// <summary>
+    /// Comme <see cref="Safe"/>, pour un texte posé dans le libellé d'un widget ImGui.
+    /// </summary>
+    /// <remarks>
+    /// ImGui cesse d'afficher un libellé au premier « ## » : un nom venu du
+    /// réseau qui en porte un serait tronqué, quel que soit l'identifiant
+    /// placé après « ### ». Une espace entre les deux dièses suffit à le
+    /// neutraliser sans rendre le nom méconnaissable.
+    /// </remarks>
+    public static string Label(string? text) => Safe(text).Replace("##", "# #", StringComparison.Ordinal);
+
     private static string Convert(string text)
     {
         var builder = new StringBuilder(text.Length);

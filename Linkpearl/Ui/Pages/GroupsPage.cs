@@ -186,7 +186,10 @@ internal sealed class GroupsPage(
                      .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
                      .Push(ImGuiCol.HeaderActive, Theme.BgRaised))
         {
-            if (ImGui.CollapsingHeader($"{Glyphs.Safe(group.Name)} ({group.Members.Count})##group_{id}",
+            // « ### » : l'identifiant ne dépend ni du nom ni du compte, sans
+            // quoi la section changerait d'état à chaque membre rencontré ou
+            // renommage reçu.
+            if (ImGui.CollapsingHeader($"{Glyphs.Label(group.Name)} ({group.Members.Count})###group_{id}",
                                        ImGuiTreeNodeFlags.DefaultOpen) is false)
                 return;
         }
@@ -362,7 +365,9 @@ internal sealed class GroupsPage(
         if (policy is null || policy.Dissolved)
             return;
 
-        if (role is GroupRole.Owner)
+        // Un exclu ne se nomme pas : SetModerators lèverait son bannissement
+        // par clé dans la même politique, sans le dire.
+        if (role is GroupRole.Owner && banned is false)
         {
             ImGui.SameLine(0f, Theme.S(Theme.GapS));
             DrawModeratorToggle(group, member, moderator, id);
@@ -511,9 +516,12 @@ internal sealed class GroupsPage(
         DrawPassword(group, policy);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        if (Btn.Draw("Nouveau code", BtnTone.Secondary, BtnSize.Small, Icons.Refresh, id: "new_code",
-                     tooltip: "L'ancien code ne mène plus nulle part. Les membres restent ; seuls ceux qui ne sont "
-                            + "pas encore entrés devront recevoir le nouveau."))
+        // En deux clics : le code déjà distribué cesse de fonctionner pour
+        // tous ceux qui ne sont pas encore entrés.
+        if (Confirmed($"new_code_{group.Id}", "Nouveau code", Icons.Refresh,
+                      "Cliquer encore pour remplacer le code",
+                      "L'ancien code ne mène plus nulle part. Les membres restent ; seuls ceux qui ne sont "
+                    + "pas encore entrés devront recevoir le nouveau."))
             actions.Edit(group.Id, GroupGovernance.NewCode);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
