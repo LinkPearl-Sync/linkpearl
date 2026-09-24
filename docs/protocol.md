@@ -14,8 +14,14 @@ Chaque section renvoie au fichier qui fait foi.
 
 ## Conventions
 
-- Tous les entiers sont en **big-endian** : horodatages, compteurs, ports,
-  numéros de monde, longueurs.
+- Tous les entiers **du fil** sont en **big-endian** : horodatages, compteurs,
+  ports, numéros de monde, longueurs. Seule exception, hors fil : le nombre
+  d'itérations du fichier de sauvegarde, en little-endian (voir
+  [Secrets locaux](#secrets-locaux)).
+- Tout aléa et toute clé viennent de `RandomNumberGenerator` et de
+  `ECDiffieHellman.Create` / `ECDsa.Create`, c'est-à-dire du générateur du
+  système (CNG sous Windows). Un échec de génération lève une exception, qui
+  fait échouer l'opération : il n'y a pas de repli sur une source plus faible.
 - Les horodatages sont des secondes Unix sur 64 bits signés.
 - Un point P-256 voyage **non compressé** (`0x04 || X(32) || Y(32)`, 65 octets),
   sauf dans les demandes de pairage où il est **compressé** (`0x02|0x03 || X(32)`,
@@ -58,6 +64,14 @@ clé publique sort. `PeerId = SHA-256(point non compressé)`. L'autorisation vie
 présentée a pour empreinte le `PeerId` attendu pour ce lien précis
 (`PeerSession.Authorizes`), et, si le carnet la connaît déjà, si elle est
 identique octet pour octet.
+
+**La clé privée d'identité a un second usage, hors protocole** : son scalaire
+`D` est l'entrée d'une dérivation `HKDF-SHA256(ikm = D, info =
+"linkpearl:moodles-guid:v1")`, qui donne la clé HMAC masquant les GUID Moodles
+transmis dans les manifestes (`Core/Manifest/MoodlesSanitizer.cs`). HMAC étant
+une fonction pseudo-aléatoire, la sortie ne révèle rien de `D` ; mais la clé
+n'est donc pas réservée à ECDSA, et une séparation propre la remplacerait par
+un secret dédié.
 
 ## Modèle de confiance
 
@@ -313,6 +327,79 @@ canal, et ferme le lien sur tout message de plus de 16 Mio ou toute sorte
 inconnue. Le contenu est une trame du canal de données, déjà scellée : le
 service transporte sans pouvoir lire.
 
+## Secrets locaux
+
+Fichiers : `Integration/DpapiIdentityStore.cs`, `Integration/PairBookStore.cs`,
+`Core/Identity/IdentityBackup.cs`.
+
+| Secret | Où | Protection |
+|---|---|---|
+| Clé privée d'identité | `characters/<empreinte>/` du dossier de configuration | DPAPI, portée utilisateur Windows, entropie `linkpearl:identity:v1` |
+| Carnet, secrets de paire compris | même dossier | DPAPI, même portée |
+| Éphémère d'une demande de pairage en attente | mémoire seule | perdue au rechargement du plugin |
+| Clés de session | mémoire seule | jamais écrites |
+
+DPAPI protège contre un autre compte de la machine et contre la copie du
+fichier, pas contre un programme qui tourne déjà sous le compte du joueur.
+
+**Sauvegarde.** Un fichier exporté à la demande, qui survit à une
+réinstallation du système. Avec mot de passe : PBKDF2-SHA256 (600 000
+itérations par défaut, bornées entre 100 000 et 10 000 000 à la lecture), sel
+de 16 octets, AES-256-GCM avec l'en-tête en donnée associée. **Sans mot de
+passe, choix laissé à l'utilisateur, le fichier contient la clé privée en
+clair** et n'est protégé que par un contrôle SHA-256 contre la corruption :
+qui le récupère se fait passer pour le personnage.
+
+**Effacement.** Le code est en C# managé : les clés dérivées et les secrets
+sont des tableaux que le ramasse-miettes peut copier, et leur effacement n'est
+pas garanti. Seul le secret brut de l'accord de pairage est explicitement mis à
+zéro. C'est une limite, pas une garantie.
+
+**Retrait d'un pair.** Le pair passe à l'état `Revoked` : on le joint encore,
+mais la session ne porte plus que l'avis de retrait, jamais une apparence, et
+on referme après trente secondes s'il ne raccroche pas. Son secret de paire
+reste au carnet jusqu'à l'oubli de l'avis. Il n'existe **aucune rotation
+d'identité** : une clé perdue ou compromise impose de recréer le personnage
+côté plugin et de se pairer à nouveau avec chacun, sans moyen de prévenir les
+pairs que l'ancienne clé ne doit plus être crue.
+
+## Bornes et déni de service
+
+Ce qu'un tiers ou un rendez-vous peut faire consommer, et ce qui l'arrête.
+
+| Ressource | Borne | Où |
+|---|---|---|
+| Trame du service | 64 Kio | `RendezvousWire.MaxFrameLength` |
+| Dépôt dans une boîte | 512 octets | `RendezvousWire.MaxDepositLength` |
+| Bloc de candidats | 4 Kio, 8 adresses | `RendezvousWire`, `CandidateSet` |
+| Trames par adresse et par minute (service public) | 60 | `RendezvousLimits` |
+| Connexions simultanées par adresse (un /64 en IPv6) | 32 | `RendezvousLimits` |
+| Attente d'un partenaire au relais | 30 s côté service, 20 s côté client | `RendezvousLimits`, `PeerConnector` |
+| Trame du handshake attendue | 15 s | `PeerSession` |
+| Message reconstitué sur le relais | 16 Mio | `RelayPeerLink` |
+| Nouvelle tentative après échec | 5 s, doublée jusqu'à 5 min | `SyncEngineSettings` |
+
+Un rendez-vous malveillant peut toujours refuser tout service : c'est la
+raison d'être de la liste de services. Un pair malveillant, déjà au carnet,
+peut faire échouer ses propres sessions ; les manifestes et fichiers qu'il
+envoie passent par `Core/Safety` avant tout usage, et un manifeste qui viole une
+seule règle est rejeté en entier.
+
+## Métadonnées visibles
+
+Le chiffrement protège le contenu, pas les métadonnées.
+
+| Qui | Connexion directe | Connexion relayée |
+|---|---|---|
+| Le pair | votre adresse IP, publique et locales | vos adresses aussi si le relais suit un perçage raté ; aucune en mode relais seul |
+| Le rendez-vous | votre adresse IP, vos horaires de présence, que vous vous annoncez, la taille du bloc de candidats | tout cela, plus la durée, le volume et le rythme de la session relayée |
+| Le réseau | les deux adresses, les volumes, les horaires | votre adresse et celle du service |
+
+S'y ajoute, au pairage, tout le contenu des demandes (voir
+[Pairage](#pairage)), et en permanence l'existence de votre boîte, dont
+l'adresse se calcule depuis votre nom : le service sait qui est en ligne et
+quand.
+
 ## Versionnage
 
 - **Handshake** : `version` porte un majeur et un mineur. Le majeur doit être
@@ -326,14 +413,22 @@ service transporte sans pouvoir lire.
   jour.
 - Les chaînes de dérivation portent leur version (`…:v1`, `…:v2`) : un
   changement de format change l'étiquette.
+- Une incompatibilité se signale par un refus, jamais par une lecture
+  dégradée : majeur différent, type de demande de la version 1, bloc de
+  candidats qui ne s'ouvre pas. Le motif est journalisé ; seul l'échec de
+  connexion apparaît au joueur, en infobulle sur le pair. Une demande de
+  pairage d'un ancien client est écartée sans rien afficher. Aucun chemin ne
+  retombe sur un format plus ancien.
 
 ## Limites connues
 
 Par ordre d'importance.
 
-1. **Le rendez-vous qui voit un pairage peut s'y intercaler.** La clé publique
-   arrive par lui, en clair. Voir [Modèle de confiance](#modèle-de-confiance).
-   Aucune vérification hors bande n'est proposée à l'utilisateur.
+1. **Le rendez-vous qui voit un pairage peut s'y intercaler, et rien ne permet
+   de le détecter.** La clé publique arrive par lui, en clair. Voir
+   [Modèle de confiance](#modèle-de-confiance). Aucune vérification hors bande
+   n'est proposée : c'est une limite d'authentification, pas seulement de
+   confidentialité.
 2. **Les paires formées avant le 24 septembre 2026** ont un secret dérivé de
    l'aléa seul, que tout service ayant vu leur pairage connaît. Ces services
    peuvent relier leurs présences dans le temps et lire leurs adresses
@@ -341,11 +436,17 @@ Par ordre d'importance.
 3. **Le contenu des demandes est visible du service** : nom, monde et clé
    publique, déposés sur tous les services de la liste du demandeur. C'est le
    nom en clair qui permet au destinataire de reconnaître le demandeur.
-4. Pas de renouvellement de clé en cours de session, pas de négociation du
+4. **Aucune rotation d'identité** : une clé compromise ne peut pas être
+   révoquée auprès des pairs. Voir [Secrets locaux](#secrets-locaux).
+5. **Une sauvegarde sans mot de passe vaut l'identité**, en clair.
+6. La clé privée d'identité sert aussi, par HKDF, à masquer les GUID Moodles.
+7. L'effacement des secrets en mémoire n'est pas garanti (C# managé).
+8. Pas de renouvellement de clé en cours de session, pas de négociation du
    mineur.
-5. `Core/Crypto/ShortAuthString.cs` (six mots tirés d'une liste de 64, soit
-   36 bits dérivés de `sid`) existe mais **n'est affiché nulle part**. Il ne
-   protège donc rien aujourd'hui.
+9. `Core/Crypto/ShortAuthString.cs` (six mots tirés d'une liste de 64, soit
+   36 bits dérivés de `sid`) existe mais **n'est affiché nulle part**. Il
+   n'apporte donc aucune protection aujourd'hui, et rien dans ce document ne
+   doit être lu comme s'il en apportait une.
 
 ## Vecteurs figés
 
