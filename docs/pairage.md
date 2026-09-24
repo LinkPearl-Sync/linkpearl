@@ -57,8 +57,9 @@ Décision prise : **la détection est active par défaut**, parce qu'une fonctio
 désactivée par défaut n'existe pas, avec un réglage pour s'en retirer et une
 phrase claire à la première utilisation. Ce qui n'est toujours pas révélé au
 serveur : les manifestes et les fichiers. Le contenu des demandes, lui, lui est
-visible : nom, monde, clé publique et aléa de pairage voyagent en clair, ce qui
-lui donne aussi le secret de paire. Voir les limites connues de `protocol.md`.
+visible : nom, monde, clé publique, aléa et clés éphémères voyagent en clair.
+Le secret de paire, lui, vient de l'accord des éphémères, qu'un service qui se
+contente de regarder ne peut pas calculer. Voir `protocol.md`.
 
 ### Ce qui reste protégé
 
@@ -66,7 +67,7 @@ lui donne aussi le secret de paire. Voir les limites connues de `protocol.md`.
 |---|---|
 | Qu'un nom de personnage est en ligne | Les manifestes |
 | Les adresses IP | Les fichiers |
-| Le contenu des demandes, donc le secret de paire | Le contenu des apparences |
+| Le contenu des demandes (nom, monde, clés) | Le contenu des apparences |
 | | Les échanges une fois la session établie |
 
 ### Ce qui remplace la vérification par six mots

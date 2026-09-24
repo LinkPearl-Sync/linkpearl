@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 namespace Linkpearl.Core.Identity;
 
 /// <summary>
-/// Le secret partagé d'une paire, dérivé sans échange.
+/// Le secret partagé d'une paire, dérivé de l'accord de pairage.
 /// </summary>
 /// <remarks>
 /// Il ne sert jamais à chiffrer une session : le canal de données tire ses clés
@@ -11,22 +11,24 @@ namespace Linkpearl.Core.Identity;
 /// qu'à dériver les jetons de rendez-vous et à sceller le bloc de candidats,
 /// c'est-à-dire à cacher au serveur qui parle à qui.
 ///
+/// Le matériau est l'accord des éphémères échangés dans la demande et la
+/// réponse de pairage, suivi de l'aléa (voir
+/// <see cref="Sync.PairRequestMessage.AgreeOnPairing"/>). En version 1, c'était
+/// l'aléa seul, qui voyageait en clair : tout rendez-vous qui voyait passer le
+/// pairage connaissait le secret. Le changement d'étiquette empêche qu'un
+/// ancien matériau donne jamais le même secret qu'un nouveau.
+///
 /// Les deux identifiants entrent dans le sel <b>triés</b> : le secret ne doit
 /// pas dépendre de qui a invité l'autre, sans quoi les deux pairs
 /// s'annonceraient sous des jetons différents et ne se trouveraient jamais.
-///
-/// Les identifiants suffisent, les clés complètes ne sont pas nécessaires : le
-/// sel n'a pas à être secret, il n'a qu'à lier la paire. C'est l'aléa qui porte
-/// le secret, et c'est ce qui permet au code d'invitation de ne transporter
-/// qu'une empreinte.
 /// </remarks>
 public static class PairSecret
 {
     public const int SizeInBytes = 32;
 
-    private static ReadOnlySpan<byte> Info => "linkpearl:pair:v1"u8;
+    private static ReadOnlySpan<byte> Info => "linkpearl:pair:v2"u8;
 
-    public static byte[] Derive(ReadOnlySpan<byte> pairingNonce, PeerId one, PeerId other)
+    public static byte[] Derive(ReadOnlySpan<byte> pairingMaterial, PeerId one, PeerId other)
     {
         var a = one.ToBytes();
         var b = other.ToBytes();
@@ -39,7 +41,7 @@ public static class PairSecret
         upper.CopyTo(salt, lower.Length);
 
         var prk = new byte[SizeInBytes];
-        HKDF.Extract(HashAlgorithmName.SHA256, pairingNonce, salt, prk);
+        HKDF.Extract(HashAlgorithmName.SHA256, pairingMaterial, salt, prk);
 
         var secret = new byte[SizeInBytes];
         HKDF.Expand(HashAlgorithmName.SHA256, prk, secret, Info);

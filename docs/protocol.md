@@ -72,7 +72,7 @@ service, en clair. Il en découle :
 | Adversaire | Peut | Ne peut pas |
 |---|---|---|
 | Observateur du réseau | voir les adresses IP, les tailles, les horaires | lire une session, usurper une identité |
-| Rendez-vous honnête mais curieux, ayant vu passer le pairage | savoir quels personnages se sont pairés, calculer le secret de paire, donc relier les présences de la paire dans le temps et lire ses adresses candidates | lire une session : ses clés viennent d'un accord éphémère |
+| Rendez-vous honnête mais curieux, ayant vu passer le pairage | savoir quels personnages se sont pairés | calculer le secret de paire, qui vient d'un accord éphémère ; lire une session |
 | Rendez-vous malveillant, **au moment du pairage** | substituer sa propre clé des deux côtés et s'intercaler dans toutes les sessions suivantes de cette paire | agir sur une paire formée ailleurs |
 | Rendez-vous malveillant, **après le pairage** | refuser le service, mentir sur une adresse, relayer ou non | faire accepter une autre identité : la clé est épinglée dans le carnet |
 
@@ -98,25 +98,37 @@ Le demandeur dépose dans la boîte de la cible, **sur tous les services de sa
 propre liste** puisqu'il ignore lequel la cible emploie :
 
 ```
-demande  = 0x01 || cleA_compressee(33) || alea_pairage(12) || monde(2) || nom_utf8(≤64)
-reponse  = 0x02 || cleB_compressee(33) || alea_pairage(12) || monde(2) || nom_utf8(≤64)
+demande  = 0x03 || cleA_compressee(33) || alea_pairage(12) || ephA_compresse(33) || monde(2) || nom_utf8(≤64)
+reponse  = 0x04 || cleB_compressee(33) || alea_pairage(12) || ephB_compresse(33) || monde(2) || nom_utf8(≤64)
 ```
 
 Le tout en clair. La réponse reprend l'aléa de la demande, que le demandeur
-retrouve dans ses demandes en attente.
+retrouve dans ses demandes en attente, avec la moitié privée de `ephA`, gardée
+en mémoire seulement : un plugin rechargé entre la demande et la réponse ne peut
+plus conclure, et il faut redemander. `ephB` est tiré à l'acceptation. Les types
+`0x01` et `0x02`, ceux de la version 1 sans éphémère, sont refusés avec un motif
+lisible.
 
-Le secret de paire est dérivé sans échange supplémentaire :
+Le secret de paire :
 
 ```
-sel    = min(PeerIdA, PeerIdB) || max(PeerIdA, PeerIdB)
-prk    = HKDF-Extract(sel, ikm = alea_pairage)
-secret = HKDF-Expand(prk, "linkpearl:pair:v1", 32)
+materiau = ECDH(ephA, ephB) || alea_pairage
+sel      = min(PeerIdA, PeerIdB) || max(PeerIdA, PeerIdB)
+prk      = HKDF-Extract(sel, ikm = materiau)
+secret   = HKDF-Expand(prk, "linkpearl:pair:v2", 32)
 ```
 
 Il ne chiffre jamais une session. Il sert aux jetons de rendez-vous, au
 scellement des candidats et au jeton de relais, c'est-à-dire à cacher au
-serveur qui parle à qui. **Comme l'aléa voyage en clair, tout service qui a vu
-passer le pairage connaît ce secret.** Voir [Limites connues](#limites-connues).
+serveur qui parle à qui. Un service qui se contente de regarder passer le
+pairage ne voit que `ephA` et `ephB`, et ne peut pas calculer l'accord. Un
+service qui **substitue** ses propres éphémères le peut, mais il substitue
+alors aussi les identités : c'est la limite du modèle de confiance, pas une
+fuite supplémentaire.
+
+En version 1, le matériau était l'aléa seul, en clair : tout service qui voyait
+passer le pairage connaissait le secret. Les paires formées avant le
+24 septembre 2026 gardent ce secret-là jusqu'à ce qu'elles se pairent à nouveau.
 
 ## Rendez-vous et connexion
 
@@ -306,6 +318,8 @@ service transporte sans pouvoir lire.
 - **Handshake** : `version` porte un majeur et un mineur. Le majeur doit être
   identique, sinon refus. Le mineur est transmis mais **n'est pas lu** : aucune
   négociation n'existe encore.
+- **Pairage** : types `0x03` et `0x04` depuis le 24 septembre 2026, avec
+  éphémère. Les types `0x01` et `0x02` sont refusés.
 - **Bloc de candidats** : format 2 depuis le 24 septembre 2026, incompatible
   avec le format 1. Deux clients de formats différents échouent à ouvrir le
   bloc l'un de l'autre et ne se connectent pas ; il faut que les deux soient à
@@ -320,16 +334,13 @@ Par ordre d'importance.
 1. **Le rendez-vous qui voit un pairage peut s'y intercaler.** La clé publique
    arrive par lui, en clair. Voir [Modèle de confiance](#modèle-de-confiance).
    Aucune vérification hors bande n'est proposée à l'utilisateur.
-2. **Le rendez-vous qui voit un pairage connaît le secret de paire**, puisque
-   l'aléa de pairage voyage en clair, et que la demande est déposée sur tous les
-   services de la liste du demandeur. Ces services peuvent donc relier les
-   présences de la paire dans le temps et lire ses adresses candidates, sans
-   rien falsifier. Correction envisagée : un accord ECDH éphémère dans la
-   demande et la réponse de pairage, qui ne laisserait au service passif que
-   des valeurs publiques.
+2. **Les paires formées avant le 24 septembre 2026** ont un secret dérivé de
+   l'aléa seul, que tout service ayant vu leur pairage connaît. Ces services
+   peuvent relier leurs présences dans le temps et lire leurs adresses
+   candidates. Se pairer à nouveau suffit ; rien ne l'impose aujourd'hui.
 3. **Le contenu des demandes est visible du service** : nom, monde et clé
-   publique. C'est le nom en clair qui permet au destinataire de reconnaître le
-   demandeur.
+   publique, déposés sur tous les services de la liste du demandeur. C'est le
+   nom en clair qui permet au destinataire de reconnaître le demandeur.
 4. Pas de renouvellement de clé en cours de session, pas de négociation du
    mineur.
 5. `Core/Crypto/ShortAuthString.cs` (six mots tirés d'une liste de 64, soit

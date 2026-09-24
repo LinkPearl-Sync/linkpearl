@@ -104,9 +104,15 @@ public sealed class PairingService : IDisposable
         if (_identity is null || _bookStore is null)
             return NoCharacter;
 
+        // Sans accord, pas de secret : une demande non encore acceptée n'a pas
+        // sa place au carnet, et l'y mettre avec l'aléa seul referait l'erreur
+        // de la version 1, un secret que le rendez-vous connaît.
+        if (request.PairingMaterial is not { } material)
+            return "pairage incomplet : aucun accord de clé avec ce joueur.";
+
         var again = _book.Find(request.Id) is { Trust: not PairTrust.Revoked };
 
-        _book.Add(request.Id, request.PublicKey, request.PairingNonce, _identity.Id,
+        _book.Add(request.Id, request.PublicKey, material, _identity.Id,
                   request.CharacterName, Here());
 
         // Épinglé dès maintenant et non à la première session : jusque-là, rien

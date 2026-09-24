@@ -9,10 +9,12 @@ public class PairRequestMessageTests
     private static PairRequestMessage Sample(string name = "Jhalen Tavari", bool accept = false)
     {
         using var identity = CryptoPrimitives.GenerateIdentity();
+        using var ephemeral = CryptoPrimitives.GenerateEphemeral();
 
         return new PairRequestMessage(
             accept, CryptoPrimitives.ExportPublicPoint(identity),
             System.Security.Cryptography.RandomNumberGenerator.GetBytes(PairRequestMessage.NonceLength),
+            CryptoPrimitives.ExportPublicPoint(ephemeral),
             name, 21);
     }
 
@@ -24,6 +26,7 @@ public class PairRequestMessageTests
         Assert.True(PairRequestMessage.TryDecode(original.Encode(), out var parsed, out var why), why);
         Assert.Equal(original.PublicKey, parsed!.PublicKey);
         Assert.Equal(original.PairingNonce, parsed.PairingNonce);
+        Assert.Equal(original.Ephemeral, parsed.Ephemeral);
         Assert.Equal("Jhalen Tavari", parsed.CharacterName);
         Assert.Equal(21, parsed.WorldId);
         Assert.False(parsed.IsAccept);
@@ -91,5 +94,54 @@ public class PairRequestMessageTests
 
         Assert.False(PairRequestMessage.TryDecode(frame, out _, out var why));
         Assert.NotNull(why);
+    }
+    [Theory]
+    [InlineData(0x01)]
+    [InlineData(0x02)]
+    public void Une_demande_de_la_version_1_est_refusee_avec_un_motif_lisible(byte kind)
+    {
+        // Sans éphémère, le secret ne dépendrait que de l'aléa, que le
+        // rendez-vous voit passer : on refuse plutôt que de lire de travers.
+        var frame = new byte[1 + 33 + 12 + 2 + 5];
+        frame[0] = kind;
+
+        Assert.False(PairRequestMessage.TryDecode(frame, out _, out var why));
+        Assert.Contains("mettre à jour", why!);
+    }
+
+    [Fact]
+    public void Un_ephemere_invalide_est_refuse()
+    {
+        var frame = Sample().Encode();
+        frame.AsSpan(1 + 33 + 12 + 1, 32).Fill(0x01);
+
+        Assert.False(PairRequestMessage.TryDecode(frame, out _, out var why));
+        Assert.NotNull(why);
+    }
+
+    [Fact]
+    public void Les_deux_cotes_obtiennent_le_meme_secret_et_le_rendez_vous_non()
+    {
+        using var alice = CryptoPrimitives.GenerateIdentity();
+        using var bob = CryptoPrimitives.GenerateIdentity();
+        using var aliceEphemeral = CryptoPrimitives.GenerateEphemeral();
+        using var bobEphemeral = CryptoPrimitives.GenerateEphemeral();
+
+        var aliceId = Linkpearl.Core.Identity.PeerId.Of(CryptoPrimitives.ExportPublicPoint(alice));
+        var bobId = Linkpearl.Core.Identity.PeerId.Of(CryptoPrimitives.ExportPublicPoint(bob));
+        var nonce = System.Security.Cryptography.RandomNumberGenerator.GetBytes(PairRequestMessage.NonceLength);
+
+        var onAliceSide = Linkpearl.Core.Identity.PairSecret.Derive(
+            PairRequestMessage.AgreeOnPairing(aliceEphemeral, CryptoPrimitives.ExportPublicPoint(bobEphemeral), nonce),
+            aliceId, bobId);
+        var onBobSide = Linkpearl.Core.Identity.PairSecret.Derive(
+            PairRequestMessage.AgreeOnPairing(bobEphemeral, CryptoPrimitives.ExportPublicPoint(aliceEphemeral), nonce),
+            bobId, aliceId);
+
+        Assert.Equal(onAliceSide, onBobSide);
+
+        // Ce que le rendez-vous voit passer ne suffit plus : l'aléa et les
+        // identifiants seuls donnaient le secret de la version 1.
+        Assert.NotEqual(onAliceSide, Linkpearl.Core.Identity.PairSecret.Derive(nonce, aliceId, bobId));
     }
 }

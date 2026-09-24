@@ -1162,8 +1162,11 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        var message = await _presence.AcceptAsync(request, self, _shutdown.Token).ConfigureAwait(false);
-        Report(_pairing.AddFromRequest(request));
+        var (message, agreed) = await _presence.AcceptAsync(request, self, _shutdown.Token).ConfigureAwait(false);
+
+        if (agreed is not null)
+            Report(_pairing.AddFromRequest(agreed));
+
         Report(message);
     }
 

@@ -167,14 +167,14 @@ public sealed class PairBook(IClock clock)
     /// </summary>
     /// <summary>Ajoute un pair dont on vient d'apprendre la clé.</summary>
     public PairRecord Add(
-        PeerId theirId, byte[] theirPublicKey, ReadOnlySpan<byte> pairingNonce,
+        PeerId theirId, byte[] theirPublicKey, ReadOnlySpan<byte> pairingMaterial,
         PeerId ourId, string displayName, IReadOnlyList<RendezvousAddress> rendezvous)
     {
         var record = new PairRecord
         {
             Id = theirId,
             PublicKey = theirPublicKey,
-            PairSecret = PairSecret.Derive(pairingNonce, ourId, theirId),
+            PairSecret = PairSecret.Derive(pairingMaterial, ourId, theirId),
             DisplayName = displayName,
             Rendezvous = rendezvous,
             Trust = PairTrust.Accepted,

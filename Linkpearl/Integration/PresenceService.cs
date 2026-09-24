@@ -10,9 +10,14 @@ using Linkpearl.Core.Transport.Rendezvous;
 namespace Linkpearl.Integration;
 
 /// <summary>Une demande de pairage reçue, en attente de décision.</summary>
+/// <param name="Ephemeral">La clé d'accord éphémère de l'autre, reçue avec la demande.</param>
+/// <param name="PairingMaterial">
+/// Le matériau du secret de paire, une fois l'accord fait. Absent tant que la
+/// demande n'a pas été acceptée : c'est l'acceptation qui tire notre éphémère.
+/// </param>
 public sealed record IncomingRequest(
     PeerId Id, byte[] PublicKey, byte[] PairingNonce, string CharacterName, ushort WorldId,
-    DateTimeOffset ReceivedAt);
+    DateTimeOffset ReceivedAt, byte[] Ephemeral, byte[]? PairingMaterial = null);
 
 /// <summary>
 /// Présence au rendez-vous, détection des joueurs alentour, demandes de pairage.
@@ -391,16 +396,29 @@ public sealed class PresenceService : IDisposable
             return NoCharacter;
 
         var nonce = RandomNumberGenerator.GetBytes(PairRequestMessage.NonceLength);
+        var ephemeral = CryptoPrimitives.GenerateEphemeral();
 
         var message = new PairRequestMessage(
-            IsAccept: false, identity.PublicKey, nonce, self.Name, self.WorldId);
+            IsAccept: false, identity.PublicKey, nonce, CryptoPrimitives.ExportPublicPoint(ephemeral),
+            self.Name, self.WorldId);
 
         var address = MailboxAddress.Of(target.Fingerprint, _clock.UtcNow).ToBytes();
         var (delivered, failure) = await DepositEverywhereAsync(address, message.Encode(), ct).ConfigureAwait(false);
 
         if (delivered == 0)
+        {
+            ephemeral.Dispose();
             return $"envoi impossible : {failure}";
+        }
 
+        // Gardé en mémoire seulement, jusqu'à la réponse : c'est la moitié
+        // privée de l'accord qui donnera le secret de paire. Une nouvelle
+        // demande à la même personne remplace l'ancienne, dont la réponse ne
+        // pourra plus conclure.
+        if (_pendingEphemerals.TryRemove(target.Fingerprint, out var previous))
+            previous.Dispose();
+
+        _pendingEphemerals[target.Fingerprint] = ephemeral;
         PendingOutgoing[target.Fingerprint] = nonce;
         return $"demande envoyée à {target.Name}.";
     }
@@ -442,17 +460,34 @@ public sealed class PresenceService : IDisposable
     /// <summary>Les aléas des demandes que nous avons envoyées, en attente de réponse.</summary>
     public ConcurrentDictionary<PlayerFingerprint, byte[]> PendingOutgoing { get; } = new();
 
-    /// <summary>Accepte une demande reçue et renvoie notre identité au demandeur.</summary>
-    public async Task<string> AcceptAsync(IncomingRequest request, NearbyPlayer self, CancellationToken ct)
+    /// <summary>La moitié privée de l'accord de chaque demande en attente.</summary>
+    private readonly ConcurrentDictionary<PlayerFingerprint, ECDiffieHellman> _pendingEphemerals = new();
+
+    /// <summary>
+    /// Accepte une demande reçue et renvoie notre identité au demandeur.
+    /// </summary>
+    /// <returns>
+    /// Le message pour l'utilisateur, et la demande complétée du matériau de
+    /// pairage, que le carnet attend. Absente si rien n'a pu être accordé.
+    /// </returns>
+    public async Task<(string Message, IncomingRequest? Agreed)> AcceptAsync(
+        IncomingRequest request, NearbyPlayer self, CancellationToken ct)
     {
         if (Connected is false)
-            return "aucun service de rendez-vous joignable.";
+            return ("aucun service de rendez-vous joignable.", null);
 
         if (_identity() is not { } identity)
-            return NoCharacter;
+            return (NoCharacter, null);
+
+        using var ephemeral = CryptoPrimitives.GenerateEphemeral();
+        var agreed = request with
+        {
+            PairingMaterial = PairRequestMessage.AgreeOnPairing(ephemeral, request.Ephemeral, request.PairingNonce),
+        };
 
         var reply = new PairRequestMessage(
-            IsAccept: true, identity.PublicKey, request.PairingNonce, self.Name, self.WorldId);
+            IsAccept: true, identity.PublicKey, request.PairingNonce, CryptoPrimitives.ExportPublicPoint(ephemeral),
+            self.Name, self.WorldId);
 
         var theirFingerprint = PlayerFingerprint.Of(request.CharacterName.Trim().ToLowerInvariant(), request.WorldId);
 
@@ -462,15 +497,17 @@ public sealed class PresenceService : IDisposable
                 MailboxAddress.Of(theirFingerprint, _clock.UtcNow).ToBytes(), reply.Encode(), ct)
                 .ConfigureAwait(false);
 
+            // Accordé même si la réponse n'est pas partie, comme avant : le
+            // demandeur, lui, ne conclura pas, et il redemandera.
             if (delivered == 0)
-                return $"réponse impossible : {failure}";
+                return ($"réponse impossible : {failure}", agreed);
 
-            return $"{request.CharacterName} accepté.";
+            return ($"{request.CharacterName} accepté.", agreed);
         }
         catch (Exception e)
         {
             _log.Warning(e, "Réponse d'acceptation en échec.");
-            return $"réponse impossible : {e.Message}";
+            return ($"réponse impossible : {e.Message}", agreed);
         }
     }
 
@@ -500,7 +537,8 @@ public sealed class PresenceService : IDisposable
                 return;
 
         var request = new IncomingRequest(
-            id, message.PublicKey, message.PairingNonce, message.CharacterName, message.WorldId, _clock.UtcNow);
+            id, message.PublicKey, message.PairingNonce, message.CharacterName, message.WorldId, _clock.UtcNow,
+            message.Ephemeral);
 
         // Une acceptation qui porte le nonce de notre propre demande n'est pas
         // une demande : c'est l'autre qui dit oui à ce que nous avons proposé.
@@ -513,7 +551,21 @@ public sealed class PresenceService : IDisposable
             && ourNonce.AsSpan().SequenceEqual(message.PairingNonce))
         {
             PendingOutgoing.TryRemove(sender, out _);
-            _accepted.Enqueue(request);
+
+            // Le plugin a été rechargé depuis la demande : notre moitié de
+            // l'accord est perdue, et le secret ne peut plus être calculé.
+            if (_pendingEphemerals.TryRemove(sender, out var ours) is false)
+            {
+                _log.Warning($"{message.CharacterName} a accepté une demande dont l'accord est perdu : redemander.");
+                return;
+            }
+
+            using (ours)
+                _accepted.Enqueue(request with
+                {
+                    PairingMaterial = PairRequestMessage.AgreeOnPairing(ours, message.Ephemeral, message.PairingNonce),
+                });
+
             _log.Information($"{message.CharacterName} a accepté notre demande.");
             return;
         }
@@ -587,5 +639,13 @@ public sealed class PresenceService : IDisposable
         _detected.Clear();
     }
 
-    public void Dispose() => CloseAll();
+    public void Dispose()
+    {
+        CloseAll();
+
+        foreach (var ephemeral in _pendingEphemerals.Values)
+            ephemeral.Dispose();
+
+        _pendingEphemerals.Clear();
+    }
 }
