@@ -111,7 +111,10 @@ internal static class Card
     {
         var key    = ImGui.GetID(id);
         var origin = ImGui.GetCursorScreenPos();
-        var width  = ImGui.GetContentRegionAvail().X;
+        // La marge droite de la carte englobante est déduite : ImGui.Indent
+        // ne décale que le bord gauche, et une carte imbriquée débordait
+        // sinon sur le rembourrage de sa parente. Nulle au premier niveau.
+        var width  = ImGui.GetContentRegionAvail().X - RightInset;
 
         var height = Heights.TryGetValue(key, out var cached) ? cached : Theme.S(EstimatedHeight);
 

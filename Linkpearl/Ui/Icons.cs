@@ -68,6 +68,7 @@ internal static class Icons
 
     // ─── Groupes ──────────────────────────────────────────────────────────────
     public const FontAwesomeIcon Moderator = FontAwesomeIcon.UserShield;
+    public const FontAwesomeIcon Admission = FontAwesomeIcon.DoorOpen;
 
     // ─── Messages ─────────────────────────────────────────────────────────────
     public const FontAwesomeIcon Warning = FontAwesomeIcon.ExclamationTriangle;
@@ -93,7 +94,7 @@ internal static class Icons
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,
         Animations, Vfx, Sounds, Effects,
         Invite, Accept, Decline, Remove, Rename, Copy, Refresh, Close, Backup, Restore, Leave,
-        Moderator,
+        Moderator, Admission,
         Warning, Info, Empty,
         Folder, Lock, Check,
     ];

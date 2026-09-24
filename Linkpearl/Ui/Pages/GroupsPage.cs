@@ -23,6 +23,11 @@ namespace Linkpearl.Ui.Pages;
 /// <b>Aucune clé n'y est montrée</b>, pas plus que dans les pairs : un membre
 /// se reconnaît à son nom. Seul le code du groupe s'affiche, et seulement à
 /// ceux qui ont le droit de le distribuer.
+///
+/// Chaque groupe est une carte, et sa gestion des sous-cartes, une par
+/// réglage, comme la page Réglages : un titre, un contrôle, puis la
+/// conséquence écrite en clair. Gouverner un groupe engage d'autres joueurs,
+/// ce qui se lit avant de cliquer et non au survol d'une icône.
 /// </remarks>
 internal sealed class GroupsPage(
     GroupBook groups, AdmissionCandidate candidate, Func<IReadOnlyList<PeerStatus>> statuses, GroupActions actions)
@@ -34,6 +39,14 @@ internal sealed class GroupsPage(
     private const string DissolveReminder =
         "Les membres l'apprennent en vous croisant : gardez le groupe dans la liste jusqu'à ce qu'ils l'aient vu.";
 
+    private const string DissolveConsequence = "Le groupe cesse pour tous ses membres. " + DissolveReminder;
+
+    private const string NewCodeConsequence =
+        "L'ancien code ne mène plus nulle part. Les membres restent ; seuls ceux qui ne sont pas encore "
+      + "entrés devront recevoir le nouveau.";
+
+    private const string ConfirmTooltip = "Cliquer encore dans les quatre secondes pour confirmer.";
+
     private string _joinCode = "";
     private string _joinPassword = "";
     private string _createName = "";
@@ -42,9 +55,33 @@ internal sealed class GroupsPage(
     /// <summary>Le nouveau mot de passe saisi, par groupe : deux groupes ouverts ne partagent pas un champ.</summary>
     private readonly Dictionary<GroupId, string> _newPasswords = [];
 
+    /// <summary>Les groupes dont la gestion est dépliée.</summary>
+    /// <remarks>Repliée par défaut : on y vient rarement, et rien ne doit s'y toucher par mégarde.</remarks>
+    private readonly HashSet<GroupId> _managing = [];
+
+    /// <summary>Le groupe dont le code vient d'être copié, et jusqu'à quand le bouton le dit.</summary>
+    /// <remarks>Sans ce retour, rien ne distingue un clic réussi d'un clic perdu.</remarks>
+    private (GroupId Id, DateTime Until)? _copied;
+
     /// <summary>Le geste qui attend un second clic, et jusqu'à quand.</summary>
     /// <remarks>Une clé textuelle plutôt qu'un identifiant : exclure, quitter et dissoudre se confirment tous ainsi.</remarks>
     private (string Key, DateTime Until)? _confirming;
+
+    /// <summary>
+    /// Fond des sous-cartes de gestion, un cran sous celui de la carte du groupe.
+    /// </summary>
+    /// <remarks>
+    /// Posées sur une carte du même fond, elles ne se distingueraient que par
+    /// leur bordure : enfoncées, elles se lisent comme les réglages d'un tout.
+    /// </remarks>
+    private static readonly Vector4 PanelBackground = Theme.Mix(Theme.BgSurface, Theme.BgBase, 0.6f);
+
+    private static readonly Vector4 DangerBackground = Theme.Mix(PanelBackground, Theme.Danger, 0.06f);
+
+    private static readonly Vector4 DangerBorder = Theme.Alpha(Theme.Danger, 0.35f);
+
+    /// <summary>Largeur commune des champs courts, la même que ceux de la sauvegarde.</summary>
+    private static float FieldWidth => Theme.S(260f);
 
     public void Draw()
     {
@@ -53,7 +90,6 @@ internal sealed class GroupsPage(
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
         DrawJoin();
-        DrawCandidacy();
         DrawCreate();
 
         var all = groups.All;
@@ -63,6 +99,8 @@ internal sealed class GroupsPage(
             Feedback.EmptyState(Icons.Groups, "Aucun groupe", "Créez-en un ou rejoignez-en un avec son code.");
             return;
         }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         var known = statuses();
         var ours = actions.OurIdentityKey();
@@ -75,13 +113,13 @@ internal sealed class GroupsPage(
     {
         using var card = Card.Begin("groups_join");
 
-        Text.WithIcon(Icons.Invite, "Rejoindre", Theme.Accent);
+        Text.WithIcon(Icons.Invite, "Rejoindre un groupe", Theme.Accent);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         ImGui.SetNextItemWidth(Card.FullWidth);
         ImGui.InputTextWithHint("##group_code", "XXXX-XXXX-XXXX@service", ref _joinCode, 300);
 
-        ImGui.SetNextItemWidth(Theme.S(260f));
+        ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputTextWithHint("##group_join_password", "Mot de passe (facultatif)", ref _joinPassword,
                                 GroupPolicyCodec.MaxPasswordBytes, ImGuiInputTextFlags.Password);
 
@@ -100,15 +138,30 @@ internal sealed class GroupsPage(
             // dans un champ pendant qu'on joue, fenêtre ouverte.
             _joinPassword = "";
         }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small("Collez le code reçu par /tell. Laissez le mot de passe vide si le groupe valide chaque entrée.",
+                   Theme.TextFaint);
+
+        DrawCandidacy();
     }
 
-    /// <summary>Où en est la candidature, juste sous la carte qui l'a lancée.</summary>
+    /// <summary>Où en est la candidature, dans la carte qui l'a lancée.</summary>
     private void DrawCandidacy()
     {
+        if (candidate.State is CandidacyState.Idle && candidate.LastJoinedName is null)
+            return;
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
         switch (candidate.State)
         {
             case CandidacyState.Waiting:
+                // Le texte se cale sur la hauteur du bouton qui le suit, sans
+                // quoi il flotte au-dessus de la ligne.
+                ImGui.AlignTextToFramePadding();
                 Text.Small("Demande envoyée, en attente de la réponse du groupe.", Theme.Accent);
+                ImGui.SameLine(0f, Theme.S(Theme.GapM));
 
                 if (Btn.Draw("Annuler", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: "group_join_cancel"))
                     actions.CancelJoin();
@@ -140,8 +193,6 @@ internal sealed class GroupsPage(
                 Text.Small($"Vous avez rejoint {Glyphs.Safe(name)}.", Theme.Online);
                 break;
         }
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
     }
 
     private void DrawCreate()
@@ -154,16 +205,15 @@ internal sealed class GroupsPage(
         // Le tampon en octets, la limite en caractères : un nom accentué de
         // trente-deux caractères dépasse trente-deux octets, et c'est
         // IsValidName qui tranche, comme le fera chaque membre en le recevant.
-        ImGui.SetNextItemWidth(Theme.S(260f));
+        ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputTextWithHint("##group_name", "Nom du groupe (32 caractères)", ref _createName,
                                 GroupPolicyCodec.MaxNameBytes);
 
-        ImGui.SetNextItemWidth(Theme.S(260f));
+        ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputTextWithHint("##group_create_password", "Mot de passe (facultatif)", ref _createPassword,
                                 GroupPolicyCodec.MaxPasswordBytes, ImGuiInputTextFlags.Password);
-        Feedback.Hint("Sans mot de passe, chaque entrée devra être validée par vous ou un modérateur.");
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Créer", BtnTone.Secondary, BtnSize.Small, Icons.Accept, id: "group_create",
                      disabled: GroupPolicyCodec.IsValidName(_createName.Trim()) is false))
@@ -172,6 +222,14 @@ internal sealed class GroupsPage(
             _createName = "";
             _createPassword = "";
         }
+
+        // La conséquence suit la saisie : c'est le mot de passe, ou son
+        // absence, qui choisit le mode d'admission du groupe à sa naissance.
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(_createPassword.Length == 0
+                       ? "Sans mot de passe, chaque entrée devra être validée par vous ou un modérateur."
+                       : "Avec le code et ce mot de passe, n'importe qui entrera sans attendre personne.",
+                   Theme.TextFaint);
     }
 
     private void DrawGroup(GroupRecord group, GroupRole role, IReadOnlyList<PeerStatus> known)
@@ -180,57 +238,48 @@ internal sealed class GroupsPage(
         var policy = group.Policy;
         var dissolved = policy is { Dissolved: true };
 
-        using (ImRaii.PushColor(ImGuiCol.Header, Theme.BgSurface)
-                     .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
-                     .Push(ImGuiCol.HeaderActive, Theme.BgRaised))
-        {
-            // « ### » : l'identifiant ne dépend ni du nom ni du compte, sans
-            // quoi la section changerait d'état à chaque membre rencontré ou
-            // renommage reçu.
-            if (ImGui.CollapsingHeader($"{Glyphs.Label(group.Name)} ({group.Members.Count})###group_{id}",
-                                       ImGuiTreeNodeFlags.DefaultOpen) is false)
-                return;
-        }
-
-        using var scope = ImRaii.PushId(id);
-
-        DrawChips(role, policy);
-
         // Sans politique, un modérateur n'est pas encore reconnu comme tel :
-        // RoleOf rend alors « membre », et rien de ce qui suit n'est proposé.
-        if (role is not GroupRole.Member && policy is not null && dissolved is false
-            && GroupGovernance.CodeOf(group) is { } code)
-            DrawCode(group, code);
+        // RoleOf rend alors « membre », et rien de la gestion n'est proposé.
+        var manages = role is not GroupRole.Member && policy is not null && dissolved is false;
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        // L'identifiant du groupe, jamais son nom : la carte garderait sinon
+        // sa hauteur mémorisée d'un renommage à l'autre, et ses widgets
+        // changeraient d'identifiant. Card.Begin pousse aussi cet identifiant
+        // dans la pile d'ImGui, ce qui isole les boutons d'un groupe à l'autre.
+        using var card = Card.Begin($"group_{id}", accent: dissolved ? Theme.Danger : null);
 
-        DrawMembers(group, role, known);
+        // Le nom vient de la politique, donc du réseau : Text.H2 le passe par Glyphs.Safe.
+        Text.H2(group.Name);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
 
-        if (role is not GroupRole.Member && policy is not null && dissolved is false)
-            DrawManagement(group, role, policy);
+        DrawChips(group, role, policy);
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        if (dissolved)
-        {
-            if (Btn.Draw("Retirer de la liste", BtnTone.Ghost, BtnSize.Small, Icons.Remove, id: "forget"))
-                actions.Forget(group.Id);
-
-            if (role is GroupRole.Owner)
-                Feedback.Hint(DissolveReminder);
-        }
-        else if (role is not GroupRole.Owner)
-        {
-            // Le propriétaire ne quitte pas : il dissout, depuis la gestion.
-            if (Confirmed($"leave_{id}", "Quitter le groupe", Icons.Leave,
-                          "Cliquer encore pour quitter ce groupe", tooltip: null))
-                actions.Leave(group.Id);
-        }
+        if (manages && GroupGovernance.CodeOf(group) is { } code)
+            DrawInvite(group, policy!, code);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        Section(Icons.Pairs, "Membres");
+        DrawMembers(group, role, known);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        DrawFooter(group, role, dissolved, manages);
+
+        if (manages && _managing.Contains(group.Id))
+        {
+            ImGui.Dummy(Theme.S(0f, Theme.GapM));
+            DrawManagement(group, role, policy!);
+        }
     }
 
-    private static void DrawChips(GroupRole role, GroupPolicy? policy)
+    /// <summary>Le titre d'une section de la carte d'un groupe, un cran sous celui des cartes.</summary>
+    private static void Section(FontAwesomeIcon icon, string title)
+    {
+        Text.WithIcon(icon, title, Theme.TextFaint, Theme.TextMuted);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+    }
+
+    /// <summary>Rôle, taille, mode d'entrée et état du groupe, d'un coup d'œil.</summary>
+    private static void DrawChips(GroupRecord group, GroupRole role, GroupPolicy? policy)
     {
         var (label, icon) = role switch
         {
@@ -240,6 +289,21 @@ internal sealed class GroupsPage(
         };
 
         Chip.Draw(label, Theme.Accent, icon);
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+        Chip.Draw(group.Members.Count == 1 ? "1 membre" : $"{group.Members.Count} membres", Theme.TextMuted, Icons.Nearby);
+
+        // Le mode d'entrée n'intéresse que ceux qui distribuent le code : un
+        // membre n'a rien à en faire, et le modérateur ne peut pas le changer
+        // mais doit savoir ce que son code ouvre.
+        if (role is not GroupRole.Member && policy is { Dissolved: false })
+        {
+            var password = policy.Attestation.Admission == AdmissionMode.Password;
+
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            Chip.Draw(password ? "entrée par mot de passe" : "entrée validée", Theme.TextMuted,
+                      password ? Icons.Lock : Icons.Moderator);
+        }
 
         if (policy is { Dissolved: true })
         {
@@ -255,30 +319,127 @@ internal sealed class GroupsPage(
     }
 
     /// <summary>Le code à distribuer, montré à ceux qui peuvent le changer.</summary>
-    private static void DrawCode(GroupRecord group, InvitationTicket code)
+    private void DrawInvite(GroupRecord group, GroupPolicy policy, InvitationTicket code)
     {
-        var services = group.Policy is { Rendezvous.Count: > 0 } policy ? policy.Rendezvous : group.Rendezvous;
+        var services = policy.Rendezvous.Count > 0 ? policy.Rendezvous : group.Rendezvous;
 
         if (services.Count == 0)
             return;
 
-        var service = services[0];
-        var text = InvitationTicketText.Encode(code, service);
+        var text = InvitationTicketText.Encode(code, services[0]);
 
         // Par groupes de quatre, comme on le dicte : le ticket ignore ses
         // propres tirets à la lecture, donc la forme copiée reste valable.
         var ticket = text[..InvitationTicket.Length];
-        var shown = $"{ticket[..4]}-{ticket[4..8]}-{ticket[8..]}{text[InvitationTicket.Length..]}";
+        var grouped = $"{ticket[..4]}-{ticket[4..8]}-{ticket[8..]}";
+        var service = text[InvitationTicket.Length..];
 
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
-        ImGui.AlignTextToFramePadding();
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        Section(Icons.Invite, "Inviter");
+
+        var copied = _copied is { } c && c.Id == group.Id && c.Until > DateTime.UtcNow;
+        var copyLabel = copied ? "Copié" : "Copier le code";
+        var copyIcon = copied ? Icons.Check : Icons.Copy;
 
         // L'adresse du service peut venir de la politique, donc du réseau.
-        Text.Body(Glyphs.Safe(shown), Theme.TextMuted);
+        CodeBox(grouped, Glyphs.Safe(service),
+                Btn.Measure(copyLabel, BtnSize.Small, copyIcon) + Theme.S(Theme.GapS));
+
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
-        if (Btn.Icon(Icons.Copy, "copy_code", tooltip: "Copier le code"))
-            ImGui.SetClipboardText(shown);
+        if (Btn.Draw(copyLabel, copied ? BtnTone.Success : BtnTone.Secondary, BtnSize.Small, copyIcon, id: "copy_code"))
+        {
+            ImGui.SetClipboardText(grouped + service);
+            _copied = (group.Id, DateTime.UtcNow.AddSeconds(2));
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(policy.Attestation.Admission == AdmissionMode.Password
+                       ? "À envoyer par /tell. Avec lui et le mot de passe, n'importe qui entre."
+                       : "À envoyer par /tell. Chaque entrée sera validée par vous ou un modérateur, dans Demandes.",
+                   Theme.TextFaint);
+    }
+
+    /// <summary>
+    /// Le code dans un cadre enfoncé, à la hauteur d'un bouton.
+    /// </summary>
+    /// <remarks>
+    /// Un fond de champ plutôt que du texte nu : c'est ce qu'on recopie, il
+    /// doit se détacher du reste. Le service, plus long et moins lu, reste
+    /// estompé, et rogné plutôt que de pousser le bouton hors de la carte.
+    /// </remarks>
+    private static void CodeBox(string ticket, string service, float reserved)
+    {
+        var origin = ImGui.GetCursorScreenPos();
+        var padX = Theme.S(Theme.GapM);
+        var height = ImGui.GetFrameHeight();
+
+        var ticketSize = ImGui.CalcTextSize(ticket);
+        var serviceWidth = ImGui.CalcTextSize(service).X;
+
+        var natural = padX * 2f + ticketSize.X + serviceWidth;
+        var room = ImGui.GetContentRegionAvail().X - Card.RightInset - reserved;
+        var width = Math.Max(Math.Min(natural, room), padX * 2f + ticketSize.X);
+
+        var max = new Vector2(origin.X + width, origin.Y + height);
+        var rounding = Theme.S(Theme.RadiusFrame);
+        var dl = ImGui.GetWindowDrawList();
+
+        dl.AddRectFilled(origin, max, ImGui.GetColorU32(Theme.BgSunken), rounding);
+        dl.AddRect(origin, max, ImGui.GetColorU32(Theme.Border), rounding, ImDrawFlags.None, 1f);
+
+        var y = MathF.Round(origin.Y + (height - ticketSize.Y) * 0.5f);
+
+        dl.PushClipRect(origin, new Vector2(max.X - padX * 0.5f, max.Y), true);
+        dl.AddText(new Vector2(origin.X + padX, y), ImGui.GetColorU32(Theme.Text), ticket);
+        dl.AddText(new Vector2(origin.X + padX + ticketSize.X, y), ImGui.GetColorU32(Theme.TextFaint), service);
+        dl.PopClipRect();
+
+        ImGui.Dummy(new Vector2(width, height));
+
+        if (natural > width)
+            Feedback.TooltipOnHover(ticket + service);
+    }
+
+    /// <summary>Le pied de la carte : déplier la gestion, quitter, ou retirer un groupe dissous.</summary>
+    private void DrawFooter(GroupRecord group, GroupRole role, bool dissolved, bool manages)
+    {
+        if (dissolved)
+        {
+            if (Btn.Draw("Retirer de la liste", BtnTone.Ghost, BtnSize.Small, Icons.Remove, id: "forget"))
+                actions.Forget(group.Id);
+
+            if (role is GroupRole.Owner)
+            {
+                ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+                Text.Small(DissolveReminder, Theme.Idle);
+            }
+
+            return;
+        }
+
+        if (manages)
+        {
+            var open = _managing.Contains(group.Id);
+
+            if (Btn.Draw(open ? "Masquer la gestion" : "Gérer le groupe", open ? BtnTone.Secondary : BtnTone.Ghost,
+                         BtnSize.Small, Icons.Settings, id: "manage"))
+            {
+                if (_managing.Remove(group.Id) is false)
+                    _managing.Add(group.Id);
+            }
+        }
+
+        // Le propriétaire ne quitte pas : il dissout, depuis la zone sensible.
+        if (role is GroupRole.Owner)
+            return;
+
+        if (manages)
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        if (Confirmed($"leave_{group.Id}", "Quitter le groupe", "Confirmer : quitter", Icons.Leave, BtnTone.Ghost,
+                      "Vous cessez d'échanger vos apparences avec ses membres. Revenir demandera de nouveau le code."))
+            actions.Leave(group.Id);
     }
 
     private void DrawMembers(GroupRecord group, GroupRole role, IReadOnlyList<PeerStatus> known)
@@ -289,7 +450,10 @@ internal sealed class GroupsPage(
             return;
         }
 
-        using var table = ImRaii.Table("members", 4, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX);
+        // Largeur explicite : un tableau prend sinon jusqu'au bord de la
+        // fenêtre, et ses boutons d'action débordaient sur la marge de la carte.
+        using var table = ImRaii.Table("members", 4, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX,
+                                       new Vector2(ImGui.GetContentRegionAvail().X - Card.RightInset, 0f));
 
         if (table.Success is false)
             return;
@@ -503,52 +667,69 @@ internal sealed class GroupsPage(
             actions.SetReceive(group.Id, member.Fingerprint, new TransientCategories(animations, vfx, sounds));
     }
 
-    /// <summary>La gestion, repliée : on y vient rarement, et rien ne doit s'y toucher par mégarde.</summary>
+    /// <summary>La gestion : une sous-carte par réglage, la zone sensible à part et en dernier.</summary>
     private void DrawManagement(GroupRecord group, GroupRole role, GroupPolicy policy)
     {
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        if (ImGui.TreeNodeEx("Gestion##management") is false)
-            return;
-
-        DrawPassword(group, policy);
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-
-        // En deux clics : le code déjà distribué cesse de fonctionner pour
-        // tous ceux qui ne sont pas encore entrés.
-        if (Confirmed($"new_code_{group.Id}", "Nouveau code", Icons.Refresh,
-                      "Cliquer encore pour remplacer le code",
-                      "L'ancien code ne mène plus nulle part. Les membres restent ; seuls ceux qui ne sont "
-                    + "pas encore entrés devront recevoir le nouveau."))
-            actions.Edit(group.Id, GroupGovernance.NewCode);
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapS));
-        DrawBans(group, policy);
-
+        // Le mode d'admission s'atteste : seul le propriétaire le signe.
         if (role is GroupRole.Owner)
-        {
-            ImGui.Dummy(Theme.S(0f, Theme.GapS));
             DrawAdmissionMode(group, policy);
 
-            ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        DrawPassword(group, policy);
+        DrawBans(group, policy);
+        DrawSensitive(group, role);
+    }
 
-            // Pour le propriétaire, quitter c'est dissoudre : voir LeaveGroup
-            // dans le plugin.
-            if (Confirmed($"dissolve_{group.Id}", "Dissoudre", Icons.Remove,
-                          "Cliquer encore pour dissoudre ce groupe", DissolveReminder))
-                actions.Leave(group.Id);
-        }
+    private static CardScope Panel(string id) => Card.Begin(id, background: PanelBackground, border: Theme.BorderSoft);
 
-        ImGui.TreePop();
+    private void DrawAdmissionMode(GroupRecord group, GroupPolicy policy)
+    {
+        using var card = Panel("manage_admission");
+
+        Text.WithIcon(Icons.Admission, "Admission", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        var password = policy.Attestation.Admission == AdmissionMode.Password;
+
+        // Les règles refusent le mode mot de passe sans mot de passe : ce
+        // serait un groupe où personne ne pourrait plus entrer.
+        var blocked = policy.Password.Length == 0 && password is false;
+
+        // Deux boutons accolés plutôt que des cases radio : le mode choisi se
+        // lit à sa couleur, et chaque choix porte son icône comme ailleurs.
+        if (Btn.Draw("Mot de passe", password ? BtnTone.Primary : BtnTone.Secondary, BtnSize.Small, Icons.Lock,
+                     id: "mode_password", disabled: blocked,
+                     tooltip: blocked ? "Définissez d'abord un mot de passe, dans la carte ci-dessous." : null)
+            && password is false)
+            actions.Edit(group.Id, (current, _) => GroupGovernance.SetAdmission(current, AdmissionMode.Password));
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapXs));
+
+        if (Btn.Draw("Validation par un modérateur", password ? BtnTone.Secondary : BtnTone.Primary, BtnSize.Small,
+                     Icons.Moderator, id: "mode_validation")
+            && password)
+            actions.Edit(group.Id, (current, _) => GroupGovernance.SetAdmission(current, AdmissionMode.Validation));
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(password
+                       ? "Quiconque a le code et le mot de passe entre seul, sans attendre personne."
+                       : "Chaque demande attend qu'un modérateur ou vous l'acceptiez, dans Demandes. "
+                       + "Sans personne en ligne pour répondre, elle expire au bout de dix minutes.",
+                   Theme.TextFaint);
     }
 
     private void DrawPassword(GroupRecord group, GroupPolicy policy)
     {
+        using var card = Panel("manage_password");
+
+        Text.WithIcon(Icons.Lock, "Mot de passe", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
         var password = _newPasswords.GetValueOrDefault(group.Id, "");
+        var defined = policy.Password.Length > 0;
 
-        ImGui.SetNextItemWidth(Theme.S(220f));
+        ImGui.SetNextItemWidth(FieldWidth);
 
-        if (ImGui.InputTextWithHint("##new_password", "Nouveau mot de passe", ref password,
+        if (ImGui.InputTextWithHint("##new_password", defined ? "Nouveau mot de passe" : "Mot de passe", ref password,
                                     GroupPolicyCodec.MaxPasswordBytes, ImGuiInputTextFlags.Password))
             _newPasswords[group.Id] = password;
 
@@ -556,7 +737,7 @@ internal sealed class GroupsPage(
 
         // Vide, il serait refusé en mode mot de passe : les règles
         // n'acceptent pas un groupe où personne ne pourrait plus entrer.
-        if (Btn.Draw("Changer le mot de passe", BtnTone.Secondary, BtnSize.Small, Icons.Lock, id: "set_password",
+        if (Btn.Draw(defined ? "Changer" : "Définir", BtnTone.Secondary, BtnSize.Small, Icons.Lock, id: "set_password",
                      disabled: password.Length == 0))
         {
             actions.Edit(group.Id, (current, signer) => GroupGovernance.SetPassword(current, password, signer));
@@ -566,19 +747,27 @@ internal sealed class GroupsPage(
             _newPasswords.Remove(group.Id);
         }
 
-        if (policy.Attestation.Admission == AdmissionMode.Validation)
-            Feedback.Hint("Tant que le groupe valide chaque entrée, le mot de passe ne fait entrer personne.");
+        // Vrai par construction : le mot de passe ne sert qu'à la preuve
+        // d'admission (AdmissionHost), jamais aux sessions des membres.
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(defined
+                       ? "Les membres actuels ne sont pas touchés ; le nouveau vaut pour les prochaines entrées."
+                       : "Aucun mot de passe pour l'instant. Il n'ouvre la porte qu'en mode mot de passe.",
+                   Theme.TextFaint);
+
+        if (defined && policy.Attestation.Admission == AdmissionMode.Validation)
+            Text.Small("Tant que le groupe valide chaque entrée, le mot de passe ne fait entrer personne.", Theme.Idle);
     }
 
     private void DrawBans(GroupRecord group, GroupPolicy policy)
     {
-        Text.Small($"Exclus ({policy.Bans.Count})", Theme.TextMuted);
+        using var card = Panel("manage_bans");
+
+        Text.WithIcon(Icons.Blocked, policy.Bans.Count == 0 ? "Exclus" : $"Exclus ({policy.Bans.Count})", Theme.Accent);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         if (policy.Bans.Count == 0)
-        {
-            Text.Small("Personne.", Theme.TextFaint);
-            return;
-        }
+            Text.Small("Personne n'est exclu.", Theme.TextFaint);
 
         for (var index = 0; index < policy.Bans.Count; index++)
         {
@@ -587,12 +776,83 @@ internal sealed class GroupsPage(
             using var scope = ImRaii.PushId(index);
 
             ImGui.AlignTextToFramePadding();
-            Text.Body(Glyphs.Safe(NameOf(group, ban)));
-            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            Text.Body(NameOf(group, ban));
 
-            if (Btn.Draw("Lever", BtnTone.Ghost, BtnSize.Small, Icons.Accept, id: "unban"))
+            // « Lever » calé à droite, comme les actions d'une ligne de pair :
+            // collé au nom, il suivait sa longueur et rien ne s'alignait.
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            var room = ImGui.GetContentRegionAvail().X - Card.RightInset - Btn.Measure("Lever", BtnSize.Small, Icons.Accept);
+
+            if (room > 0f)
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + room);
+
+            if (Btn.Draw("Lever", BtnTone.Ghost, BtnSize.Small, Icons.Accept, id: "unban",
+                         tooltip: "Lever l'exclusion de ce personnage et de sa clé."))
                 actions.Edit(group.Id, (current, signer) => GroupGovernance.Unban(current, ban, signer));
         }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small("On exclut depuis la ligne d'un membre. Un exclu n'est plus synchronisé et ne peut plus rentrer.",
+                   Theme.TextFaint);
+    }
+
+    /// <summary>Ce qui ne se défait pas : à part, bordé de rouge, et en deux clics.</summary>
+    private void DrawSensitive(GroupRecord group, GroupRole role)
+    {
+        using var card = Card.Begin("manage_danger", background: DangerBackground, border: DangerBorder,
+                                    accent: Theme.Danger);
+
+        Text.WithIcon(Icons.Warning, "Zone sensible", Theme.Danger);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        // En deux clics : le code déjà distribué cesse de fonctionner pour
+        // tous ceux qui ne sont pas encore entrés.
+        if (Confirmed($"new_code_{group.Id}", "Nouveau code", "Confirmer le nouveau code", Icons.Refresh,
+                      BtnTone.Secondary, tooltip: null))
+            actions.Edit(group.Id, GroupGovernance.NewCode);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(NewCodeConsequence, Theme.TextFaint);
+
+        if (role is not GroupRole.Owner)
+            return;
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+
+        // Pour le propriétaire, quitter c'est dissoudre : voir LeaveGroup
+        // dans le plugin.
+        if (Confirmed($"dissolve_{group.Id}", "Dissoudre le groupe", "Confirmer la dissolution", Icons.Remove,
+                      BtnTone.Secondary, tooltip: null))
+            actions.Leave(group.Id);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small(DissolveConsequence, Theme.TextFaint);
+    }
+
+    /// <summary>Un bouton qui n'agit qu'au second clic dans les quatre secondes, comme le retrait d'un pair.</summary>
+    /// <remarks>
+    /// Le libellé change pendant l'attente : une couleur seule ne dit pas
+    /// qu'un second clic est attendu, et l'infobulle ne se lit qu'au survol.
+    /// L'identifiant, lui, reste la clé, pour que le bouton ne perde pas son
+    /// état en changeant de texte.
+    /// </remarks>
+    private bool Confirmed(string key, string label, string confirmLabel, FontAwesomeIcon icon, BtnTone idle,
+                           string? tooltip)
+    {
+        var confirming = IsConfirming(key);
+
+        if (Btn.Draw(confirming ? confirmLabel : label, confirming ? BtnTone.Danger : idle, BtnSize.Small, icon, id: key,
+                     tooltip: confirming ? ConfirmTooltip : tooltip) is false)
+            return false;
+
+        if (confirming)
+        {
+            _confirming = null;
+            return true;
+        }
+
+        _confirming = (key, DateTime.UtcNow.AddSeconds(4));
+        return false;
     }
 
     /// <summary>Le nom d'un exclu, si on l'a croisé ; sinon rien qui ressemble à une clé.</summary>
@@ -605,52 +865,6 @@ internal sealed class GroupsPage(
             return byKey.DisplayName;
 
         return "personnage jamais croisé";
-    }
-
-    private void DrawAdmissionMode(GroupRecord group, GroupPolicy policy)
-    {
-        var mode = policy.Attestation.Admission;
-
-        Text.Small("Mode d'admission", Theme.TextMuted);
-
-        // Les règles refusent le mode mot de passe sans mot de passe : ce
-        // serait un groupe où personne ne pourrait plus entrer.
-        var noPassword = policy.Password.Length == 0;
-
-        using (ImRaii.Disabled(noPassword && mode != AdmissionMode.Password))
-        {
-            if (ImGui.RadioButton("Mot de passe##mode_password", mode == AdmissionMode.Password)
-                && mode != AdmissionMode.Password)
-                actions.Edit(group.Id, (current, _) => GroupGovernance.SetAdmission(current, AdmissionMode.Password));
-        }
-
-        if (noPassword)
-            Feedback.TooltipOnHover("Définissez d'abord un mot de passe.");
-
-        ImGui.SameLine(0f, Theme.S(Theme.GapM));
-
-        if (ImGui.RadioButton("Validation par un modérateur##mode_validation", mode == AdmissionMode.Validation)
-            && mode != AdmissionMode.Validation)
-            actions.Edit(group.Id, (current, _) => GroupGovernance.SetAdmission(current, AdmissionMode.Validation));
-    }
-
-    /// <summary>Un bouton qui n'agit qu'au second clic dans les quatre secondes, comme le retrait d'un pair.</summary>
-    private bool Confirmed(string key, string label, FontAwesomeIcon icon, string confirmTooltip, string? tooltip)
-    {
-        var confirming = IsConfirming(key);
-
-        if (Btn.Draw(label, confirming ? BtnTone.Danger : BtnTone.Ghost, BtnSize.Small, icon, id: key,
-                     tooltip: confirming ? confirmTooltip : tooltip) is false)
-            return false;
-
-        if (confirming)
-        {
-            _confirming = null;
-            return true;
-        }
-
-        _confirming = (key, DateTime.UtcNow.AddSeconds(4));
-        return false;
     }
 
     private bool IsConfirming(string key) => _confirming is { } c && c.Key == key && c.Until > DateTime.UtcNow;
