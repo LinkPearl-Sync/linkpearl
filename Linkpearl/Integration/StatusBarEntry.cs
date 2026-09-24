@@ -78,8 +78,10 @@ internal sealed class StatusBarEntry : IDisposable
         _entry.Tooltip = pending switch
         {
             0 => nearby,
-            1 => $"{nearby}\n1 demande de pairage en attente",
-            _ => $"{nearby}\n{pending} demandes de pairage en attente",
+            // Pairage et admission dans un groupe confondus : les deux attendent
+            // le même geste, ouvrir la page des demandes.
+            1 => $"{nearby}\n1 demande en attente",
+            _ => $"{nearby}\n{pending} demandes en attente",
         };
     }
 

@@ -14,6 +14,7 @@ internal static class NameplateLegend
         Line(NameplateMark.Requesting, "vous a envoyé une demande de pairage");
         Line(NameplateMark.Offline, "pairé, hors ligne ou en pause");
         Line(NameplateMark.Trouble, "pairé, mais quelque chose a échoué : voir le carnet");
+        Line(NameplateMark.GroupMember, "membre d'un de vos groupes");
     }
 
     private static void Line(NameplateMark mark, string meaning)

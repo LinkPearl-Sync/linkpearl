@@ -1,4 +1,5 @@
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
@@ -171,6 +172,60 @@ public class NameplateMarkTests
         var id = Peer(1);
 
         Assert.Equal(NameplateMark.Available, Mark(Her, [Pair(id, Her, PairTrust.Revoked)], detected: [Her]));
+    }
+
+    [Fact]
+    public void Un_membre_de_groupe_connecte_a_sa_propre_marque()
+    {
+        // Le pair du carnet sur une autre empreinte garde la sienne : la
+        // couche du groupe ne déborde pas sur les autres joueurs.
+        var group = GroupId.FromBytes(new byte[GroupId.SizeInBytes]);
+        var member = Peer(2);
+        var paired = Peer(1);
+        var statuses = new[]
+        {
+            Status(member, PeerSessionState.Connected, announced: Him) with { Group = group },
+            Status(paired, PeerSessionState.Connected),
+        };
+
+        var marks = NameplateMarks.Build([Pair(paired, Her)], statuses, [Her, Him], []);
+
+        Assert.Equal(NameplateMark.GroupMember, marks[Him]);
+        Assert.Equal(NameplateMark.Online, marks[Her]);
+    }
+
+    [Fact]
+    public void Un_membre_de_groupe_dont_l_apparence_est_posee_a_la_marque_du_groupe()
+    {
+        var group = GroupId.FromBytes(new byte[GroupId.SizeInBytes]);
+        var member = Peer(2);
+
+        Assert.Equal(NameplateMark.GroupMember,
+            Mark(Him, statuses: [Status(member, PeerSessionState.Applied, announced: Him, applied: true) with { Group = group }]));
+    }
+
+    [Fact]
+    public void Un_membre_de_groupe_hors_ligne_reste_ce_que_la_detection_en_dit()
+    {
+        var group = GroupId.FromBytes(new byte[GroupId.SizeInBytes]);
+        var member = Peer(2);
+
+        Assert.Equal(NameplateMark.Available,
+            Mark(Him, statuses: [Status(member, PeerSessionState.Connecting, announced: Him) with { Group = group }],
+                detected: [Him]));
+    }
+
+    [Fact]
+    public void Un_pair_du_carnet_l_emporte_sur_le_meme_joueur_vu_par_un_groupe()
+    {
+        var group = GroupId.FromBytes(new byte[GroupId.SizeInBytes]);
+        var paired = Peer(1);
+        var viaGroup = Peer(2);
+
+        Assert.Equal(NameplateMark.Online,
+            Mark(Her, [Pair(paired, Her)],
+                [Status(paired, PeerSessionState.Connected),
+                 Status(viaGroup, PeerSessionState.Connected, announced: Her) with { Group = group }]));
     }
 
     [Fact]

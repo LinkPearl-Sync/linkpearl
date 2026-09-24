@@ -44,9 +44,6 @@ public sealed class Plugin : IDalamudPlugin
     /// </remarks>
     private const string Command = "/lpearl";
 
-    /// <summary>Essai temporaire du noyau des groupes, retiré à l'incrément 2.</summary>
-    private const string GroupTestCommand = "/lpgroupe";
-
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager         Commands        { get; private set; } = null!;
     [PluginService] internal static IFramework              Framework       { get; private set; } = null!;
@@ -105,6 +102,15 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PresenceService _presence;
     private readonly GroupBook _groups;
     private readonly GroupDialPlanner _groupPlanner;
+
+    /// <summary>Le côté membre de l'admission : défis, validations en attente.</summary>
+    private readonly AdmissionHost _admissionHost;
+
+    /// <summary>Notre candidature en cours, une seule à la fois.</summary>
+    private readonly AdmissionCandidate _candidate;
+
+    /// <summary>Les gestes de la page Groupes, que le plugin exécute.</summary>
+    private readonly GroupActions _groupActions;
     // Volatile : écrit par le thread du jeu au changement de personnage, lu par
     // le fil du handshake qui épingle un membre de groupe.
     private volatile GroupStore? _groupStore;
@@ -157,9 +163,6 @@ public sealed class Plugin : IDalamudPlugin
     /// </remarks>
     private HashSet<Linkpearl.Core.Abstractions.PlayerFingerprint> _lastVisible = [];
 
-    /// <summary>Le groupe d'essai rejoint par <see cref="OnGroupTest"/>, s'il y en a un.</summary>
-    private GroupId? _testGroup;
-
     /// <summary>Quand la dernière interrogation a eu lieu.</summary>
     private DateTimeOffset _lastDetection = DateTimeOffset.MinValue;
 
@@ -205,6 +208,14 @@ public sealed class Plugin : IDalamudPlugin
         _groups = new GroupBook(clock);
         _groupPlanner = new GroupDialPlanner(clock);
 
+        // Les deux côtés de l'admission vivent aussi longtemps que le plugin :
+        // ils ne portent pas l'identité, ils la demandent au moment d'agir, et
+        // un changement de personnage vide le carnet qu'ils consultent.
+        _admissionHost = new AdmissionHost(_groups, () => _pairing.Identity?.PublicKey, clock);
+        _candidate = new AdmissionCandidate(clock);
+        _presence.Attach(_admissionHost, _candidate);
+        _groupActions = BuildGroupActions();
+
         // Un épinglage arrive d'un handshake, hors du thread du jeu : l'écriture
         // se fait là où il arrive, le stockage se protège seul. Un disque plein
         // ou un droit refusé ne doit pas faire échouer le handshake qui a
@@ -223,6 +234,8 @@ public sealed class Plugin : IDalamudPlugin
                 Log.Warning($"Enregistrement des groupes en échec ({e.GetType().Name}).");
             }
         };
+
+        _groups.PolicyAdopted += OnPolicyAdopted;
 
         // Le moteur et ce qu'il lui faut. Une seule socket pour tous les pairs :
         // c'est son adresse publique que le rendez-vous rend, donc elle seule
@@ -367,15 +380,6 @@ public sealed class Plugin : IDalamudPlugin
         Commands.AddHandler(Command, new CommandInfo((_, _) => Open())
         {
             HelpMessage = "Ouvre la fenêtre de Linkpearl.",
-        });
-
-        // Temporaire, jusqu'à la page Groupes de l'incrément 2 : de quoi
-        // éprouver le noyau à deux personnages, avec un groupe dont le secret
-        // dérive d'une phrase convenue.
-        Commands.AddHandler(GroupTestCommand, new CommandInfo((_, args) => OnGroupTest(args))
-        {
-            HelpMessage = "Essai : /lpgroupe <phrase> rejoint un groupe d'essai, /lpgroupe quitter le quitte.",
-            ShowInHelp = false,
         });
 
         Log.Information($"Chargé. Penumbra : {Describe(penumbra.TryGetVersion())}, Glamourer : {Describe(glamourer.TryGetVersion())}.");
@@ -628,7 +632,7 @@ public sealed class Plugin : IDalamudPlugin
                 _clock,
                 new PluginLogSink(Log, "moteur")),
             _appearance, _applicator, _cacheKeeper.Store, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
-            new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups);
+            new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups, policies: _groups);
 
         // Le moteur a déjà retiré l'entrée du carnet : il reste à l'écrire, et
         // à dire pourquoi une ligne vient de disparaître de la liste.
@@ -796,6 +800,11 @@ public sealed class Plugin : IDalamudPlugin
 
                     if (self is not null)
                     {
+                        // Avant SetGroups : le groupe tout juste rejoint ouvre
+                        // ses boîtes dès cette ronde, et non quinze secondes
+                        // plus tard.
+                        TakeJoinedGroup();
+
                         _presence.SetGroups(_groups.All);
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
@@ -917,7 +926,8 @@ public sealed class Plugin : IDalamudPlugin
 
         _statusBarDueAt = now + 1000;
         _statusBar.Update(
-            _state.Nearby, _pairing.Book.Listed, _presence.RequestCount, _cacheKeeper.State is CacheGateState.Missing);
+            _state.Nearby, _pairing.Book.Listed, _presence.RequestCount + _admissionHost.Pending.Count,
+            _cacheKeeper.State is CacheGateState.Missing);
 
         RemindBackup();
     }
@@ -1240,44 +1250,247 @@ public sealed class Plugin : IDalamudPlugin
 
     private void Decline(IncomingRequest request) => _presence.Forget(request);
 
+    /// <summary>Les gestes de la page Groupes.</summary>
+    private GroupActions BuildGroupActions() => new()
+    {
+        Create = CreateGroup,
+        Join = JoinGroup,
+        CancelJoin = _candidate.Cancel,
+        Leave = LeaveGroup,
+        Forget = id => _groups.Remove(id),
+        Edit = EditGroup,
+        Approve = pending => AnswerAdmission(_admissionHost.Approve(pending.Nonce)),
+        Decline = pending => AnswerAdmission(_admissionHost.Decline(pending.Nonce)),
+        SetPaused = _groups.SetPaused,
+        SetReceive = _groups.SetReceive,
+        OurIdentityKey = () => _pairing.Identity?.PublicKey,
+    };
+
+    /// <summary>Crée un groupe dont nous sommes le propriétaire, et en donne le code.</summary>
+    private void CreateGroup(string name, string password)
+    {
+        if (_pairing.Identity is not { } identity)
+        {
+            Report("personnage introuvable.");
+            return;
+        }
+
+        if (_configuration.ActiveRendezvous.FirstOrDefault() is not { } service)
+        {
+            Report("activez d'abord un service de rendez-vous dans les réglages.");
+            return;
+        }
+
+        CreatedGroup created;
+
+        try
+        {
+            created = GroupGovernance.Create(name, password, service.Address, identity.PublicKey, _clock.UtcNow);
+        }
+        catch (ArgumentException e)
+        {
+            // Sans le « (Parameter 'name') » que .NET accole au message, qui ne
+            // veut rien dire pour le joueur.
+            var why = e.ParamName is { } parameter ? e.Message.Replace($" (Parameter '{parameter}')", "") : e.Message;
+            Report($"création impossible : {why}.");
+            return;
+        }
+        catch (InvalidOperationException e)
+        {
+            Report($"création impossible : {e.Message}.");
+            return;
+        }
+
+        if (_groups.TryAdd(created.Record, out var refusal) is false)
+        {
+            Report($"création impossible : {refusal}.");
+            return;
+        }
+
+        Report($"Groupe {created.Record.Name} créé. Son code : {InvitationTicketText.Encode(created.Code, service.Address)}");
+    }
+
+    /// <summary>Demande à rejoindre un groupe par le code collé.</summary>
+    /// <remarks>
+    /// Seuls les blancs sont retirés, pas les tirets : le ticket se débarrasse
+    /// lui-même des siens, et un nom d'hôte après l'arobase peut en porter.
+    /// </remarks>
+    private void JoinGroup(string text, string password)
+    {
+        var cleaned = string.Concat(text.Where(character => char.IsWhiteSpace(character) is false));
+
+        if (InvitationTicketText.TryParse(cleaned, out var code, out var at, out var why) is false)
+        {
+            Report($"code illisible : {why}.");
+            return;
+        }
+
+        if ((at ?? _configuration.ActiveRendezvous.FirstOrDefault()?.Address) is not { } service)
+        {
+            Report("activez d'abord un service de rendez-vous dans les réglages.");
+            return;
+        }
+
+        if (_state.Self is not { } self)
+        {
+            Report("personnage introuvable.");
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                Report(await _presence.JoinGroupAsync(code, service, password, self, _shutdown.Token)
+                    .ConfigureAwait(false));
+            }
+            catch (OperationCanceledException)
+            {
+                // L'arrêt du plugin pendant l'attente de l'ouverture des
+                // boîtes : il n'y a plus personne à qui le dire.
+            }
+            catch (Exception e)
+            {
+                // Le type seul : le texte du code, donc de quoi entrer dans le
+                // groupe, n'a rien à faire au journal.
+                Log.Warning($"Demande d'admission en échec ({e.GetType().Name}).");
+                Report($"demande impossible : {e.Message}");
+            }
+        }, _shutdown.Token);
+    }
+
+    /// <summary>Quitte un groupe. Son propriétaire le dissout au lieu de le quitter.</summary>
+    /// <remarks>
+    /// Un propriétaire qui partirait sans rien dire laisserait un groupe que
+    /// personne ne pourrait plus gouverner. La dissolution se propage aux
+    /// membres par la politique, et le groupe reste listé, dissous, jusqu'à ce
+    /// qu'on l'oublie.
+    /// </remarks>
+    private void LeaveGroup(GroupId id)
+    {
+        if (_groups.Find(id) is not { } group)
+            return;
+
+        if (GroupGovernance.RoleOf(group, _pairing.Identity?.PublicKey) is not GroupRole.Owner)
+        {
+            _groups.Remove(id);
+            return;
+        }
+
+        try
+        {
+            Offer(id, GroupGovernance.Dissolve(group));
+        }
+        catch (InvalidOperationException e)
+        {
+            Report($"Refusé : {e.Message}");
+        }
+    }
+
+    /// <summary>Applique une modification de gouvernance, signée selon notre rôle.</summary>
+    private void EditGroup(GroupId id, Func<GroupRecord, ECDsa?, byte[]> change)
+    {
+        if (_groups.Find(id) is not { } group)
+            return;
+
+        var identity = _pairing.Identity;
+        ECDsa? signer;
+
+        switch (GroupGovernance.RoleOf(group, identity?.PublicKey))
+        {
+            case GroupRole.Owner:
+                signer = null;
+                break;
+
+            case GroupRole.Moderator when identity is not null:
+                signer = identity.Key;
+                break;
+
+            default:
+                Report("Seuls le propriétaire et les modérateurs peuvent faire cela.");
+                return;
+        }
+
+        try
+        {
+            Offer(id, change(group, signer));
+        }
+        catch (InvalidOperationException e)
+        {
+            Report($"Refusé : {e.Message}");
+        }
+    }
+
+    /// <summary>Adopte localement une politique qu'on vient de signer ; le moteur la propage.</summary>
+    private void Offer(GroupId id, byte[] policy)
+    {
+        // Déjà passée par les règles à la signature : un refus ici veut dire
+        // que le groupe a changé entre-temps (quitté, ou politique plus récente).
+        var outcome = _groups.OfferPolicy(id, policy);
+
+        if (outcome is not (PolicyOffer.Adopted or PolicyOffer.Same))
+            Report($"Refusé : le groupe a changé entre-temps ({outcome}).");
+    }
+
+    /// <summary>Envoie au candidat la réponse d'un modérateur.</summary>
+    private void AnswerAdmission(AdmissionOutbound? outbound)
+    {
+        // Rien à envoyer : la demande a expiré, a déjà été tranchée, ou le
+        // candidat a été banni pendant qu'elle attendait.
+        if (outbound is null)
+        {
+            Report("cette demande n'est plus en attente.");
+            return;
+        }
+
+        RunSafely(async () => Report(await _presence.AnswerAsync(outbound, _shutdown.Token).ConfigureAwait(false)));
+    }
+
+    /// <summary>Range dans le carnet le groupe que la candidature vient d'obtenir.</summary>
+    private void TakeJoinedGroup()
+    {
+        if (_candidate.TakeJoined(_clock.UtcNow) is not { } joined)
+            return;
+
+        Report(_groups.TryAdd(joined, out var refusal)
+            ? $"Vous avez rejoint {joined.Name}."
+            : $"Impossible de rejoindre {joined.Name} : {refusal}.");
+    }
+
     /// <summary>
-    /// Essai temporaire : rejoint ou quitte un groupe dont le secret dérive
-    /// d'une phrase convenue entre joueurs.
+    /// Tire les conséquences, pour nous, d'une politique adoptée.
     /// </summary>
     /// <remarks>
-    /// Retiré à l'incrément 2, remplacé par la page Groupes.
+    /// Levé hors du fil du jeu, par le handshake qui a reçu la politique : rien
+    /// ici ne touche au jeu, et Report renvoie lui-même vers le bon fil. Le
+    /// propriétaire n'est jamais retiré : c'est lui qui a dissous, et aucun
+    /// bannissement ne peut le viser. Le nom du groupe va au chat du joueur,
+    /// jamais au journal.
     /// </remarks>
-    private void OnGroupTest(string args)
+    private void OnPolicyAdopted(GroupId id)
     {
-        var phrase = args.Trim();
-
-        if (phrase is "quitter")
+        try
         {
-            if (_testGroup is { } id && _groups.Remove(id))
-                Report("groupe d'essai quitté.");
+            if (_groups.Find(id) is not { Policy: { } policy } group
+                || GroupGovernance.RoleOf(group, _pairing.Identity?.PublicKey) is GroupRole.Owner)
+                return;
 
-            _testGroup = null;
-            return;
+            if (policy.IsBanned(_pairing.Id, _state.Self?.Fingerprint))
+            {
+                if (_groups.Remove(id))
+                    Report($"Vous avez été exclu du groupe {group.Name}.");
+
+                return;
+            }
+
+            if (policy.Dissolved && _groups.Remove(id))
+                Report($"Le groupe {group.Name} a été dissous.");
         }
-
-        if (phrase.Length == 0 || _configuration.ActiveRendezvous.FirstOrDefault() is not { } service)
+        catch (Exception e)
         {
-            Report("usage : /lpgroupe <phrase>, avec un service de rendez-vous activé.");
-            return;
+            // Une exception remonterait dans le handshake qui a offert la politique.
+            Log.Warning($"Suite d'une politique adoptée en échec ({e.GetType().Name}).");
         }
-
-        var secret = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("linkpearl:group-test:v1:" + phrase));
-        var group = new GroupRecord
-        {
-            Id = GroupId.Of(secret),
-            Name = "Essai",
-            Secret = secret,
-            Rendezvous = [service.Address],
-            JoinedAt = _clock.UtcNow,
-        };
-
-        Report(_groups.TryAdd(group, out var refusal) ? "groupe d'essai rejoint." : $"refusé : {refusal}");
-        _testGroup = group.Id;
     }
 
     /// <summary>
@@ -1307,7 +1520,20 @@ public sealed class Plugin : IDalamudPlugin
     /// que la fenêtre était fermée, une action qui a échoué. Le diagnostic va
     /// au journal de Dalamud.
     /// </remarks>
-    private static void Report(string message) => Chat.Print($"[Linkpearl] {message}");
+    /// <remarks>
+    /// Appelé aussi hors du thread du jeu (handshakes, boucles de fond, tâches
+    /// de l'interface) : le chat appartient au jeu, donc l'écriture y est
+    /// renvoyée quand on n'y est pas.
+    /// </remarks>
+    private static void Report(string message)
+    {
+        var line = $"[Linkpearl] {message}";
+
+        if (Framework.IsInFrameworkUpdateThread)
+            Chat.Print(line);
+        else
+            _ = Framework.RunOnFrameworkThread(() => Chat.Print(line));
+    }
 
     public void Dispose()
     {
@@ -1315,6 +1541,7 @@ public sealed class Plugin : IDalamudPlugin
         // ici ferait fuir l'AssemblyLoadContext, et le rechargement suivant en
         // créerait un second.
         _shutdown.Cancel();
+        _groups.PolicyAdopted -= OnPolicyAdopted;
         _cacheKeeper.Opened -= OnCacheOpened;
         _cacheKeeper.Lost -= OnCacheLost;
 
@@ -1324,7 +1551,6 @@ public sealed class Plugin : IDalamudPlugin
         _windows.RemoveAllWindows();
 
         Commands.RemoveHandler(Command);
-        Commands.RemoveHandler(GroupTestCommand);
         ContextMenu.OnMenuOpened -= OnMenuOpened;
         Framework.Update -= PollLinks;
         Framework.Update -= FollowCharacter;
@@ -1350,6 +1576,11 @@ public sealed class Plugin : IDalamudPlugin
 
         _selfLoop.Dispose();
         _presence.Dispose();
+
+        // Après la présence : c'est elle qui leur passe les trames reçues, et
+        // plus rien ne doit leur arriver une fois libérés.
+        _admissionHost.Dispose();
+        _candidate.Dispose();
         _pairing.Dispose();
         _shutdown.Dispose();
     }

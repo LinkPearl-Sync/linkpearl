@@ -41,12 +41,13 @@ internal sealed class NameplateGlyphs : IDisposable
     /// </remarks>
     public static Vector4 ColorOf(NameplateMark mark) => mark switch
     {
-        NameplateMark.Online     => Theme.Online,
-        NameplateMark.Available  => Theme.Hex(0xF2A65A),
-        NameplateMark.Requesting => Theme.Hex(0x6FB6F2),
-        NameplateMark.Offline    => Theme.TextFaint,
-        NameplateMark.Trouble    => Theme.Danger,
-        _                        => Theme.Text,
+        NameplateMark.Online      => Theme.Online,
+        NameplateMark.Available   => Theme.Hex(0xF2A65A),
+        NameplateMark.Requesting  => Theme.Hex(0x6FB6F2),
+        NameplateMark.Offline     => Theme.TextFaint,
+        NameplateMark.Trouble     => Theme.Danger,
+        NameplateMark.GroupMember => Theme.Hex(0xB48CF2),
+        _                         => Theme.Text,
     };
 
     private readonly INamePlateGui _plates;

@@ -26,6 +26,9 @@ public enum NameplateMark
 
     /// <summary>Pairé, et quelque chose a échoué : la fenêtre en dit plus.</summary>
     Trouble,
+
+    /// <summary>Membre d'un de nos groupes, connecté ou dont l'apparence est posée.</summary>
+    GroupMember,
 }
 
 /// <summary>
@@ -53,6 +56,16 @@ public static class NameplateMarks
         // qu'aucun autre état non pairé ne fait.
         foreach (var print in requesting)
             marks[print] = NameplateMark.Requesting;
+
+        // Seulement un membre joint : un membre hors ligne n'a rien de plus à
+        // dire que ce que la détection montre déjà.
+        foreach (var status in statuses)
+        {
+            if (status.Group is not null
+                && status.State is PeerSessionState.Connected or PeerSessionState.Applied
+                && status.View.Fingerprint is { } member)
+                marks[member] = NameplateMark.GroupMember;
+        }
 
         var byPeer = statuses.ToDictionary(status => status.Peer);
 
