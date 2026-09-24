@@ -3,101 +3,108 @@
 </p>
 
 <p align="center">
-  <b>Voyez les apparences moddées de vos amis dans Final Fantasy XIV,<br>
-  directement de joueur à joueur, sans serveur au milieu.</b>
+  <b>See your friends' modded looks in Final Fantasy XIV,<br>
+  straight from player to player, with no server in between.</b>
 </p>
 
 <p align="center">
   <a href="https://linkpearl-sync.github.io/">linkpearl-sync.github.io</a>
 </p>
 
+<p align="center">
+  <b>English</b> · <a href="README.fr.md">Français</a>
+</p>
+
+> [!NOTE]
+> The plugin's interface is in French for now. Below, each in-game label is quoted exactly as it appears, followed by its meaning.
+
 ---
 
-## Installer
+## Install
 
-Dans le jeu, tapez `/xlsettings`, ouvrez l'onglet **Experimental**, et collez cette adresse dans **Custom Plugin Repositories** :
+In game, type `/xlsettings`, open the **Experimental** tab, and paste this address into **Custom Plugin Repositories**:
 
 ```
 https://linkpearl-sync.github.io/repo.json
 ```
 
-Cliquez sur **+**, puis sur **Enregistrer**. Ouvrez ensuite `/xlplugins`, cherchez **Linkpearl Sync** et installez-le.
+Click **+**, then **Save**. Then open `/xlplugins`, search for **Linkpearl Sync** and install it.
 
-**Prérequis :** [Penumbra](https://github.com/xivdev/Penumbra) et [Glamourer](https://github.com/Ottermandias/Glamourer), installés et activés.
-
----
-
-## Ce que fait Linkpearl
-
-Vous vous pairez avec un ami, en jeu, en deux clics. Dès lors, chacun voit l'autre tel qu'il s'est habillé : mods Penumbra, état Glamourer, et ce que montrent les plugins voisins.
-
-<p align="center">
-  <img src="docs/images/comment-ca-marche.svg" alt="Deux joueurs reliés directement par un lien chiffré, le service de rendez-vous à l'écart" width="608">
-</p>
-
-- **De joueur à joueur.** Vos fichiers passent directement de votre jeu à celui de votre ami, chiffrés de bout en bout. Aucun serveur ne les stocke ni ne les redistribue.
-- **Seulement avec qui vous avez choisi.** Rien ne s'échange sans l'accord des deux.
-- **Au-delà des tenues.** Animations, effets visuels et sons moddés, et ce que montrent Customize+, SimpleHeels, Honorific, Moodles et PetNicknames.
+**Requirements:** [Penumbra](https://github.com/xivdev/Penumbra) and [Glamourer](https://github.com/Ottermandias/Glamourer), installed and enabled.
 
 ---
 
-## Premiers pas
+## What Linkpearl does
 
-### Au premier lancement
-
-Une courte présentation s'ouvre et vous fait choisir **où ranger le cache** (les apparences reçues, gardées sur votre disque pour ne pas les retélécharger) et **sa taille maximale**. Vous pourrez la revoir à tout moment depuis les réglages.
-
-La fenêtre du plugin s'ouvre avec `/lpearl`, ou en cliquant sur l'entrée Linkpearl de la barre de statut du jeu.
-
-### Se pairer
+You pair with a friend, in game, in two clicks. From then on, each of you sees the other as they dressed up: Penumbra mods, Glamourer state, and what neighbouring plugins show.
 
 <p align="center">
-  <img src="docs/images/se-pairer.svg" alt="Un glyphe orange à côté du nom, le clic droit « Linkpearl : demander le pairage », puis la demande acceptée par l'autre" width="608">
+  <img src="docs/images/comment-ca-marche.svg" alt="Two players linked directly by an encrypted connection, with the rendezvous service off to the side" width="608">
 </p>
 
-1. Approchez-vous de votre ami. Un **glyphe orange** à côté de son nom signale qu'il utilise Linkpearl.
-2. **Clic droit** sur son personnage, puis **Linkpearl : demander le pairage**. Vous pouvez aussi passer par la page **Autour** de la fenêtre.
-3. Votre ami reçoit une notification et **accepte** d'un clic.
+- **Player to player.** Your files go straight from your game to your friend's, end-to-end encrypted. No server stores or redistributes them.
+- **Only with the people you chose.** Nothing is shared unless you both agree.
+- **More than outfits.** Modded animations, visual effects and sounds, plus what Customize+, SimpleHeels, Honorific, Moodles and PetNicknames show.
 
-C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de l'autre.
+---
 
-### Les couleurs des glyphes
+## Getting started
 
-| Couleur | Signification |
+### First launch
+
+A short introduction opens and asks you to choose **where to keep the cache** (the looks you receive, kept on your disk so they don't have to be downloaded again) and **its maximum size**. You can change both at any time in the settings.
+
+The plugin window opens with `/lpearl`, or by clicking the Linkpearl entry in the game's server info bar.
+
+### Pairing
+
+<p align="center">
+  <img src="docs/images/se-pairer.svg" alt="An orange glyph next to the name, the right-click entry « Linkpearl : demander le pairage », then the other player accepting the request" width="608">
+</p>
+
+1. Get close to your friend. An **orange glyph** next to their name means they use Linkpearl.
+2. **Right-click** their character, then **Linkpearl : demander le pairage** (request pairing). You can also use the **Autour** (nearby) page of the window.
+3. Your friend gets a notification and **accepts** with one click.
+
+That's it: your looks are exchanged whenever you are within range of each other.
+
+### Glyph colours
+
+| Colour | Meaning |
 |---|---|
-| Vert | pairé et connecté |
-| Orange | utilise Linkpearl, pas encore pairé |
-| Bleu | vous a envoyé une demande de pairage |
-| Gris | pairé, hors ligne ou en pause |
-| Rouge | pairé, mais quelque chose a échoué : voir la page Pairs |
+| Green | paired and connected |
+| Orange | uses Linkpearl, not paired yet |
+| Blue | sent you a pairing request |
+| Grey | paired, offline or paused |
+| Red | paired, but something failed: see the **Pairs** page |
 
 ---
 
-## Au quotidien
+## Day to day
 
 <p align="center">
-  <img src="docs/images/garder-la-main.svg" alt="Une ligne de pair avec les bascules animations, effets, sons et pause" width="608">
+  <img src="docs/images/garder-la-main.svg" alt="A peer row with the animations, effects, sounds and pause toggles" width="608">
 </p>
 
-- **Réappliquer** une apparence qui s'est mal posée : clic droit sur le personnage, **Linkpearl : réappliquer**.
-- **Mettre un pair en pause** : page **Pairs**, bouton pause. La connexion se ferme et son apparence est retirée.
-- **Bloquer animations, effets ou sons** : pour tout le monde depuis la barre de titre de la fenêtre, ou pour un seul pair depuis la page **Pairs**. Rien n'est téléchargé de ce que vous bloquez.
-- **Le cache** : dossier et taille dans **Réglages > Cache**. Au-delà de la taille choisie, les apparences les plus anciennes partent, jamais celles que vous avez sous les yeux.
-- **Sauvegarder votre identité** : **Réglages > Identité**. Un seul fichier, protégé par un mot de passe si vous le souhaitez. Après une réinstallation ou sur un autre PC, le restaurer évite de refaire chaque pairage.
+- **Reapply** a look that didn't apply properly: right-click the character, **Linkpearl : réappliquer** (reapply).
+- **Pause a peer**: **Pairs** page, pause button. The connection closes and their look is removed.
+- **Block animations, effects or sounds**: for everyone from the window's title bar, or for a single peer from the **Pairs** page. Nothing you block is downloaded.
+- **The cache**: folder and size in **Réglages > Cache** (Settings > Cache). Past the size you chose, the oldest looks go first, never the ones currently in front of you.
+- **Back up your identity**: **Réglages > Identité** (Settings > Identity). A single file, password-protected if you like. After a reinstall or on another PC, restoring it saves you from pairing with everyone again.
 
 ---
 
-## Vie privée
+## Privacy
 
-- Vos fichiers ne quittent votre jeu que vers les pairs que vous avez acceptés, chiffrés de bout en bout.
-- Pour que deux joueurs se trouvent, Linkpearl passe par un **service de rendez-vous**. Il ne voit ni vos fichiers, ni vos apparences, ni vos clés, ni le nom de votre personnage.
-- Si vous activez **Me signaler aux autres joueurs** (réglage par défaut), le service peut savoir que votre personnage est en ligne : c'est ce qui permet aux autres de vous reconnaître. Vous pouvez le désactiver dans **Réglages > Visibilité**.
-- Vous pouvez héberger votre propre service de rendez-vous : voir [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous). Vous et vos amis devez simplement en partager au moins un.
+- Your files leave your game only for the peers you accepted, end-to-end encrypted.
+- For two players to find each other, Linkpearl goes through a **rendezvous service**. It sees neither your files, nor your looks, nor your keys, nor your character's name.
+- If you keep **Me signaler aux autres joueurs** (let other players see me, on by default), the service can know that your character is online: that is what lets others recognise you. You can turn it off in **Réglages > Visibilité** (Settings > Visibility).
+- You can host your own rendezvous service: see [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous). You and your friends just need to share at least one.
 
 ---
 
-## Une question, un souci ?
+## Questions or problems?
 
-Ouvrez une [issue](https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/issues) en décrivant ce que vous avez fait et ce que vous avez vu. Le journal de Dalamud (`/xllog`) aide beaucoup.
+Open an [issue](https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/issues) describing what you did and what you saw. The Dalamud log (`/xllog`) helps a lot. Issues in English or French are both welcome.
 
-Pour les curieux et les contributeurs, la conception et le protocole sont décrits dans [`docs/`](docs/).
+For the curious and for contributors, the design and the protocol are described in [`docs/`](docs/) (in French).

@@ -41,6 +41,11 @@ l'adresse donnée aux joueurs. Le `repo.json` d'ici reste celui qui fait foi : l
 l'écrit, puis relance le site qui en reprend une copie. Ne jamais le supprimer ni le déplacer :
 les premiers joueurs ont l'ancienne adresse `raw.githubusercontent.com` dans leur Dalamud.
 
+`README.md` (anglais) et `README.fr.md` disent la même chose : toucher à l'un oblige à
+reporter dans l'autre. L'interface du plugin n'existe qu'en français, donc le README anglais
+cite chaque libellé tel qu'il apparaît en jeu, suivi de sa traduction. Le site renvoie à
+`#getting-started` et `#premiers-pas` : garder ces titres ou mettre à jour ses liens.
+
 ## Les trois règles dont la violation coûte le plus cher
 
 1. **`Linkpearl/Core/` ne référence jamais Dalamud.** C'est ce qui permet à
