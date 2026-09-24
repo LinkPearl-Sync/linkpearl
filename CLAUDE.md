@@ -82,10 +82,14 @@ cite chaque libellé tel qu'il apparaît en jeu, suivi de sa traduction. Le site
 - **Le cache accélère, il ne remplace pas le consentement.** Un pair injoignable garde son
   apparence par défaut, même si son dernier manifeste est en cache. Une apparence périmée
   est indiscernable d'une apparence courante par celui qui la regarde.
-- **Le rendez-vous n'est pas une autorité.** L'autorisation vient du carnet local et la clé
-  publique vient du code d'invitation. Un rendez-vous malveillant peut faire échouer une
-  connexion, jamais usurper une identité. Ne jamais introduire de chemin de code où le
-  serveur fournit une clé.
+- **Le rendez-vous n'est une autorité qu'au pairage, et seulement là.** L'autorisation vient
+  du carnet local. Mais il n'y a plus de code d'invitation : la clé publique d'un pair arrive
+  en clair par la boîte aux lettres du service, qui peut donc s'intercaler au premier contact
+  (TOFU, voir la section « Modèle de confiance » de `docs/protocol.md`). Une fois la clé
+  épinglée dans le carnet, un rendez-vous malveillant peut faire échouer une connexion,
+  jamais usurper une identité. Ne jamais ajouter d'autre chemin où le serveur fournit ou
+  remplace une clé, et ne jamais affirmer dans un document que le serveur ne peut pas
+  s'intercaler au pairage.
 
 ## Règles de conduite
 

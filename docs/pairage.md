@@ -56,7 +56,9 @@ inconnu de vous reconnaître et empêcher le serveur de le faire.
 Décision prise : **la détection est active par défaut**, parce qu'une fonction
 désactivée par défaut n'existe pas, avec un réglage pour s'en retirer et une
 phrase claire à la première utilisation. Ce qui n'est toujours pas révélé au
-serveur : les manifestes, les fichiers, et le contenu des demandes.
+serveur : les manifestes et les fichiers. Le contenu des demandes, lui, lui est
+visible : nom, monde, clé publique et aléa de pairage voyagent en clair, ce qui
+lui donne aussi le secret de paire. Voir les limites connues de `protocol.md`.
 
 ### Ce qui reste protégé
 
@@ -64,7 +66,7 @@ serveur : les manifestes, les fichiers, et le contenu des demandes.
 |---|---|
 | Qu'un nom de personnage est en ligne | Les manifestes |
 | Les adresses IP | Les fichiers |
-| Que deux boîtes échangent une demande | Le contenu des apparences |
+| Le contenu des demandes, donc le secret de paire | Le contenu des apparences |
 | | Les échanges une fois la session établie |
 
 ### Ce qui remplace la vérification par six mots
