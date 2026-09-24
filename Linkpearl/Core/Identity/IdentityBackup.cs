@@ -9,7 +9,12 @@ namespace Linkpearl.Core.Identity;
 /// <param name="Folder">Le dossier du personnage, soit son empreinte (<see cref="CharacterFolder"/>).</param>
 /// <param name="Identity">La clé privée, au format PKCS#8.</param>
 /// <param name="Pairs">Le carnet, dans sa forme sur disque déchiffrée.</param>
-public sealed record BackupEntry(string Folder, byte[] Identity, byte[] Pairs);
+/// <param name="Groups">
+/// Les groupes, dans leur forme sur disque déchiffrée. Nul quand le personnage
+/// n'en a aucun, ou que la sauvegarde vient d'une version antérieure qui ne
+/// portait pas ce champ.
+/// </param>
+public sealed record BackupEntry(string Folder, byte[] Identity, byte[] Pairs, byte[]? Groups = null);
 
 /// <summary>Le résultat d'une lecture : des entrées, ou la raison du refus.</summary>
 public sealed record BackupReadResult(IReadOnlyList<BackupEntry> Entries, string? Failure, bool NeedsPassword)
@@ -41,14 +46,18 @@ public sealed record BackupReadResult(IReadOnlyList<BackupEntry> Entries, string
 /// "LPBK" | version (1) | mode (1)
 /// mode 0 : charge | SHA-256(charge)
 /// mode 1 : itérations (4, LE) | sel (16) | nonce (12) | AES-GCM(charge), l'en-tête en données associées
-/// charge : nombre (2) | { dossier (16) | taille clé (2) | clé | taille carnet (4) | carnet }*
+/// charge : nombre (2) | { dossier (16) | taille clé (2) | clé | taille carnet (4) | carnet
+///                         [version 2 seulement : taille groupes (4, LE) | groupes] }*
 /// </code>
+/// Version 1 n'a pas de champ groupes : relue, chaque entrée porte
+/// <c>Groups = null</c>. Écrite, une sauvegarde est toujours en version 2.
 /// </remarks>
 public static class IdentityBackup
 {
     private static ReadOnlySpan<byte> Magic => "LPBK"u8;
 
-    private const byte Version = 1;
+    private const byte FirstVersion = 1;
+    private const byte Version = 2;
     private const byte ModePlain = 0;
     private const byte ModeProtected = 1;
 
@@ -80,6 +89,9 @@ public static class IdentityBackup
 
     /// <summary>Quatre Mio de carnet, soit des milliers de pairs.</summary>
     private const int MaxPairsLength = 4 * 1024 * 1024;
+
+    /// <summary>Même borne que le carnet : des milliers de groupes tiendraient largement dedans.</summary>
+    private const int MaxGroupsLength = 4 * 1024 * 1024;
 
     private const int MaxFileLength = 16 * 1024 * 1024;
 
@@ -136,18 +148,20 @@ public static class IdentityBackup
         if (HasHeader(file) is false)
             return BackupReadResult.Refused("ce fichier n'est pas une sauvegarde Linkpearl.");
 
-        if (file[4] != Version)
+        if (file[4] is not (FirstVersion or Version))
             return BackupReadResult.Refused("cette sauvegarde vient d'une version plus récente de Linkpearl.");
+
+        var version = file[4];
 
         return file[5] switch
         {
-            ModePlain => ReadPlain(file),
-            ModeProtected => ReadProtected(file, password),
+            ModePlain => ReadPlain(file, version),
+            ModeProtected => ReadProtected(file, version, password),
             _ => BackupReadResult.Refused("ce fichier n'est pas une sauvegarde Linkpearl."),
         };
     }
 
-    private static BackupReadResult ReadPlain(ReadOnlySpan<byte> file)
+    private static BackupReadResult ReadPlain(ReadOnlySpan<byte> file, byte version)
     {
         if (file.Length < PlainHeaderLength + DigestLength)
             return BackupReadResult.Refused("sauvegarde incomplète.");
@@ -160,10 +174,10 @@ public static class IdentityBackup
         if (CryptographicOperations.FixedTimeEquals(digest, file[^DigestLength..]) is false)
             return BackupReadResult.Refused("sauvegarde abîmée : son contenu ne correspond plus à son contrôle.");
 
-        return Decode(payload);
+        return Decode(payload, version);
     }
 
-    private static BackupReadResult ReadProtected(ReadOnlySpan<byte> file, string? password)
+    private static BackupReadResult ReadProtected(ReadOnlySpan<byte> file, byte version, string? password)
     {
         if (string.IsNullOrEmpty(password))
             return BackupReadResult.Refused("cette sauvegarde est protégée par un mot de passe.", needsPassword: true);
@@ -190,7 +204,7 @@ public static class IdentityBackup
 
             try
             {
-                return Decode(payload);
+                return Decode(payload, version);
             }
             finally
             {
@@ -206,7 +220,8 @@ public static class IdentityBackup
     private static byte[] Encode(IReadOnlyList<BackupEntry> entries)
     {
         var length = sizeof(ushort) + entries.Sum(entry =>
-            CharacterFolder.Length + sizeof(ushort) + entry.Identity.Length + sizeof(int) + entry.Pairs.Length);
+            CharacterFolder.Length + sizeof(ushort) + entry.Identity.Length + sizeof(int) + entry.Pairs.Length
+            + sizeof(int) + (entry.Groups?.Length ?? 0));
 
         var buffer = new byte[length];
         var span = buffer.AsSpan();
@@ -226,12 +241,17 @@ public static class IdentityBackup
             BinaryPrimitives.WriteInt32LittleEndian(span, entry.Pairs.Length);
             entry.Pairs.CopyTo(span[sizeof(int)..]);
             span = span[(sizeof(int) + entry.Pairs.Length)..];
+
+            var groupsLength = entry.Groups?.Length ?? 0;
+            BinaryPrimitives.WriteInt32LittleEndian(span, groupsLength);
+            entry.Groups?.CopyTo(span[sizeof(int)..]);
+            span = span[(sizeof(int) + groupsLength)..];
         }
 
         return buffer;
     }
 
-    private static BackupReadResult Decode(ReadOnlySpan<byte> payload)
+    private static BackupReadResult Decode(ReadOnlySpan<byte> payload, byte version)
     {
         const string Broken = "sauvegarde invalide : son contenu est mal formé.";
 
@@ -272,7 +292,24 @@ public static class IdentityBackup
             var pairs = payload[..pairsLength].ToArray();
             payload = payload[pairsLength..];
 
-            entries.Add(new BackupEntry(folder, identity, pairs));
+            byte[]? groups = null;
+
+            if (version == Version)
+            {
+                if (payload.Length < sizeof(int))
+                    return BackupReadResult.Refused(Broken);
+
+                var groupsLength = BinaryPrimitives.ReadInt32LittleEndian(payload);
+                payload = payload[sizeof(int)..];
+
+                if (groupsLength is < 0 or > MaxGroupsLength || payload.Length < groupsLength)
+                    return BackupReadResult.Refused(Broken);
+
+                groups = groupsLength is 0 ? null : payload[..groupsLength].ToArray();
+                payload = payload[groupsLength..];
+            }
+
+            entries.Add(new BackupEntry(folder, identity, pairs, groups));
         }
 
         if (payload.IsEmpty is false)
@@ -303,6 +340,9 @@ public static class IdentityBackup
 
             if (entry.Pairs.Length > MaxPairsLength)
                 return "un carnet est trop gros.";
+
+            if (entry.Groups is { Length: > MaxGroupsLength })
+                return "une liste de groupes est trop grosse.";
         }
 
         return null;

@@ -164,6 +164,69 @@ public class IdentityBackupTests
         Assert.Throws<ArgumentException>(() => IdentityBackup.Write([], null));
     }
 
+    [Fact]
+    public void Les_groupes_font_l_aller_retour()
+    {
+        var withGroups = Alice with { Groups = """[{"Id":"00"}]"""u8.ToArray() };
+
+        var read = IdentityBackup.Read(IdentityBackup.Write([withGroups, Bob], password: null), password: null);
+
+        Assert.Null(read.Failure);
+        Assert.Equal(withGroups.Groups, read.Entries[0].Groups);
+        Assert.Null(read.Entries[1].Groups);
+    }
+
+    [Fact]
+    public void Une_sauvegarde_v1_se_relit()
+    {
+        var read = IdentityBackup.Read(VersionOne(Alice), password: null);
+
+        Assert.Null(read.Failure);
+        var entry = Assert.Single(read.Entries);
+        Assert.Equal(Alice.Identity, entry.Identity);
+        Assert.Equal(Alice.Pairs, entry.Pairs);
+        Assert.Null(entry.Groups);
+    }
+
+    /// <summary>
+    /// Fabrique à la main un fichier de sauvegarde en version 1, mode clair :
+    /// « LPBK » | version (1) | mode (1) | charge | SHA-256(charge), où la
+    /// charge vaut nombre (2) | { dossier (16, ASCII) | taille clé (2) | clé |
+    /// taille carnet (4) | carnet }*, tout en little-endian et sans champ de
+    /// groupes.
+    /// </summary>
+    private static byte[] VersionOne(BackupEntry entry)
+    {
+        var folder = Encoding.ASCII.GetBytes(entry.Folder);
+        Assert.Equal(16, folder.Length);
+
+        var payload = new byte[
+            sizeof(ushort) + folder.Length + sizeof(ushort) + entry.Identity.Length + sizeof(int) + entry.Pairs.Length];
+
+        var span = payload.AsSpan();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(span, 1);
+        span = span[sizeof(ushort)..];
+
+        folder.CopyTo(span);
+        span = span[folder.Length..];
+
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(span, (ushort)entry.Identity.Length);
+        entry.Identity.CopyTo(span[sizeof(ushort)..]);
+        span = span[(sizeof(ushort) + entry.Identity.Length)..];
+
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(span, entry.Pairs.Length);
+        entry.Pairs.CopyTo(span[sizeof(int)..]);
+
+        var file = new byte[IdentityBackup.PlainHeaderLength + payload.Length + 32];
+        "LPBK"u8.CopyTo(file);
+        file[4] = 1;
+        file[5] = 0;
+        payload.CopyTo(file, IdentityBackup.PlainHeaderLength);
+        System.Security.Cryptography.SHA256.HashData(payload, file.AsSpan(IdentityBackup.PlainHeaderLength + payload.Length));
+
+        return file;
+    }
+
     private static void AssertSame(IReadOnlyList<BackupEntry> expected, IReadOnlyList<BackupEntry> actual)
     {
         Assert.Equal(expected.Count, actual.Count);

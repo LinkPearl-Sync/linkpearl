@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 
 namespace Linkpearl.Integration;
@@ -46,7 +47,8 @@ public static class IdentityBackupService
                 }
 
                 var pairs = new PairBookStore(Path.Combine(directory, "pairs.json")).ReadPlain() ?? "[]"u8.ToArray();
-                entries.Add(new BackupEntry(folder, identity, pairs));
+                var groups = new GroupStore(Path.Combine(directory, "groups.json")).ReadPlain();
+                entries.Add(new BackupEntry(folder, identity, pairs, groups));
             }
             catch (Exception e) when (e is CryptographicException or IOException)
             {
@@ -92,6 +94,9 @@ public static class IdentityBackupService
 
             if (PairBookStore.IsValid(entry.Pairs) is false)
                 return (false, "sauvegarde refusée : un carnet de pairs est illisible.");
+
+            if (entry.Groups is not null && GroupBookCodec.IsValid(entry.Groups) is false)
+                return (false, "sauvegarde refusée : une liste de groupes est illisible.");
         }
 
         foreach (var entry in entries)
@@ -108,6 +113,9 @@ public static class IdentityBackupService
 
             new DpapiIdentityStore(Path.Combine(directory, "identity.key")).Save(entry.Identity);
             new PairBookStore(Path.Combine(directory, "pairs.json")).WritePlain(entry.Pairs);
+
+            if (entry.Groups is { } groups)
+                new GroupStore(Path.Combine(directory, "groups.json")).WritePlain(groups);
         }
 
         return (true, entries.Count == 1
