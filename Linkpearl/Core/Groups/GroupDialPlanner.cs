@@ -53,7 +53,7 @@ public sealed class GroupDialPlanner(IClock clock)
         var byId = groups.ToDictionary(group => group.Id);
         var now = clock.UtcNow;
 
-        // Deux groupes en commun : le plus petit identifiant, choisi pareil des
+        // Deux groupes en commun : le privé, puis le plus petit identifiant, choisi pareil des
         // deux côtés sans se concerter, et une seule session. L'empreinte se
         // vérifie contre l'Id épinglé du membre quand il est connu, et non
         // contre null : un pair protégé (propriétaire-membre ou modérateur
@@ -66,7 +66,12 @@ public sealed class GroupDialPlanner(IClock clock)
                                         && Excluded(group, sighting.Member) is false)
                      .GroupBy(sighting => sighting.Member))
         {
-            var chosen = seen.MinBy(sighting => sighting.Group)!;
+            // Un groupe privé commun passe avant le Public : l'ami qu'on y
+            // retrouve ne doit pas arriver en inconnu, effets coupés. Et la
+            // règle doit donner le même choix des deux côtés même quand l'un
+            // a bloqué l'autre dans le Public, ou attend encore son verdict :
+            // sinon les secrets de paire diffèrent, et plus rien ne s'ouvre.
+            var chosen = seen.MinBy(sighting => (byId[sighting.Group].IsPublic, sighting.Group))!;
             _recent[seen.Key] = (chosen.Group, chosen.DisplayName, now);
         }
 

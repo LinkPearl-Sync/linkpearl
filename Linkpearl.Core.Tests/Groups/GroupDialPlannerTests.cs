@@ -204,4 +204,49 @@ public sealed class GroupDialPlannerTests
 
         Assert.Equal(TransientCategories.None, planned.Receive);
     }
+
+    /// <summary>Un groupe privé dont l'identifiant passe après celui du Public.</summary>
+    private GroupRecord PrivateAfterPublic()
+    {
+        for (byte seed = 0; ; seed++)
+        {
+            var group = Group([.. Enumerable.Range(0, 32).Select(i => (byte)(i + seed))]);
+
+            if (group.Id.CompareTo(PublicGroup.Id) > 0)
+                return group;
+        }
+    }
+
+    [Fact]
+    public void Un_groupe_prive_commun_l_emporte_sur_le_Public()
+    {
+        // Sinon un ami du groupe arriverait par le Public, effets coupés.
+        var prive = PrivateAfterPublic();
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow);
+
+        var planned = Assert.Single(new GroupDialPlanner(_clock).Plan(
+            Alice, [new GroupSighting(@public.Id, Bob, "Bob"), new GroupSighting(prive.Id, Bob, "Bob")], [@public, prive], []));
+
+        Assert.Equal(prive.Id, planned.Group!.Group);
+    }
+
+    [Fact]
+    public void Un_blocage_dans_le_Public_ne_casse_pas_le_groupe_prive_commun()
+    {
+        // Alice a bloqué Bob dans le Public, pas Bob : les deux doivent quand
+        // même choisir le même groupe, sans quoi leurs secrets de paire
+        // diffèrent et aucune session ne s'ouvre plus jamais.
+        var prive = PrivateAfterPublic();
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow);
+
+        var fromAlice = Assert.Single(new GroupDialPlanner(_clock).Plan(
+            Alice, [new GroupSighting(@public.Id, Bob, "Bob"), new GroupSighting(prive.Id, Bob, "Bob")],
+            [@public with { Blocked = [new GroupBan(null, Bob)] }, prive], []));
+
+        var fromBob = Assert.Single(new GroupDialPlanner(_clock).Plan(
+            Bob, [new GroupSighting(@public.Id, Alice, "Alice"), new GroupSighting(prive.Id, Alice, "Alice")],
+            [@public, prive], []));
+
+        Assert.Equal(fromAlice.PairSecret, fromBob.PairSecret);
+    }
 }
