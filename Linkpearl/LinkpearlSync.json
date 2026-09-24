@@ -1,8 +1,8 @@
 {
   "Name": "Linkpearl Sync",
   "Author": "Neprena",
-  "Description": "Synchronise votre apparence moddée avec les personnes que vous avez explicitement appairées, en pair à pair. Les fichiers passent directement d'un joueur à l'autre, chiffrés de bout en bout : aucun serveur ne les stocke ni ne les redistribue.",
-  "Punchline": "Voyez les mods de vos proches, sans serveur au milieu.",
+  "Description": "Syncs your modded appearance with the people you explicitly paired with, peer to peer. Files go straight from one player to another, end-to-end encrypted: no server stores or redistributes them. The interface is in French for now.",
+  "Punchline": "See your friends' mods, with no server in between.",
   "InternalName": "LinkpearlSync",
   "RepoUrl": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin",
   "IconUrl": "https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl-sync-plugin/main/Plugin_Logo.png",
