@@ -160,8 +160,10 @@ l'initiateur en comparant ordinalement les empreintes en hexadécimal.
 **Identifiant de groupe** :
 
 ```
-GroupId = SHA-256("linkpearl:group-id:v1" || secret)[0..16]
+GroupId = SHA-256(matériau)[0..16]
 ```
+
+où le matériau est le secret du groupe (32 octets) pour un groupe partagé, ou sa clé de signature pour un groupe privé.
 
 **Boîte de présence**, fenêtres de trente minutes :
 
