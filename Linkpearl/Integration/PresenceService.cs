@@ -62,6 +62,23 @@ public sealed class PresenceService : IDisposable
     /// <summary>Par joueur détecté, les groupes dont sa boîte de présence a répondu.</summary>
     private readonly ConcurrentDictionary<PlayerFingerprint, IReadOnlyList<GroupId>> _groupPresence = new();
 
+    /// <summary>Le côté membre de l'admission, attaché une fois par le plugin.</summary>
+    private volatile AdmissionHost? _host;
+
+    /// <summary>Le côté candidat de l'admission, attaché une fois par le plugin.</summary>
+    private volatile AdmissionCandidate? _candidate;
+
+    /// <summary>Une seule ronde d'ouverture à la fois.</summary>
+    /// <remarks>
+    /// La boucle de rafraîchissement et une candidature lancée depuis
+    /// l'interface ouvrent toutes deux des sessions : deux ouvertures
+    /// concurrentes d'une même session en feraient deux connexions, dont la
+    /// première, jamais fermée, garderait nos boîtes ouvertes et son écoute
+    /// vivante. Jamais disposé : sans poignée d'attente demandée, il ne tient
+    /// aucune ressource, et le disposer ferait lever les rondes encore en vol.
+    /// </remarks>
+    private readonly SemaphoreSlim _opening = new(1, 1);
+
     /// <summary>
     /// Boîtes qu'on s'autorise sur une connexion avant de la refaire à neuf.
     /// </summary>
@@ -98,12 +115,15 @@ public sealed class PresenceService : IDisposable
         /// <summary>Adresses tenues par cette connexion, qui ne fait qu'en accumuler.</summary>
         public int OpenedCount { get; set; }
 
-        /// <summary>Les groupes dont cette connexion tient des boîtes de présence.</summary>
+        /// <summary>
+        /// Les groupes dont cette connexion tient des boîtes de présence, et
+        /// les codes dont elle tient des boîtes d'admission (voir <see cref="Signature"/>).
+        /// </summary>
         /// <remarks>
-        /// Un ensemble et non une empreinte : il faut savoir si un groupe a
-        /// disparu, pas seulement si quelque chose a changé.
+        /// Un ensemble et non une empreinte : il faut savoir si un groupe ou
+        /// un code a disparu, pas seulement si quelque chose a changé.
         /// </remarks>
-        public IReadOnlySet<GroupId> OpenedGroups { get; set; } = new HashSet<GroupId>();
+        public IReadOnlySet<string> OpenedKeys { get; set; } = new HashSet<string>();
 
         public string? Failure { get; set; }
 
@@ -220,12 +240,46 @@ public sealed class PresenceService : IDisposable
 
     public void SetGroups(IReadOnlyList<GroupRecord> groups) => _groups = groups;
 
+    /// <summary>Branche l'admission. Appelé une fois par le plugin, avant la première ronde.</summary>
+    public void Attach(AdmissionHost host, AdmissionCandidate candidate)
+    {
+        _host = host;
+        _candidate = candidate;
+    }
+
     public IReadOnlyList<GroupId> GroupsOf(PlayerFingerprint member)
         => _groupPresence.TryGetValue(member, out var groups) ? groups : [];
 
-    /// <summary>Ce qui distingue un jeu de groupes d'un autre, pour savoir s'il faut rouvrir.</summary>
-    private static HashSet<GroupId> Signature(IReadOnlyList<GroupRecord> groups)
-        => [.. groups.Select(group => group.Id)];
+    /// <summary>
+    /// Ce qui distingue un jeu de boîtes d'un autre, pour savoir s'il faut rouvrir.
+    /// </summary>
+    /// <remarks>
+    /// Des clés texte préfixées, parce que groupes et codes d'admission vivent
+    /// dans le même ensemble : un code renouvelé ou un droit d'admettre perdu
+    /// doit fermer la connexion exactement comme un groupe quitté, sans quoi
+    /// l'ancienne boîte d'admission resterait ouverte et continuerait de
+    /// recevoir des demandes pour un code révoqué.
+    /// </remarks>
+    private static HashSet<string> Signature(IReadOnlyList<GroupRecord> groups, IReadOnlyList<byte[]> codes)
+        => [.. groups.Select(group => $"g:{group.Id}"), .. codes.Select(code => $"c:{Convert.ToHexStringLower(code)}")];
+
+    /// <summary>Les codes dont on ouvre la boîte d'admission.</summary>
+    /// <remarks>
+    /// Une exception du carnet ne doit pas priver de présence : sans codes, on
+    /// n'admet personne pendant une ronde, ce qui ne coûte qu'un redépôt au candidat.
+    /// </remarks>
+    private IReadOnlyList<byte[]> AdmissionCodes()
+    {
+        try
+        {
+            return _host?.AdmissionCodes ?? [];
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Lecture des codes d'admission en échec.");
+            return [];
+        }
+    }
 
     /// <summary>
     /// Ouvre nos boîtes, ou les rouvre si le personnage a changé.
@@ -235,6 +289,62 @@ public sealed class PresenceService : IDisposable
     /// celles de l'ancien doivent se fermer et celles du nouveau s'ouvrir.
     /// </remarks>
     public async Task EnsureOpenAsync(PlayerFingerprint fingerprint, CancellationToken ct)
+    {
+        await _opening.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await EnsureOpenLockedAsync(fingerprint, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _opening.Release();
+        }
+
+        if (_configuration.Discoverable)
+            await RedepositCandidacyAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Redépose la demande de la candidature en cours, si c'est le moment.</summary>
+    /// <remarks>
+    /// Après l'ouverture, pour que la session vers le service du code existe
+    /// déjà. Les boîtes ne gardent rien : c'est ce redépôt qui fait voir la
+    /// demande au membre qui se connecte après coup, et qui rattrape une
+    /// preuve perdue en faisant renvoyer le même défi.
+    /// </remarks>
+    private async Task RedepositCandidacyAsync(CancellationToken ct)
+    {
+        if (_candidate is not { } candidate)
+            return;
+
+        byte[]? again;
+        InvitationTicket? code;
+        RendezvousAddress? service;
+
+        try
+        {
+            code = candidate.Code;
+            service = candidate.Service;
+            again = candidate.DueRedeposit();
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Redépôt de candidature en échec.");
+            return;
+        }
+
+        if (again is null || code is not { } ticket || service is not { } at)
+            return;
+
+        var (delivered, _) = await DepositOnAsync(
+            [at], GroupDerivation.AdmissionAddress(ticket.ToBytes(), _clock.UtcNow).ToBytes(), again, ct)
+            .ConfigureAwait(false);
+
+        if (delivered == 0)
+            _log.Debug("Redépôt de candidature : aucun service joignable, nouvel essai à la prochaine échéance.");
+    }
+
+    private async Task EnsureOpenLockedAsync(PlayerFingerprint fingerprint, CancellationToken ct)
     {
         if (_configuration.Discoverable is false)
         {
@@ -252,22 +362,22 @@ public sealed class PresenceService : IDisposable
             if (session.Client is not null && session.OpenedFor != fingerprint)
                 Close(session);
 
-            var groups = Signature(_groups);
+            var groups = Signature(_groups, AdmissionCodes());
 
-            // Quitter un groupe coupe tout. Le service n'a pas d'opération pour
+            // Quitter un groupe, ou perdre un code d'admission, coupe tout. Le service n'a pas d'opération pour
             // fermer une boîte, et rouvrir sur la connexion en place ne fait
             // qu'en ajouter : la présence du groupe quitté resterait visible de
             // ses membres jusqu'à la prochaine reconnexion, des heures plus tard
             // peut-être. On ferme donc la connexion, et la même ronde la rouvre
             // à neuf, avec les seuls groupes restants.
-            if (session.Client is not null && session.OpenedGroups.IsSubsetOf(groups) is false)
+            if (session.Client is not null && session.OpenedKeys.IsSubsetOf(groups) is false)
                 Close(session);
 
             // Les adresses tournent toutes les trente minutes, et changent aussi
             // quand on rejoint un groupe.
             if (session.Client is { } open
                 && (session.OpenedWindow != MailboxAddress.IndexAt(_clock.UtcNow)
-                    || session.OpenedGroups.SetEquals(groups) is false))
+                    || session.OpenedKeys.SetEquals(groups) is false))
                 await ReopenAsync(session, open, fingerprint, ct).ConfigureAwait(false);
 
             if (session.Client is not null || _clock.UtcNow < session.NextAttempt)
@@ -285,6 +395,14 @@ public sealed class PresenceService : IDisposable
         var active = _configuration.ActiveRendezvous.Select(entry => entry.Address)
             .Concat(_groups.SelectMany(group => group.Rendezvous))
             .ToHashSet();
+
+        // Le service d'une candidature en cours compte aussi : c'est là que
+        // nous déposons la demande, et, n'étant pas encore membres, rien
+        // d'autre ne nous y relie. Les réponses arrivent dans notre boîte
+        // personnelle, que cette même session tient ouverte.
+        if (_candidate is { State: CandidacyState.Waiting or CandidacyState.NeedsPassword or CandidacyState.Proving,
+                Service: { } candidacy })
+            active.Add(candidacy);
 
         lock (_gate)
         {
@@ -316,7 +434,8 @@ public sealed class PresenceService : IDisposable
 
             var window = MailboxAddress.IndexAt(_clock.UtcNow);
             var groups = _groups;
-            var addresses = Addresses(fingerprint, groups);
+            var codes = AdmissionCodes();
+            var addresses = Addresses(fingerprint, groups, codes);
 
             await client.OpenMailboxesAsync(addresses, ct).ConfigureAwait(false);
 
@@ -330,7 +449,7 @@ public sealed class PresenceService : IDisposable
                 session.OpenedWindow = window;
                 session.Failure = null;
                 session.OpenedCount = addresses.Count;
-                session.OpenedGroups = Signature(groups);
+                session.OpenedKeys = Signature(groups, codes);
             }
 
             _ = Task.Run(() => ListenAsync(session, client, life.Token), life.Token);
@@ -364,7 +483,8 @@ public sealed class PresenceService : IDisposable
     {
         var window = MailboxAddress.IndexAt(_clock.UtcNow);
         var groups = _groups;
-        var addresses = Addresses(fingerprint, groups);
+        var codes = AdmissionCodes();
+        var addresses = Addresses(fingerprint, groups, codes);
 
         // Au-delà du budget, on repart d'une connexion neuve, rouverte dans la
         // même ronde : la fermeture ne repousse pas la prochaine tentative.
@@ -383,11 +503,11 @@ public sealed class PresenceService : IDisposable
                 session.OpenedWindow = window;
                 session.OpenedCount += addresses.Count;
 
-                // L'union et non les seuls groupes courants : cette connexion
-                // garde les boîtes déjà ouvertes. Si un groupe a été quitté entre
-                // la vérification et ici, la ronde suivante le verra manquer et
-                // fermera la connexion.
-                session.OpenedGroups = new HashSet<GroupId>(session.OpenedGroups.Union(Signature(groups)));
+                // L'union et non les seules clés courantes : cette connexion
+                // garde les boîtes déjà ouvertes. Si un groupe a été quitté ou
+                // un code perdu entre la vérification et ici, la ronde suivante
+                // le verra manquer et fermera la connexion.
+                session.OpenedKeys = new HashSet<string>(session.OpenedKeys.Union(Signature(groups, codes)));
             }
         }
         catch (Exception e)
@@ -400,12 +520,15 @@ public sealed class PresenceService : IDisposable
     }
 
     /// <summary>
-    /// Les adresses à ouvrir : la boîte personnelle, et une boîte de présence
-    /// par groupe, chacune sous la fenêtre courante et la suivante.
+    /// Les adresses à ouvrir : la boîte personnelle, une boîte de présence
+    /// par groupe, et une boîte d'admission par code qu'on peut admettre,
+    /// chacune sous la fenêtre courante et la suivante.
     /// </summary>
-    private List<byte[]> Addresses(PlayerFingerprint fingerprint, IReadOnlyList<GroupRecord> groups)
+    private List<byte[]> Addresses(
+        PlayerFingerprint fingerprint, IReadOnlyList<GroupRecord> groups, IReadOnlyList<byte[]> codes)
         => [.. MailboxAddress.Around(fingerprint, _clock.UtcNow)
             .Concat(groups.SelectMany(group => GroupDerivation.PresenceAround(group.Secret, fingerprint, _clock.UtcNow)))
+            .Concat(codes.SelectMany(code => GroupDerivation.AdmissionAround(code, _clock.UtcNow)))
             .Select(address => address.ToBytes())];
 
     /// <summary>
@@ -629,6 +752,95 @@ public sealed class PresenceService : IDisposable
         return (delivered, failure);
     }
 
+    /// <summary>
+    /// Dépose sur les seuls services désignés.
+    /// </summary>
+    /// <remarks>
+    /// L'admission sait où déposer : le service du code côté candidat, ceux
+    /// du groupe côté membre. Déposer partout ferait apprendre le code, ou le
+    /// nom du candidat, à des services qui n'ont rien à voir avec le groupe.
+    /// </remarks>
+    private async Task<(int Delivered, string? Failure)> DepositOnAsync(
+        IReadOnlyList<RendezvousAddress> via, byte[] address, byte[] payload, CancellationToken ct)
+    {
+        // Le service ferme la connexion sur un dépôt trop long : mieux vaut
+        // perdre ce seul message que la présence entière.
+        if (payload.Length > RendezvousWire.MaxDepositLength)
+        {
+            _log.Warning($"Dépôt de {payload.Length} octets refusé, au-delà de {RendezvousWire.MaxDepositLength}.");
+            return (0, "message trop long pour le service");
+        }
+
+        var delivered = 0;
+        var failure = "aucun service du groupe n'est joignable";
+
+        foreach (var session in Snapshot())
+        {
+            if (session.Client is not { } client || via.Contains(session.At) is false)
+                continue;
+
+            try
+            {
+                await client.DepositAsync(address, payload, ct).ConfigureAwait(false);
+                delivered++;
+            }
+            catch (Exception e)
+            {
+                failure = e.Message;
+                _log.Warning(e, $"Dépôt d'admission en échec sur {session.At}.");
+            }
+        }
+
+        return (delivered, delivered > 0 ? null : failure);
+    }
+
+    /// <summary>Dépose la réponse d'un membre dans la boîte personnelle du candidat.</summary>
+    /// <remarks>Utilisé par l'interface pour Accepter et Refuser, et par le fil d'écoute pour les défis.</remarks>
+    public async Task<string> AnswerAsync(AdmissionOutbound outbound, CancellationToken ct)
+    {
+        var candidate = PlayerFingerprint.Of(DalamudObjectSource.Normalize(outbound.CharacterName), outbound.WorldId);
+        var address = MailboxAddress.Of(candidate, _clock.UtcNow).ToBytes();
+
+        var (delivered, failure) = await DepositOnAsync(outbound.Via, address, outbound.Payload, ct).ConfigureAwait(false);
+
+        return delivered == 0 ? $"réponse impossible : {failure}" : "Réponse envoyée.";
+    }
+
+    /// <summary>Demande à rejoindre un groupe par son code.</summary>
+    /// <returns>Le message à dire au joueur.</returns>
+    public async Task<string> JoinGroupAsync(
+        InvitationTicket code, RendezvousAddress service, string password, NearbyPlayer self, CancellationToken ct)
+    {
+        // Le groupe répond dans notre boîte personnelle, que seule la
+        // détection tient ouverte : sans elle, la demande partirait et la
+        // réponse ne trouverait personne.
+        if (_configuration.Discoverable is false)
+            return "Activez la détection dans les réglages : c'est par votre boîte que le groupe vous répond.";
+
+        if (_identity() is not { } identity)
+            return NoCharacter;
+
+        if (_candidate is not { } candidate)
+            return "l'admission n'est pas prête, réessayez dans un instant.";
+
+        var request = candidate.Start(code, service, password, identity.PublicKey, self.Name, self.WorldId);
+
+        // Ouvre au besoin une session vers le service du code, que Reconcile
+        // ajoute maintenant que la candidature attend.
+        await EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
+
+        var (delivered, failure) = await DepositOnAsync(
+            [service], GroupDerivation.AdmissionAddress(code.ToBytes(), _clock.UtcNow).ToBytes(), request, ct)
+            .ConfigureAwait(false);
+
+        // La candidature reste en attente : le redépôt de chaque minute
+        // réessaiera, et le service sera peut-être revenu d'ici là.
+        if (delivered == 0)
+            return $"Demande pas encore envoyée ({failure}) : nouvel essai chaque minute.";
+
+        return "Demande envoyée. Un membre du groupe doit être en ligne pour vous répondre.";
+    }
+
     /// <summary>Les aléas des demandes que nous avons envoyées, en attente de réponse.</summary>
     public ConcurrentDictionary<PlayerFingerprint, byte[]> PendingOutgoing { get; } = new();
 
@@ -683,7 +895,129 @@ public sealed class PresenceService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Aiguille un dépôt reçu selon son premier octet.
+    /// </summary>
+    /// <remarks>
+    /// Tourne sur le fil d'écoute : une exception ici tuerait l'écoute, donc
+    /// la présence, pour une seule trame hostile. D'où la garde englobante.
+    /// </remarks>
     private void OnDelivered(byte[] payload)
+    {
+        try
+        {
+            switch (payload)
+            {
+                // Les types de PairRequestMessage, versions 1 et 2.
+                case [>= 0x01 and <= 0x04, ..]:
+                    OnPairMessage(payload);
+                    break;
+
+                case [var kind, ..] when AdmissionKind.IsAdmission(kind):
+                    OnAdmissionMessage(payload);
+                    break;
+
+                default:
+                    _log.Debug($"Dépôt de type inconnu reçu ({payload.Length} octets).");
+                    break;
+            }
+        }
+        catch (Exception e)
+        {
+            _log.Warning(e, "Dépôt reçu impossible à traiter.");
+        }
+    }
+
+    /// <summary>Traite un message d'admission. Aucun nom de personnage au journal.</summary>
+    private void OnAdmissionMessage(byte[] payload)
+    {
+        if (AdmissionCodec.TryDecode(payload, out var message, out var why) is false)
+        {
+            _log.Debug($"Message d'admission illisible : {why}");
+            return;
+        }
+
+        var host = _host;
+        var candidate = _candidate;
+
+        switch (message)
+        {
+            case AdmissionRequest request when host is not null:
+                // L'adaptateur, et lui seul, tire l'empreinte du nom : l'hôte
+                // s'en sert pour les bannissements par personnage.
+                var fingerprint = PlayerFingerprint.Of(DalamudObjectSource.Normalize(request.CharacterName), request.WorldId);
+                SendAnswers(host.OnRequest(request, fingerprint));
+                break;
+
+            case AdmissionProof proof when host is not null:
+                SendAnswers(host.OnProof(proof));
+                break;
+
+            case AdmissionChallenge challenge when candidate is not null:
+                OnChallenge(candidate, challenge);
+                break;
+
+            case AdmissionWelcome welcome when candidate is not null:
+                if (candidate.OnWelcome(welcome))
+                    _log.Information("Admission : bienvenue reçue.");
+
+                break;
+
+            case AdmissionRefusal refusal when candidate is not null:
+                candidate.OnRefusal(refusal);
+                break;
+        }
+    }
+
+    /// <summary>Répond à un défi par la preuve, déposée dans la boîte d'admission du code.</summary>
+    private void OnChallenge(AdmissionCandidate candidate, AdmissionChallenge challenge)
+    {
+        var code = candidate.Code;
+        var service = candidate.Service;
+
+        if (candidate.OnChallenge(challenge) is not { } proof)
+        {
+            if (candidate.State is CandidacyState.NeedsPassword)
+                _log.Information("Admission : le groupe demande un mot de passe.");
+
+            return;
+        }
+
+        if (code is not { } ticket || service is not { } at)
+            return;
+
+        var address = GroupDerivation.AdmissionAddress(ticket.ToBytes(), _clock.UtcNow).ToBytes();
+        Detach(() => DepositOnAsync([at], address, proof, CancellationToken.None), "Envoi de la preuve d'admission");
+    }
+
+    /// <summary>Dépose les réponses de l'hôte, hors du fil d'écoute.</summary>
+    private void SendAnswers(IReadOnlyList<AdmissionOutbound> answers)
+    {
+        foreach (var answer in answers)
+            Detach(() => AnswerAsync(answer, CancellationToken.None), "Réponse d'admission");
+    }
+
+    /// <summary>
+    /// Lance un dépôt sans bloquer le fil d'écoute.
+    /// </summary>
+    /// <remarks>
+    /// Attendre ici retiendrait les trames suivantes, dont la réponse d'une
+    /// interrogation de présence en cours, le temps d'un aller-retour réseau.
+    /// </remarks>
+    private void Detach(Func<Task> deposit, string what)
+        => _ = Task.Run(async () =>
+        {
+            try
+            {
+                await deposit().ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                _log.Warning(e, $"{what} en échec.");
+            }
+        });
+
+    private void OnPairMessage(byte[] payload)
     {
         if (PairRequestMessage.TryDecode(payload, out var message, out var why) is false)
         {

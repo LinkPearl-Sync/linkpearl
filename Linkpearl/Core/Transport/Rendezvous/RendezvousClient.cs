@@ -197,6 +197,15 @@ public sealed class RendezvousClient : IAsyncDisposable
                             RendezvousWire.TryReadPresence(frame, out var present) ? present : null);
                         break;
 
+                    // Le service répond « destinataire absent » à un dépôt vers
+                    // une boîte que personne ne tient ouverte. Personne n'attend
+                    // cette réponse : les redépôts d'admission, qui visent une
+                    // boîte souvent fermée faute de membre en ligne, la rendent
+                    // fréquente, et la prendre pour la réponse de l'interrogation
+                    // en cours faisait passer celle-ci pour « sans réponse ».
+                    case RendezvousKind.Error when IsAbsentRecipient(frame):
+                        break;
+
                     case RendezvousKind.Error:
                         Interlocked.Exchange(ref _presenceWaiter, null)?.TrySetResult(null);
                         break;
@@ -212,6 +221,13 @@ public sealed class RendezvousClient : IAsyncDisposable
             Interlocked.Exchange(ref _presenceWaiter, null)?.TrySetResult(null);
         }
     }
+
+    /// <summary>Le texte exact que le service renvoie pour un dépôt sans destinataire.</summary>
+    private const string AbsentRecipient = "destinataire absent";
+
+    private static bool IsAbsentRecipient(byte[] frame)
+        => frame is [RendezvousKind.Error, .. var reason]
+           && System.Text.Encoding.UTF8.GetString(reason) == AbsentRecipient;
 
     /// <summary>Dépose une invitation, que le rendez-vous rendra une seule fois.</summary>
     public async Task<string?> RegisterInvitationAsync(
