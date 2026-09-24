@@ -24,6 +24,15 @@ public static class GroupPolicyRules
 
         var candidate = decoded!;
 
+        // Avant toute vérification de signature : une clé de groupe qui ne
+        // produit pas l'identifiant attendu n'a aucune raison qu'on lui prête
+        // la moindre autorité sur cette politique.
+        if (GroupId.Of(groupKey) != expected)
+        {
+            rejection = "clé de groupe qui ne donne pas cet identifiant";
+            return false;
+        }
+
         if (candidate.Group != expected || candidate.Attestation.Group != expected)
         {
             rejection = "politique d'un autre groupe";
@@ -65,33 +74,29 @@ public static class GroupPolicyRules
                 }
             }
 
-            var owner = PeerId.Of(CryptoPrimitives.Decompress(candidate.Attestation.Owner));
+            // Le propriétaire-membre et chaque modérateur attesté sont
+            // protégés d'un bannissement par clé, quel que soit le
+            // signataire : pour écarter un modérateur, il faut d'abord le
+            // retirer des modérateurs (tâche 4), pas le bannir sous
+            // l'attestation qui l'y nomme encore.
+            var protectedPeers = new HashSet<PeerId>();
+            protectedPeers.Add(PeerId.Of(CryptoPrimitives.Decompress(candidate.Attestation.Owner)));
 
-            if (candidate.Bans.Any(ban => ban.Peer == owner))
+            foreach (var moderator in candidate.Attestation.Moderators)
+                protectedPeers.Add(PeerId.Of(CryptoPrimitives.Decompress(moderator)));
+
+            if (candidate.Bans.Any(ban => ban.Peer is { } peer && protectedPeers.Contains(peer)))
             {
-                rejection = "politique qui bannit le propriétaire";
+                rejection = "politique qui bannit le propriétaire ou un modérateur";
                 return false;
             }
 
-            if (byOwner is false)
+            // Ce qu'un modérateur ne peut pas faire, même par une politique
+            // bien signée : dissoudre.
+            if (byOwner is false && candidate.Dissolved)
             {
-                // Ce qu'un modérateur ne peut pas faire, même par une politique
-                // bien signée : dissoudre, ou écarter ses pairs.
-                if (candidate.Dissolved)
-                {
-                    rejection = "seul le propriétaire dissout";
-                    return false;
-                }
-
-                var moderators = candidate.Attestation.Moderators
-                    .Select(key => PeerId.Of(CryptoPrimitives.Decompress(key)))
-                    .ToHashSet();
-
-                if (candidate.Bans.Any(ban => ban.Peer is { } peer && moderators.Contains(peer)))
-                {
-                    rejection = "un modérateur ne bannit pas un modérateur";
-                    return false;
-                }
+                rejection = "seul le propriétaire dissout";
+                return false;
             }
         }
         catch (CryptographicException e)
@@ -109,15 +114,24 @@ public static class GroupPolicyRules
     /// Vrai si la candidate doit remplacer la politique courante.
     /// </summary>
     /// <remarks>
-    /// L'attestation d'abord : un modérateur retiré garde l'ancienne attestation
-    /// qui le nomme, et pourrait sinon publier une version plus haute sous elle.
-    /// À version égale, la plus petite empreinte de signature l'emporte, pour que
-    /// deux membres qui voient les deux mêmes politiques choisissent la même.
+    /// La dissolution d'abord, et absorbante dans les deux sens : un
+    /// modérateur retiré garde une attestation qui le nomme encore, et
+    /// pourrait sinon ressusciter un groupe dissous en publiant une version
+    /// plus haute non dissoute sous elle. L'attestation ensuite : un
+    /// modérateur retiré garde l'ancienne attestation qui le nomme, et
+    /// pourrait sinon publier une version plus haute sous elle. À version
+    /// égale, le plus petit condensé du <em>contenu</em> signé l'emporte, et
+    /// non de la signature : ECDSA est malléable (s ↔ n−s) et aléatoire à
+    /// chaque signature, donc deux signatures du même contenu ne doivent
+    /// jamais départager. À contenu identique, aucune ne l'emporte.
     /// </remarks>
     public static bool IsNewer(GroupPolicy candidate, GroupPolicy? current)
     {
         if (current is null)
             return true;
+
+        if (candidate.Dissolved != current.Dissolved)
+            return candidate.Dissolved;
 
         if (candidate.Attestation.Version != current.Attestation.Version)
             return candidate.Attestation.Version > current.Attestation.Version;
@@ -125,7 +139,13 @@ public static class GroupPolicyRules
         if (candidate.Version != current.Version)
             return candidate.Version > current.Version;
 
-        return SHA256.HashData(candidate.Signature).AsSpan().SequenceCompareTo(SHA256.HashData(current.Signature)) < 0;
+        var candidateDigest = SHA256.HashData(GroupPolicyCodec.SignedPortion(candidate));
+        var currentDigest = SHA256.HashData(GroupPolicyCodec.SignedPortion(current));
+
+        if (candidateDigest.AsSpan().SequenceEqual(currentDigest))
+            return false;
+
+        return candidateDigest.AsSpan().SequenceCompareTo(currentDigest) < 0;
     }
 }
 

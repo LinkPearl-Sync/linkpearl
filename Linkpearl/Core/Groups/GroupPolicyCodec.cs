@@ -181,6 +181,16 @@ public static class GroupPolicyCodec
             GroupId.FromBytes(group), version, name, code.ToArray(), places, password, bans, dissolved == 1,
             attestation!, signer.ToArray(), signature.ToArray());
 
+        // Une seule forme d'octets par politique : RendezvousAddress.TryParse
+        // normalise (un port par défaut explicite disparaît), donc sans ce
+        // contrôle, plusieurs trames distinctes décoderaient vers la même
+        // politique, ce qu'aucune signature ne peut distinguer côté récepteur.
+        if (Encode(policy).AsSpan().SequenceEqual(encoded) is false)
+        {
+            policy = null;
+            return Refuse("politique non canonique", out rejection);
+        }
+
         rejection = null;
         return true;
     }

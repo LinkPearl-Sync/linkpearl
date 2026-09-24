@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Linkpearl.Core.Abstractions;
+using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Transport.Rendezvous;
 
@@ -55,8 +57,56 @@ public sealed record GroupPolicy(
     string Password, IReadOnlyList<GroupBan> Bans, bool Dissolved, GroupAttestation Attestation,
     byte[] Signer, byte[] Signature)
 {
+    private HashSet<PeerId>? _protected;
+
+    /// <summary>
+    /// Un pair protégé n'est jamais tenu pour banni, même par une empreinte de
+    /// personnage qui le viserait : sans cela, quiconque connaît le personnage
+    /// d'un modérateur pourrait l'écarter par un simple bannissement par
+    /// empreinte, que <see cref="GroupPolicyRules.TryAccept"/> n'a aucune raison
+    /// de refuser puisqu'il ne cible aucune clé.
+    /// </summary>
     public bool IsBanned(PeerId? peer, PlayerFingerprint? fingerprint)
-        => Bans.Any(ban => ban.Matches(peer, fingerprint));
+    {
+        if (peer is { } known && IsProtected(known))
+            return false;
+
+        return Bans.Any(ban => ban.Matches(peer, fingerprint));
+    }
+
+    /// <summary>Vrai si la clé appartient au propriétaire-membre ou à un modérateur attesté.</summary>
+    public bool IsProtected(PeerId peer) => Protected.Contains(peer);
+
+    // Champ calculé paresseusement, jamais dans le contrat d'égalité d'un
+    // record positionnel : course bénigne acceptée si deux threads le
+    // recalculent en même temps, le résultat est le même.
+    private HashSet<PeerId> Protected => _protected ??= ComputeProtected();
+
+    private HashSet<PeerId> ComputeProtected()
+    {
+        var protectedPeers = new HashSet<PeerId>();
+
+        AddIfDecodable(protectedPeers, Attestation.Owner);
+
+        foreach (var moderator in Attestation.Moderators)
+            AddIfDecodable(protectedPeers, moderator);
+
+        return protectedPeers;
+    }
+
+    private static void AddIfDecodable(HashSet<PeerId> peers, byte[] compressedKey)
+    {
+        try
+        {
+            peers.Add(PeerId.Of(CryptoPrimitives.Decompress(compressedKey)));
+        }
+        catch (CryptographicException)
+        {
+            // Une politique seulement décodée, pas encore acceptée, peut porter
+            // une clé mal formée : ignorer plutôt que lever, TryAccept la
+            // rejettera de toute façon avant qu'on s'y fie.
+        }
+    }
 
     public bool IsModerator(ReadOnlySpan<byte> compressedKey)
     {

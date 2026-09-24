@@ -119,10 +119,11 @@ public sealed class GroupPolicyTests : IDisposable
     }
 
     [Fact]
-    public void Personne_ne_bannit_le_proprietaire_mais_il_peut_bannir_un_moderateur()
+    public void Personne_ne_bannit_par_cle_le_proprietaire_ni_un_moderateur()
     {
         Assert.False(Accepts(PolicyFixture.Policy(_group, Attested(), _group, bans: [new GroupBan(PeerOf(_owner), null)]), out _));
-        Assert.True(Accepts(PolicyFixture.Policy(_group, Attested(), _group, bans: [new GroupBan(PeerOf(_moderator), null)]), out var why), why);
+        Assert.False(Accepts(PolicyFixture.Policy(_group, Attested(), _group, bans: [new GroupBan(PeerOf(_moderator), null)]), out _));
+        Assert.True(Accepts(PolicyFixture.Policy(_group, Attested(), _group, bans: [new GroupBan(PeerOf(_stranger), null)]), out var why), why);
     }
 
     [Fact]
@@ -181,5 +182,77 @@ public sealed class GroupPolicyTests : IDisposable
         var b = PolicyFixture.Policy(_group, Attested(), _moderator, version: 7, name: "Beta");
         Assert.NotEqual(GroupPolicyRules.IsNewer(a, b), GroupPolicyRules.IsNewer(b, a));
         Assert.False(GroupPolicyRules.IsNewer(a, a));
+    }
+
+    [Fact]
+    public void Une_dissolution_l_emporte_toujours_sur_une_version_plus_haute()
+    {
+        var dissolved = PolicyFixture.Policy(_group, Attested(), _group, version: 1, dissolved: true);
+        var higherNotDissolved = PolicyFixture.Policy(_group, Attested(), _group, version: 99, dissolved: false);
+
+        Assert.False(GroupPolicyRules.IsNewer(higherNotDissolved, dissolved));
+        Assert.True(GroupPolicyRules.IsNewer(dissolved, higherNotDissolved));
+    }
+
+    [Fact]
+    public void Un_moderateur_reste_protege_meme_banni_par_empreinte_seule()
+    {
+        var fingerprint = PlayerFingerprint.Of("alt-du-moderateur", 21);
+        var policy = PolicyFixture.Policy(_group, Attested(), _group, bans: [new GroupBan(null, fingerprint)]);
+
+        Assert.True(Accepts(policy, out var why), why);
+        Assert.False(policy.IsBanned(PeerOf(_moderator), fingerprint));
+        Assert.True(policy.IsBanned(null, fingerprint));
+    }
+
+    [Fact]
+    public void Deux_signatures_du_meme_contenu_ne_departagent_pas()
+    {
+        var unsigned = new GroupPolicy(
+            Id, 3, "Compagnie", [1, 2, 3, 4, 5, 6], [PolicyFixture.Service], "lune", [], false, Attested(), [], []);
+
+        var a = GroupPolicySigning.Sign(unsigned, _group);
+        var b = GroupPolicySigning.Sign(unsigned, _group);
+
+        Assert.NotEqual(a.Signature, b.Signature);
+        Assert.False(GroupPolicyRules.IsNewer(a, b));
+        Assert.False(GroupPolicyRules.IsNewer(b, a));
+    }
+
+    [Fact]
+    public void Un_encodage_non_canonique_est_refuse()
+    {
+        var canonicalPolicy = new GroupPolicy(
+            Id, 1, "Compagnie", [1, 2, 3, 4, 5, 6], [new RendezvousAddress("rdv.exemple.ch", 47900)], "lune",
+            [], false, Attested(), [], []);
+        var encoded = GroupPolicyCodec.Encode(GroupPolicySigning.Sign(canonicalPolicy, _group));
+
+        // Repère l'adresse encodée : format (1) + groupe (16) + version (8) + nom (1 + 9, « Compagnie »)
+        // + code (6) + n (1). Le service canonique tient dans « rdv.exemple.ch », sans port explicite.
+        var addressLengthOffset = 1 + GroupId.SizeInBytes + 8 + (1 + 9) + 6 + 1;
+        var addressLength = encoded[addressLengthOffset];
+        var addressText = System.Text.Encoding.UTF8.GetString(encoded, addressLengthOffset + 1, addressLength);
+        Assert.Equal("rdv.exemple.ch", addressText);
+
+        var explicitPort = System.Text.Encoding.UTF8.GetBytes("rdv.exemple.ch:47900");
+        var mutated = new byte[encoded.Length + (explicitPort.Length - addressLength)];
+
+        encoded.AsSpan(0, addressLengthOffset).CopyTo(mutated);
+        mutated[addressLengthOffset] = checked((byte)explicitPort.Length);
+        explicitPort.CopyTo(mutated.AsSpan(addressLengthOffset + 1));
+        encoded.AsSpan(addressLengthOffset + 1 + addressLength).CopyTo(mutated.AsSpan(addressLengthOffset + 1 + explicitPort.Length));
+
+        Assert.False(GroupPolicyCodec.TryDecode(mutated, out _, out var why));
+        Assert.Equal("politique non canonique", why);
+    }
+
+    [Fact]
+    public void Une_cle_de_groupe_qui_ne_donne_pas_l_identifiant_attendu_est_refusee()
+    {
+        using var other = CryptoPrimitives.GenerateIdentity();
+        var encoded = GroupPolicyCodec.Encode(PolicyFixture.Policy(_group, Attested(), _group));
+
+        Assert.False(GroupPolicyRules.TryAccept(encoded, Id, PolicyFixture.Compressed(other), out _, out var why));
+        Assert.Equal("clé de groupe qui ne donne pas cet identifiant", why);
     }
 }
