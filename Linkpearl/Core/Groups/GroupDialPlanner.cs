@@ -35,8 +35,21 @@ public sealed class GroupDialPlanner(IClock clock)
         PlayerFingerprint ours,
         IReadOnlyList<GroupSighting> sightings,
         IReadOnlyList<GroupRecord> groups,
-        IEnumerable<PlayerFingerprint> directlyPaired)
+        IEnumerable<PlayerFingerprint> directlyPaired,
+        IServiceBans? bans = null)
     {
+        // Un listé ne se compose nulle part. Un verdict en attente ne retient
+        // que le Public : ses membres sont des inconnus, alors qu'un groupe
+        // privé réunit des gens admis. Voir la décision 3 du plan de l'incrément 3.
+        bool Excluded(GroupRecord group, PlayerFingerprint member)
+        {
+            var status = bans?.Status(member) ?? ServiceBanStatus.Clear;
+
+            return group.Refuses(group.Members.GetValueOrDefault(member)?.Id, member)
+                   || status.Verdict is BanVerdict.Listed
+                   || (status.Verdict is BanVerdict.Pending && group.IsPublic);
+        }
+
         var byId = groups.ToDictionary(group => group.Id);
         var now = clock.UtcNow;
 
@@ -50,9 +63,7 @@ public sealed class GroupDialPlanner(IClock clock)
         foreach (var seen in sightings
                      .Where(sighting => sighting.Member != ours
                                         && byId.TryGetValue(sighting.Group, out var group)
-                                        && group.Policy?.IsBanned(
-                                               group.Members.GetValueOrDefault(sighting.Member)?.Id, sighting.Member)
-                                           is not true)
+                                        && Excluded(group, sighting.Member) is false)
                      .GroupBy(sighting => sighting.Member))
         {
             var chosen = seen.MinBy(sighting => sighting.Group)!;
@@ -66,7 +77,7 @@ public sealed class GroupDialPlanner(IClock clock)
         foreach (var (member, entry) in _recent.ToList())
             if (now - entry.Seen > Linger
                 || byId.TryGetValue(entry.Group, out var group) is false
-                || group.Policy?.IsBanned(group.Members.GetValueOrDefault(member)?.Id, member) is true)
+                || Excluded(group, member))
                 _recent.Remove(member);
 
         // Une paire du carnet l'emporte toujours. Le carnet entier, retraits

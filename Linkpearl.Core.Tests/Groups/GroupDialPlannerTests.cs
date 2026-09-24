@@ -148,4 +148,60 @@ public sealed class GroupDialPlannerTests
         Assert.Equal(GroupDialPlanner.MaxSessions, planned.Count);
         Assert.DoesNotContain(planned, pair => pair.PinnedFingerprint == early);
     }
+
+    private sealed class FixedBans(Dictionary<PlayerFingerprint, BanVerdict> verdicts) : IServiceBans
+    {
+        public ServiceBanStatus Status(PlayerFingerprint player)
+            => verdicts.TryGetValue(player, out var verdict)
+                ? new ServiceBanStatus(verdict, verdict is BanVerdict.Listed ? new ServiceBan(PublicGroupTests.Service, "triche") : null)
+                : ServiceBanStatus.Clear;
+    }
+
+    [Fact]
+    public void Un_joueur_liste_par_un_service_n_est_jamais_compose()
+    {
+        var group = Group(Secret);
+
+        Assert.Empty(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(group.Id, Bob, "Bob")], [group], [],
+            new FixedBans(new() { [Bob] = BanVerdict.Listed })));
+    }
+
+    [Fact]
+    public void Un_joueur_liste_en_cours_de_route_perd_sa_place()
+    {
+        var group = Group(Secret);
+        var planner = new GroupDialPlanner(_clock);
+        Assert.Single(planner.Plan(Alice, [new GroupSighting(group.Id, Bob, "Bob")], [group], []));
+
+        Assert.Empty(planner.Plan(Alice, [], [group], [], new FixedBans(new() { [Bob] = BanVerdict.Listed })));
+    }
+
+    [Fact]
+    public void En_attente_de_verdict_Public_attend_mais_un_groupe_prive_compose()
+    {
+        var prive = Group(Secret);
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow);
+        var bans = new FixedBans(new() { [Bob] = BanVerdict.Pending });
+
+        Assert.Empty(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(@public.Id, Bob, "Bob")], [@public], [], bans));
+        Assert.Single(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(prive.Id, Bob, "Bob")], [prive], [], bans));
+    }
+
+    [Fact]
+    public void Un_membre_bloque_n_est_pas_compose()
+    {
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow) with { Blocked = [new GroupBan(null, Bob)] };
+
+        Assert.Empty(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(@public.Id, Bob, "Bob")], [@public], []));
+    }
+
+    [Fact]
+    public void Un_membre_du_Public_arrive_effets_coupes()
+    {
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow);
+
+        var planned = Assert.Single(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(@public.Id, Bob, "Bob")], [@public], []));
+
+        Assert.Equal(TransientCategories.None, planned.Receive);
+    }
 }

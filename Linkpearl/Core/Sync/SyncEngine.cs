@@ -165,6 +165,9 @@ public sealed class SyncEngine : IAsyncDisposable
     private readonly IGroupGate? _groups;
     private readonly IGroupPolicies? _policies;
 
+    /// <summary>Les listes des services : rien ne se pose sur un personnage listé.</summary>
+    private readonly IServiceBans? _bans;
+
     /// <summary>
     /// Les pairs de groupe voulus, remplacés d'un bloc par le fil de rafraîchissement.
     /// </summary>
@@ -200,8 +203,10 @@ public sealed class SyncEngine : IAsyncDisposable
     public SyncEngine(
         PairBook book, IPeerDialer dialer, ILocalAppearance local, IRemoteApplicator applicator,
         IBlobStore store, PeerId ourId, ECDsa identity, IClock clock, ILogSink log,
-        SyncEngineSettings? settings = null, Quotas? quotas = null, IGroupGate? groups = null, IGroupPolicies? policies = null)
+        SyncEngineSettings? settings = null, Quotas? quotas = null, IGroupGate? groups = null, IGroupPolicies? policies = null,
+        IServiceBans? bans = null)
     {
+        _bans = bans;
         _book = book;
         _dialer = dialer;
         _local = local;
@@ -820,6 +825,12 @@ public sealed class SyncEngine : IAsyncDisposable
                 continue;
 
             if (runtime.Pair.Permissions.HasFlag(PairPermissions.ReceiveAppearance) is false)
+                continue;
+
+            // Listé par un service actif : rien de posé, paire directe
+            // comprise. Absent d'« announced », il sort du champ pour la suite,
+            // et ce qui était posé se retire par le chemin ordinaire.
+            if (_bans?.Status(fingerprint).Verdict is BanVerdict.Listed)
                 continue;
 
             if (runtime.Pair.PinnedFingerprint is { } pinned)

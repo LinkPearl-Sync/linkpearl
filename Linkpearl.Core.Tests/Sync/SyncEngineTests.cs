@@ -928,7 +928,48 @@ public sealed class SyncEngineTests : IDisposable
 
     private const string IdlePath = "chara/human/c0101/animation/a0001/bt_common/resident/idle.pap";
 
-    private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null, bool withAnimation = false)
+    private sealed class SwitchableBans : IServiceBans
+    {
+        public volatile bool Listed;
+
+        public ServiceBanStatus Status(PlayerFingerprint player)
+            => Listed
+                ? new ServiceBanStatus(BanVerdict.Listed, new ServiceBan(new RendezvousAddress("rdv.exemple.ch", 47900), "triche"))
+                : ServiceBanStatus.Clear;
+    }
+
+    [Fact]
+    public async Task Une_paire_listee_perd_son_apparence()
+    {
+        var bans = new SwitchableBans();
+        await using var world = await TwoEnginesAsync(bobBans: bans);
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees),
+            "l'apparence n'a jamais été posée : " + world.Describe());
+
+        bans.Listed = true;
+
+        // Listée par un service actif, même une paire directe perd son apparence.
+        Assert.True(
+            await world.SettleAsync(() => world.BobApplicator.Removed.Count > 0, [], sees),
+            "l'apparence est restée");
+    }
+
+    [Fact]
+    public async Task Rien_n_est_pose_sur_un_liste()
+    {
+        var bans = new SwitchableBans { Listed = true };
+        await using var world = await TwoEnginesAsync(bobBans: bans);
+
+        IReadOnlyList<VisiblePlayer> sees = [new VisiblePlayer(new GameObjectRef(4, 100), AlicePrint)];
+
+        Assert.False(await world.SettleAsync(() => world.BobApplicator.Applied.Count > 0, [], sees, rounds: 300));
+    }
+
+    private async Task<TwoEngines> TwoEnginesAsync(PlayerFingerprint? pinOnBob = null, bool withAnimation = false, IServiceBans? bobBans = null)
     {
         var alice = CryptoPrimitives.GenerateIdentity();
         var bob = CryptoPrimitives.GenerateIdentity();
@@ -992,7 +1033,7 @@ public sealed class SyncEngineTests : IDisposable
 
         var bobEngine = new SyncEngine(
             bobBook, new MeetingDialer(point), new FixedAppearance(null, BobPrint), bobApplicator,
-            bobStore, bobId, bob, _clock, bobLog);
+            bobStore, bobId, bob, _clock, bobLog, bans: bobBans);
 
         return new TwoEngines(
             aliceEngine, bobEngine, bobBook, bobApplicator, bobStore, aliceId, hash, content.Length,
@@ -1027,9 +1068,9 @@ public sealed class SyncEngineTests : IDisposable
 
         /// <summary>Fait tourner les deux moteurs jusqu'à ce que la condition tienne.</summary>
         public async Task<bool> SettleAsync(
-            Func<bool> done, IReadOnlyList<VisiblePlayer> aliceSees, IReadOnlyList<VisiblePlayer> bobSees)
+            Func<bool> done, IReadOnlyList<VisiblePlayer> aliceSees, IReadOnlyList<VisiblePlayer> bobSees, int rounds = 2000)
         {
-            for (var i = 0; i < 2000; i++)
+            for (var i = 0; i < rounds; i++)
             {
                 await TickAsync(aliceSees, bobSees);
 
