@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Cache;
+using Linkpearl.Core.Groups;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Manifest;
 using Linkpearl.Core.Protocol;
@@ -160,6 +161,17 @@ public sealed class SyncEngine : IAsyncDisposable
     private readonly Lock _receiveGate = new();
     private TransientCategories _globalReceive;
 
+    private readonly IGroupGate? _groups;
+
+    /// <summary>
+    /// Les pairs de groupe voulus, remplacés d'un bloc par le fil de rafraîchissement.
+    /// </summary>
+    /// <remarks>
+    /// Une liste immuable échangée par référence : le tic la lit une fois et
+    /// travaille sur sa copie, sans verrou et sans voir une liste à moitié écrite.
+    /// </remarks>
+    private volatile IReadOnlyList<PairRecord> _groupPeers = [];
+
     private readonly Dictionary<PeerId, Runtime> _runtimes = [];
     private readonly CancellationTokenSource _life = new();
 
@@ -186,7 +198,7 @@ public sealed class SyncEngine : IAsyncDisposable
     public SyncEngine(
         PairBook book, IPeerDialer dialer, ILocalAppearance local, IRemoteApplicator applicator,
         IBlobStore store, PeerId ourId, ECDsa identity, IClock clock, ILogSink log,
-        SyncEngineSettings? settings = null, Quotas? quotas = null)
+        SyncEngineSettings? settings = null, Quotas? quotas = null, IGroupGate? groups = null)
     {
         _book = book;
         _dialer = dialer;
@@ -201,6 +213,7 @@ public sealed class SyncEngine : IAsyncDisposable
         _globalReceive = _settings.Receive;
         _uploadLimited = _settings.LimitUpload;
         _quotas = quotas ?? Quotas.Default;
+        _groups = groups;
     }
 
     /// <summary>
@@ -314,6 +327,19 @@ public sealed class SyncEngine : IAsyncDisposable
     /// <summary>Embraye ou débraye le limiteur d'envoi, sessions ouvertes comprises.</summary>
     public void SetUploadLimited(bool limited) => _uploadLimited = limited;
 
+    /// <summary>Les membres de groupe à joindre, tels que le planificateur les voit.</summary>
+    public void SetGroupPeers(IReadOnlyList<PairRecord> peers) => _groupPeers = peers;
+
+    /// <summary>
+    /// Vrai si un avis de retrait de ce pair doit le retirer.
+    /// </summary>
+    /// <remarks>
+    /// Un pair de groupe n'est pas dans notre carnet : son avis ne peut viser
+    /// qu'une paire qu'il croit avoir avec nous, et qui n'existe pas ici. Le
+    /// suivre dirait « a mis fin au pairage » à propos d'un groupe.
+    /// </remarks>
+    internal static bool EndsOnUnpair(PairRecord pair) => pair.Group is null;
+
     /// <summary>Change ce qu'on accepte de tous ; les apparences posées suivent au tic suivant.</summary>
     public void SetGlobalReceive(TransientCategories receive)
     {
@@ -403,8 +429,12 @@ public sealed class SyncEngine : IAsyncDisposable
 
     private async Task ReconcileBookAsync(CancellationToken ct)
     {
-        // Un pair retiré se joint encore, le temps de le lui dire.
+        // Un pair retiré se joint encore, le temps de le lui dire. Les membres
+        // de groupe viennent en plus, sans jamais masquer une entrée du carnet.
         var active = _book.Active.Concat(_book.Revoked).ToDictionary(pair => pair.Id);
+
+        foreach (var member in _groupPeers)
+            active.TryAdd(member.Id, member);
 
         foreach (var (id, runtime) in _runtimes.ToList())
         {
@@ -658,7 +688,7 @@ public sealed class SyncEngine : IAsyncDisposable
 
         // En cas de refus, la session a déjà refermé le lien : rien à libérer ici.
         var session = await PeerSession
-            .EstablishAsync(attempt.Link, pair, _ourId, _identity, _clock, _log, ct)
+            .EstablishAsync(attempt.Link, pair, _ourId, _identity, _clock, _log, ct, _groups)
             .ConfigureAwait(false);
 
         return session is null
@@ -902,7 +932,9 @@ public sealed class SyncEngine : IAsyncDisposable
                 // l'écran, pas ce fil-ci.
                 if (message.Kind == MessageKind.Unpair)
                 {
-                    runtime.EndedByPeer = true;
+                    if (EndsOnUnpair(runtime.Pair))
+                        runtime.EndedByPeer = true;
+
                     continue;
                 }
 
