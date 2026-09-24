@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://linkpearl-sync.github.io/">linkpearl-sync.github.io</a>
+  <a href="https://linkpearl-sync.github.io/">linkpearl-sync.github.io</a> · <a href="https://github.com/orgs/LinkPearl-Sync/projects/3">Feuille de route</a>
 </p>
 
 <p align="center">

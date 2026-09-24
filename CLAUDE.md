@@ -41,6 +41,12 @@ l'adresse donnée aux joueurs. Le `repo.json` d'ici reste celui qui fait foi : l
 l'écrit, puis relance le site qui en reprend une copie. Ne jamais le supprimer ni le déplacer :
 les premiers joueurs ont l'ancienne adresse `raw.githubusercontent.com` dans leur Dalamud.
 
+La feuille de route publique est le projet GitHub
+[LinkPearl-Sync/projects/3](https://github.com/orgs/LinkPearl-Sync/projects/3) : une issue par
+élément, label `roadmap`, titre en anglais, corps en anglais puis en français, et une colonne
+Exploring, Planned, In progress ou Done. Quand un travail commence ou se livre, déplacer sa carte
+et fermer l'issue à la publication : c'est là que les joueurs suivent ce qui arrive.
+
 `README.md` (anglais) et `README.fr.md` disent la même chose : toucher à l'un oblige à
 reporter dans l'autre. L'interface du plugin n'existe qu'en français, donc le README anglais
 cite chaque libellé tel qu'il apparaît en jeu, suivi de sa traduction. Le site renvoie à
