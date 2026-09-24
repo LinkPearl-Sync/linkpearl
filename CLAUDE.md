@@ -18,7 +18,8 @@ spec prévoyait.
 
 ## Le serveur vit ailleurs
 
-Le service de rendez-vous est dans [linkpearl-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-rendezvous).
+Le service de rendez-vous est dans [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous),
+cloné à côté de celui-ci : `~/Projects/linkpearl-sync/plugin` et `~/Projects/linkpearl-sync/rendezvous`.
 Il porte une copie littérale de cinq fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
 `Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Transport/Rendezvous/RendezvousAddress.cs`,
 `Core/Abstractions/IClock.cs` et `Core/Safety/BanList.cs`.

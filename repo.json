@@ -8,7 +8,7 @@
     "Description": "Synchronise votre apparence moddée avec les personnes que vous avez explicitement appairées, en pair à pair. Les fichiers passent directement d'un joueur à l'autre, chiffrés de bout en bout : aucun serveur ne les stocke ni ne les redistribue.",
     "Punchline": "Voyez les mods de vos proches, sans serveur au milieu.",
     "ApplicableVersion": "any",
-    "RepoUrl": "https://github.com/LinkPearl-Sync/linkpearl",
+    "RepoUrl": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin",
     "Tags": [
       "penumbra",
       "glamourer",
@@ -20,10 +20,10 @@
     "AcceptsFeedback": true,
     "DownloadCount": 0,
     "LastUpdate": 1790188970,
-    "IconUrl": "https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl/main/Plugin_Logo.png",
-    "DownloadLinkInstall": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.2.2/LinkpearlSync.zip",
-    "DownloadLinkUpdate": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.2.2/LinkpearlSync.zip",
-    "DownloadLinkTesting": "https://github.com/LinkPearl-Sync/linkpearl/releases/download/v0.2.2/LinkpearlSync.zip",
+    "IconUrl": "https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl-sync-plugin/main/Plugin_Logo.png",
+    "DownloadLinkInstall": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/releases/download/v0.2.2/LinkpearlSync.zip",
+    "DownloadLinkUpdate": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/releases/download/v0.2.2/LinkpearlSync.zip",
+    "DownloadLinkTesting": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin/releases/download/v0.2.2/LinkpearlSync.zip",
     "TestingDalamudApiLevel": 15
   }
 ]
