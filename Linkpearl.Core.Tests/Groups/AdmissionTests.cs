@@ -641,4 +641,23 @@ public sealed class AdmissionTests : IDisposable
 
         Assert.Equal(1, calls);
     }
+
+    [Fact]
+    public void Le_filtre_tourne_hors_du_verrou_de_l_hote()
+    {
+        // Le filtre dérive en PBKDF2 (dixièmes de seconde), et l'interface lit
+        // Pending à chaque image depuis le thread du jeu : sous le verrou, le
+        // jeu gèlerait le temps de la dérivation.
+        AdmissionHost? host = null;
+        var readable = false;
+        (host, _, var created) = Member(refuses: (_, _) =>
+        {
+            readable = Task.Run(() => host!.Pending).Wait(TimeSpan.FromSeconds(2));
+            return false;
+        });
+
+        host.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune")), Candidate);
+
+        Assert.True(readable, "Pending attendait le verrou pris pendant le filtre");
+    }
 }

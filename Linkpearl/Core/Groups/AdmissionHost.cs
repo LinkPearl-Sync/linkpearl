@@ -126,6 +126,20 @@ public sealed class AdmissionHost(
 
     public IReadOnlyList<AdmissionOutbound> OnRequest(AdmissionRequest request, PlayerFingerprint candidate)
     {
+        // Le filtre des services dérive en PBKDF2, des dixièmes de seconde :
+        // il ne tourne jamais sous notre verrou, que l'interface prend à chaque
+        // image depuis le thread du jeu. Une première passe dit s'il faut
+        // trancher, le filtre tourne hors du verrou, puis la décision est
+        // rejouée avec le verdict, sur l'état tel qu'il est devenu entre-temps.
+        if (Answer(request, candidate, screened: null) is { } answers)
+            return answers;
+
+        return Answer(request, candidate, refuses!(request, candidate)) ?? [];
+    }
+
+    /// <summary>La décision, ou null s'il faut d'abord consulter le filtre des services.</summary>
+    private IReadOnlyList<AdmissionOutbound>? Answer(AdmissionRequest request, PlayerFingerprint candidate, bool? screened)
+    {
         var group = Admitting(request.Code);
 
         if (group?.Policy is not { } policy)
@@ -173,7 +187,10 @@ public sealed class AdmissionHost(
                 // groupe. Après les plafonds et pour une demande neuve seulement :
                 // le filtre coûte une dérivation, et une inondation de demandes
                 // forgées ne doit pas la payer au-delà de ce que le plafond laisse.
-                if (refuses?.Invoke(request, candidate) is true)
+                if (refuses is not null && screened is null)
+                    return null;
+
+                if (screened is true)
                 {
                     _answered[key] = now;
                     return [];
@@ -203,7 +220,10 @@ public sealed class AdmissionHost(
             // groupe. Après les plafonds et pour une demande neuve seulement :
             // le filtre coûte une dérivation, et une inondation de demandes
             // forgées ne doit pas la payer au-delà de ce que le plafond laisse.
-            if (refuses?.Invoke(request, candidate) is true)
+            if (refuses is not null && screened is null)
+                return null;
+
+            if (screened is true)
             {
                 _answered[key] = now;
                 return [];
