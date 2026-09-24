@@ -144,6 +144,65 @@ En version 1, le matériau était l'aléa seul, en clair : tout service qui voya
 passer le pairage connaissait le secret. Les paires formées avant le
 24 septembre 2026 gardent ce secret-là jusqu'à ce qu'elles se pairent à nouveau.
 
+## Groupes (noyau)
+
+Fichiers : `Core/Groups/GroupId.cs`, `Core/Groups/GroupDerivation.cs`,
+`Core/Groups/GroupBook.cs`, `Integration/GroupStore.cs`.
+
+Un groupe est un secret de 32 octets, partagé entre ses membres. Chaque membre
+ouvre une boîte de présence, dérivée du secret et de son empreinte, renouvelée
+toutes les trente minutes. Le détecteur existant interroge ces boîtes pour les
+joueurs visibles ; un planificateur en transforme les réponses en `PairRecord`
+éphémères, que le moteur compose comme des paires ordinaires. Le handshake
+autorise la session par épinglage de la première clé vue (TOFU), et choisit
+l'initiateur en comparant ordinalement les empreintes en hexadécimal.
+
+**Identifiant de groupe** :
+
+```
+GroupId = SHA-256("linkpearl:group-id:v1" || secret)[0..16]
+```
+
+**Boîte de présence**, fenêtres de trente minutes :
+
+```
+fenetre      = floor(temps / 1800) en secondes Unix
+adresse      = SHA-256("linkpearl:group-presence:v1" || secret (32) || empreinte (16) || fenetre(8))[0..6]
+```
+
+Exemple : secret = octets 0x00 à 0x1f, alice@21 le 2026-09-22 12:00:00 UTC
+(fenêtre 994488), présence = `31e46f1f1b91`.
+
+**Secret de paire de groupe**, déduit du secret et des empreintes des deux
+membres :
+
+```
+sel      = min(empreinte A, empreinte B) || max(empreinte A, empreinte B)
+prk      = HKDF-Extract(sel, ikm = secret du groupe)
+secret   = HKDF-Expand(prk, "linkpearl:group-pair:v1", 32)
+```
+
+Exemple : alice et bob, secret partagé : `fd0ebba6aa5cd0fa751986531ed267f714904c16f7e47bce559b34d896041672`.
+
+**Identifiant de runtime**, local, jamais transmis :
+
+```
+runtime_id = SHA-256("linkpearl:group-runtime:v1" || secret de paire)[0..16]
+```
+
+Exemple : `31474004ac6d8e2d031c1e3553bd693b`.
+
+**Choix de l'initiateur** : celui des deux dont l'empreinte est ordinalement la
+plus faible en hexadécimal. Les deux côtés voient le même résultat puisqu'ils
+ont les mêmes empreintes.
+
+**Modèle de confiance pour les groupes** : chaque membre peut calculer les
+jetons de tous les autres et des couples. La première clé vue d'un membre est
+épinglée dans le carnet de groupe ; un pair malveillant au pairage peut
+s'intercaler (TOFU), jamais un rendez-vous connu d'après : les jetons et les
+boîtes ne révèlent qu'à qui les calcule. Le service apprend qu'un joueur tient
+une boîte supplémentaire, jamais laquelle ni quel groupe elle porte.
+
 ## Rendez-vous et connexion
 
 Fichiers : `Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Sync/PeerConnector.cs`,

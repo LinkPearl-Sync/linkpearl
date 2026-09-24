@@ -56,7 +56,8 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    synchronisation : un réglage global rapide, et un réglage par pair. Fait le
    23 septembre, voir `superpowers/specs/2026-09-23-transitoires-design.md` ;
    à éprouver en jeu avec la seconde partie de `essais-integrations.md`.
-3. **Les groupes**, plus tard. Ce sont eux qui porteront des codes (point 5).
+3. **Les groupes**, en cours : incrément 1 livré (noyau), voir
+   `superpowers/specs/2026-09-24-groupes-design.md`. Ce sont eux qui porteront des codes (point 5).
 
 ## État des jalons
 
@@ -146,6 +147,14 @@ fois et ne mesure pas le moteur.
   étendu.
 - **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
   rien n'a encore mesuré ce qu'il coûte au processeur.
+- **La commande `/lpgroupe` est temporaire** : elle crée un groupe à la main
+  pour les essais. L'interface de gestion des groupes reste à faire.
+- **Un joueur qui a coupé la détection n'est pas trouvé par ses groupes.** La
+  détection interroge les boîtes de présence ; si elle ne tourne pas, un membre
+  en groupe ne sera pas composé, même si sa boîte répond.
+- **Un service tiers resté à 16 boîtes par session refuse l'ouverture dès huit
+  groupes**, et plus tôt au fil des fenêtres : c'est la limite de
+  `MaxMailboxesPerSession` du rendez-vous. À relever avant la généralisation.
 
 ## Défauts connus, non corrigés
 
