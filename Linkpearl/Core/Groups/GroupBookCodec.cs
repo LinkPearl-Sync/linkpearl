@@ -186,26 +186,32 @@ public static class GroupBookCodec
 
         try
         {
+            var id = dto.Id is { } idHex ? PeerId.FromBytes(Convert.FromHexString(idHex)) : (PeerId?)null;
+
             byte[]? publicKey = null;
 
             if (dto.PublicKey is { } publicKeyHex)
             {
                 var candidate = Convert.FromHexString(publicKeyHex);
 
-                // Une clé complète mal formée ne vaut pas la peine de garder le
-                // membre à moitié : elle ne servira à rien (un modérateur ne se
-                // reconnaît qu'à sa clé exacte), et un membre à moitié rehydraté
-                // vaut moins qu'un membre absent, qu'un futur Admit repeuplera.
-                if (candidate.Length != CryptoPrimitives.PublicPointLength)
-                    return null;
-
-                publicKey = candidate;
+                // Une clé complète incohérente (mauvaise taille, épinglage
+                // absent, ou qui ne redonne pas l'Id épinglé) ne peut pas
+                // servir à nommer un modérateur (tâche 4) : elle attesterait
+                // une clé qui n'est pas celle du membre. Ce n'est pas une
+                // raison de perdre le membre ni son épinglage pour autant :
+                // seule la clé retombe à null, et Admit la recomplétera au
+                // prochain contact avec la vraie clé.
+                if (candidate.Length == CryptoPrimitives.PublicPointLength
+                    && id is { } pinned && PeerId.Of(candidate) == pinned)
+                {
+                    publicKey = candidate;
+                }
             }
 
             return new GroupMember
             {
                 Fingerprint = PlayerFingerprint.FromBytes(Convert.FromHexString(dto.Fingerprint)),
-                Id = dto.Id is { } id ? PeerId.FromBytes(Convert.FromHexString(id)) : null,
+                Id = id,
                 DisplayName = dto.DisplayName,
                 LastSeenAt = dto.LastSeenAt is { } seen ? DateTimeOffset.FromUnixTimeSeconds(seen) : null,
                 Paused = dto.Paused,

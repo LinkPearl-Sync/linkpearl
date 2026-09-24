@@ -109,12 +109,15 @@ public sealed class GroupBookPolicyTests : IDisposable
     [Fact]
     public void Politique_cles_et_membres_survivent_au_codec()
     {
+        var ownerKey = CryptoPrimitives.ExportPublicPoint(_owner);
         var group = Private(PolicyV(4)) with
         {
             SigningKey = _group.ExportPkcs8PrivateKey(),
             Members = new Dictionary<PlayerFingerprint, GroupMember>
             {
-                [Alice] = new() { Fingerprint = Alice, DisplayName = "Alice", PublicKey = CryptoPrimitives.ExportPublicPoint(_owner) },
+                // PublicKey ne survit que cohérente avec l'Id épinglé : voir
+                // Un_id_sans_cle_coherente_perd_sa_cle_mais_garde_le_membre.
+                [Alice] = new() { Fingerprint = Alice, DisplayName = "Alice", Id = PeerId.Of(ownerKey), PublicKey = ownerKey },
             },
         };
 
@@ -124,6 +127,51 @@ public sealed class GroupBookPolicyTests : IDisposable
         Assert.Equal(group.SigningKey, back.SigningKey);
         Assert.Equal(4UL, back.Policy!.Version);
         Assert.Equal(group.Members[Alice].PublicKey, back.Members[Alice].PublicKey);
+    }
+
+    [Fact]
+    public void Un_id_sans_cle_coherente_perd_sa_cle_mais_garde_le_membre()
+    {
+        // Décision du round de correction 1 : une PublicKey incohérente avec
+        // l'Id épinglé (ou présente sans Id) ne doit ni faire disparaître le
+        // membre, ni être attestée comme la sienne. Seule PublicKey retombe
+        // à null ; l'épinglage (Id) reste, et Admit recomplétera la clé au
+        // prochain contact.
+        var pinned = PeerId.Of(CryptoPrimitives.ExportPublicPoint(_owner));
+        var wrongKey = CryptoPrimitives.ExportPublicPoint(_moderator);   // 65 octets, mais d'une autre identité
+
+        var group = Private(PolicyV(1)) with
+        {
+            Members = new Dictionary<PlayerFingerprint, GroupMember>
+            {
+                [Alice] = new() { Fingerprint = Alice, DisplayName = "Alice", Id = pinned, PublicKey = wrongKey },
+            },
+        };
+
+        var back = Assert.Single(GroupBookCodec.Decode(GroupBookCodec.Encode([group])));
+
+        Assert.Null(back.Members[Alice].PublicKey);
+        Assert.Equal(pinned, back.Members[Alice].Id);
+    }
+
+    [Fact]
+    public void Une_cle_de_mauvaise_taille_perd_sa_cle_mais_garde_le_membre()
+    {
+        var pinned = PeerId.Of(CryptoPrimitives.ExportPublicPoint(_owner));
+        var tooShort = CryptoPrimitives.Compress(CryptoPrimitives.ExportPublicPoint(_owner));   // 33 octets, pas 65
+
+        var group = Private(PolicyV(1)) with
+        {
+            Members = new Dictionary<PlayerFingerprint, GroupMember>
+            {
+                [Alice] = new() { Fingerprint = Alice, DisplayName = "Alice", Id = pinned, PublicKey = tooShort },
+            },
+        };
+
+        var back = Assert.Single(GroupBookCodec.Decode(GroupBookCodec.Encode([group])));
+
+        Assert.Null(back.Members[Alice].PublicKey);
+        Assert.Equal(pinned, back.Members[Alice].Id);
     }
 
     [Fact]
