@@ -366,6 +366,13 @@ public static class AdmissionSealing
     /// se retourne que par dictionnaire hors ligne, jamais en lisant le mot de
     /// passe en clair comme avec l'ancien scellement AES-GCM. La taille fixe de
     /// l'étiquette ne trahit pas non plus la longueur du mot de passe.
+    ///
+    /// Le mot de passe est normalisé en NFC avant d'être haché : le candidat
+    /// et le membre peuvent l'avoir saisi ou lu depuis des sources qui ne
+    /// composent pas les caractères de la même façon (par exemple « café » en
+    /// NFC contre NFD), et sans normalisation deux représentations pourtant
+    /// équivalentes du même mot de passe produiraient des étiquettes
+    /// différentes.
     /// </remarks>
     public static byte[] ProofTag(
         ECDiffieHellman ours, ReadOnlySpan<byte> theirEphemeral, ReadOnlySpan<byte> nonce, string password,
@@ -375,7 +382,8 @@ public static class AdmissionSealing
 
         try
         {
-            var passwordDigest = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+            var normalized = password.Normalize(NormalizationForm.FormC);
+            var passwordDigest = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
             byte[] material = [.. associated, .. passwordDigest];
             return HMACSHA256.HashData(key, material);
         }

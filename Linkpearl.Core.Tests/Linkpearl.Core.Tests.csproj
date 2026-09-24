@@ -3,6 +3,18 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
+
+    <!-- Directory.Build.props force InvariantGlobalization pour tout le
+         dépôt, mais ce réglage n'a de sens que pour un exécutable qui
+         démarre son propre hôte CLR : c'est le cas de ce projet de tests,
+         jamais du plugin, chargé comme assembly dans le processus déjà
+         lancé de Dalamud, dont l'hôte gouverne seul la globalisation.
+         Sans cette dérogation, string.Normalize devient un passe-plat
+         silencieux (aucune exception, aucune normalisation) faute des
+         tables Unicode d'ICU, ce qui invaliderait tout test qui vérifie la
+         normalisation NFC d'AdmissionSealing.ProofTag sans jamais le
+         signaler. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>
