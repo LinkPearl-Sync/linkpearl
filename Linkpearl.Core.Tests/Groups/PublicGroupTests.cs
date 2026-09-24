@@ -57,4 +57,110 @@ public sealed class PublicGroupTests
         Assert.True(group.Refuses(key, null));
         Assert.False(group.Refuses(null, PlayerFingerprint.Of("alice", 21)));
     }
+
+    private static readonly PlayerFingerprint Bob = PlayerFingerprint.Of("bob", 21);
+
+    /// <summary>Une clé d'identité neuve à chaque appel, point de 65 octets.</summary>
+    private static byte[] FreshKey()
+    {
+        using var identity = Linkpearl.Core.Crypto.CryptoPrimitives.GenerateIdentity();
+        return Linkpearl.Core.Crypto.CryptoPrimitives.ExportPublicPoint(identity);
+    }
+
+    [Fact]
+    public void Public_dormant_n_est_pas_dans_All()
+    {
+        var book = new GroupBook(_clock);
+
+        book.SetPublic(true, [Service]);
+        Assert.Contains(book.All, group => group.IsPublic);
+
+        book.SetPublic(false, [Service]);
+        Assert.DoesNotContain(book.All, group => group.IsPublic);
+        Assert.True(book.Public!.Dormant);
+        Assert.Null(book.Find(PublicGroup.Id));
+    }
+
+    [Fact]
+    public void Reactiver_retrouve_les_blocages()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+        book.Block(PublicGroup.Id, Bob);
+
+        book.SetPublic(false, [Service]);
+        book.SetPublic(true, [Service]);
+
+        Assert.True(book.Public!.Refuses(null, Bob));
+    }
+
+    [Fact]
+    public void Un_Public_dormant_n_admet_personne()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+        book.SetPublic(false, [Service]);
+
+        Assert.Equal(GroupAdmission.UnknownGroup, book.Admit(PublicGroup.Id, Bob, FreshKey(), "Bob"));
+    }
+
+    [Fact]
+    public void Un_bloque_n_est_pas_admis_et_sa_cle_epinglee_est_bloquee_aussi()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+        var key = FreshKey();
+        Assert.Equal(GroupAdmission.Pinned, book.Admit(PublicGroup.Id, Bob, key, "Bob"));
+
+        book.Block(PublicGroup.Id, Bob);
+
+        Assert.Equal(GroupAdmission.Banned, book.Admit(PublicGroup.Id, Bob, key, "Bob"));
+        Assert.Contains(book.Public!.Blocked, ban => ban.Peer == PeerId.Of(key) && ban.Fingerprint == Bob);
+    }
+
+    [Fact]
+    public void Un_membre_rencontre_suit_le_defaut_jusqu_a_ce_qu_on_le_regle()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+        book.Admit(PublicGroup.Id, Bob, FreshKey(), "Bob");
+
+        Assert.Null(book.Public!.Members[Bob].Receive);
+        Assert.Equal(TransientCategories.None, book.Public.ReceiveOf(book.Public.Members[Bob]));
+
+        book.SetDefaultReceive(PublicGroup.Id, TransientCategories.All);
+        Assert.Equal(TransientCategories.All, book.Public!.ReceiveOf(book.Public.Members[Bob]));
+
+        book.SetReceive(PublicGroup.Id, Bob, TransientCategories.None);
+        Assert.Equal(TransientCategories.None, book.Public!.ReceiveOf(book.Public.Members[Bob]));
+    }
+
+    [Fact]
+    public void Les_services_du_Public_suivent_la_configuration_sans_ecriture_inutile()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+        var writes = 0;
+        book.Changed += () => writes++;
+
+        book.SetPublicServices([Service]);
+        Assert.Equal(0, writes);
+
+        var other = new RendezvousAddress("rdv.autre.ch", 47900);
+        book.SetPublicServices([Service, other]);
+        Assert.Equal(1, writes);
+        Assert.Equal([Service, other], book.Public!.Rendezvous);
+    }
+
+    [Fact]
+    public void Public_ne_prend_pas_la_place_d_un_groupe_prive()
+    {
+        var book = new GroupBook(_clock);
+        book.SetPublic(true, [Service]);
+
+        for (var i = 0; i < GroupBook.MaxGroups; i++)
+            Assert.True(book.TryAdd(GroupBookTests.Group([.. Enumerable.Range(0, 32).Select(b => (byte)(b + i))], _clock.UtcNow), out var why), why);
+
+        Assert.False(book.TryAdd(PublicGroup.Create([Service], _clock.UtcNow), out _));
+    }
 }

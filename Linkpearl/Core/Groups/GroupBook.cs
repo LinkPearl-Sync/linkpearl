@@ -1,6 +1,7 @@
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Safety;
+using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Core.Groups;
 
@@ -86,27 +87,35 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
         get
         {
             lock (_gate)
-                return [.. _groups.Values];
+                return [.. _groups.Values.Where(group => group.Dormant is false)];
         }
     }
 
     public GroupRecord? Find(GroupId id)
     {
         lock (_gate)
-            return _groups.GetValueOrDefault(id);
+            return TryLive(id, out var group) ? group : null;
     }
 
     public bool TryAdd(GroupRecord group, out string? refusal)
     {
         lock (_gate)
         {
+            // Le Public s'active par SetPublic : l'ajouter comme un groupe le
+            // ferait compter dans les dix, et le rendrait impossible à endormir.
+            if (group.IsPublic)
+            {
+                refusal = "le Public s'active, il ne s'ajoute pas";
+                return false;
+            }
+
             if (_groups.ContainsKey(group.Id))
             {
                 refusal = "déjà membre de ce groupe";
                 return false;
             }
 
-            if (_groups.Count >= MaxGroups)
+            if (_groups.Values.Count(known => known.IsPublic is false) >= MaxGroups)
             {
                 refusal = $"au plus {MaxGroups} groupes par personnage";
                 return false;
@@ -140,7 +149,11 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
         {
             _groups.Clear();
 
-            foreach (var group in groups.Take(MaxGroups))
+            var loaded = groups.ToList();
+
+            // Comme le codec : dix groupes privés au plus, et un Public à part.
+            foreach (var group in loaded.Where(group => group.IsPublic is false).Take(MaxGroups)
+                         .Concat(loaded.Where(group => group.IsPublic).Take(1)))
                 _groups[group.Id] = group;
         }
     }
@@ -155,7 +168,7 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
     public byte[]? CurrentPolicy(GroupId id)
     {
         lock (_gate)
-            return _groups.GetValueOrDefault(id)?.Policy is { } policy ? GroupPolicyCodec.Encode(policy) : null;
+            return TryLive(id, out var group) && group.Policy is { } policy ? GroupPolicyCodec.Encode(policy) : null;
     }
 
     /// <summary>
@@ -169,7 +182,7 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
     {
         lock (_gate)
         {
-            if (_groups.TryGetValue(id, out var group) is false)
+            if (TryLive(id, out var group) is false)
                 return PolicyOffer.UnknownGroup;
 
             if (group.OwnerKey is not { } ownerKey)
@@ -217,11 +230,11 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
 
         lock (_gate)
         {
-            if (_groups.TryGetValue(id, out var group) is false)
+            if (TryLive(id, out var group) is false)
                 return GroupAdmission.UnknownGroup;
 
             // Un banni ne laisse aucune trace : ni épinglage, ni dernière vue.
-            if (group.Policy?.IsBanned(key, member) is true)
+            if (group.Refuses(key, member))
                 return GroupAdmission.Banned;
 
             if (group.Members.TryGetValue(member, out var known) && known.Id is { } pinned)
@@ -289,8 +302,101 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
     public void SetPaused(GroupId id, PlayerFingerprint member, bool paused)
         => UpdateMember(id, member, known => known with { Paused = paused });
 
-    public void SetReceive(GroupId id, PlayerFingerprint member, TransientCategories receive)
+    public void SetReceive(GroupId id, PlayerFingerprint member, TransientCategories? receive)
         => UpdateMember(id, member, known => known with { Receive = receive });
+
+    public GroupRecord? Public
+    {
+        get
+        {
+            lock (_gate)
+                return _groups.GetValueOrDefault(PublicGroup.Id);
+        }
+    }
+
+    /// <summary>
+    /// Active ou désactive le Public.
+    /// </summary>
+    /// <remarks>
+    /// Désactivé, il reste au carnet, dormant : ses blocages et ses réglages
+    /// survivent, et on les retrouve en le réactivant.
+    /// </remarks>
+    public void SetPublic(bool enabled, IReadOnlyList<RendezvousAddress> services)
+    {
+        lock (_gate)
+        {
+            _groups[PublicGroup.Id] = _groups.TryGetValue(PublicGroup.Id, out var known)
+                ? known with { Dormant = enabled is false, Rendezvous = services }
+                : PublicGroup.Create(services, clock.UtcNow) with { Dormant = enabled is false };
+        }
+
+        Changed?.Invoke();
+    }
+
+    /// <summary>Les services du Public sont ceux de la configuration, recopiés à chaque ronde.</summary>
+    public void SetPublicServices(IReadOnlyList<RendezvousAddress> services)
+    {
+        lock (_gate)
+        {
+            if (_groups.TryGetValue(PublicGroup.Id, out var known) is false || known.Rendezvous.SequenceEqual(services))
+                return;
+
+            _groups[PublicGroup.Id] = known with { Rendezvous = services };
+        }
+
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Bloque un membre, par son personnage et, s'il est épinglé, par sa clé.
+    /// </summary>
+    /// <remarks>
+    /// Les deux : la clé seule laisserait revenir le même joueur sous une clé
+    /// neuve, le personnage seul le laisserait revenir sous un autre.
+    /// </remarks>
+    public void Block(GroupId id, PlayerFingerprint member)
+    {
+        lock (_gate)
+        {
+            if (_groups.TryGetValue(id, out var group) is false || group.Blocked.Any(ban => ban.Fingerprint == member))
+                return;
+
+            var ban = new GroupBan(group.Members.GetValueOrDefault(member)?.Id, member);
+            _groups[id] = group with { Blocked = [.. group.Blocked, ban] };
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void Unblock(GroupId id, GroupBan ban)
+    {
+        lock (_gate)
+        {
+            if (_groups.TryGetValue(id, out var group) is false)
+                return;
+
+            _groups[id] = group with { Blocked = [.. group.Blocked.Where(known => known != ban)] };
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void SetDefaultReceive(GroupId id, TransientCategories receive)
+    {
+        lock (_gate)
+        {
+            if (_groups.TryGetValue(id, out var group) is false)
+                return;
+
+            _groups[id] = group with { DefaultReceive = receive };
+        }
+
+        Changed?.Invoke();
+    }
+
+    /// <summary>Un groupe vivant : un Public désactivé ne répond à rien.</summary>
+    private bool TryLive(GroupId id, out GroupRecord group)
+        => _groups.TryGetValue(id, out group!) && group.Dormant is false;
 
     bool IGroupGate.Admits(PairRecord pair, byte[] publicKey)
         => pair.Group is { } origin
@@ -301,7 +407,7 @@ public sealed class GroupBook(IClock clock) : IGroupGate, IGroupPolicies
     {
         lock (_gate)
         {
-            if (_groups.TryGetValue(id, out var group) is false
+            if (TryLive(id, out var group) is false
                 || group.Members.TryGetValue(member, out var known) is false)
                 return;
 
