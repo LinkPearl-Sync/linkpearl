@@ -30,6 +30,9 @@ https://linkpearl-sync.github.io/repo.json
 
 Click **+**, then **Save**. Then open `/xlplugins`, search for **Linkpearl Sync** and install it.
 
+> [!IMPORTANT]
+> Version 0.3.0 no longer connects to 0.2.x: you and your friends need to update together.
+
 **Requirements:** [Penumbra](https://github.com/xivdev/Penumbra) and [Glamourer](https://github.com/Ottermandias/Glamourer), installed and enabled.
 
 ---
@@ -42,7 +45,7 @@ You pair with a friend, in game, in two clicks. From then on, each of you sees t
   <img src="docs/images/comment-ca-marche.svg" alt="Two players linked directly by an encrypted connection, with the rendezvous service off to the side" width="608">
 </p>
 
-- **Player to player.** Your files go straight from your game to your friend's, end-to-end encrypted. No server stores or redistributes them.
+- **Player to player.** Your files go straight from your game to your friend's, end-to-end encrypted. No server stores or redistributes them. When a direct connection is impossible, they pass through the rendezvous service's relay, which carries them without being able to read them.
 - **Only with the people you chose.** Nothing is shared unless you both agree.
 - **More than outfits.** Modded animations, visual effects and sounds, plus what Customize+, SimpleHeels, Honorific, Moodles and PetNicknames show.
 
@@ -87,6 +90,7 @@ That's it: your looks are exchanged whenever you are within range of each other.
 </p>
 
 - **Reapply** a look that didn't apply properly: right-click the character, **Linkpearl : réappliquer** (reapply).
+- **Direct or relayed**: on the **Pairs** page, an icon next to each connected peer's name shows whether the session is direct or goes through the relay, with the latency in its tooltip.
 - **Pause a peer**: **Pairs** page, pause button. The connection closes and their look is removed.
 - **Block animations, effects or sounds**: for everyone from the window's title bar, or for a single peer from the **Pairs** page. Nothing you block is downloaded.
 - **The cache**: folder and size in **Réglages > Cache** (Settings > Cache). Past the size you chose, the oldest looks go first, never the ones currently in front of you.
@@ -97,7 +101,7 @@ That's it: your looks are exchanged whenever you are within range of each other.
 ## Privacy
 
 - Your files leave your game only for the peers you accepted, end-to-end encrypted.
-- For two players to find each other, Linkpearl goes through a **rendezvous service**. It sees neither your files, nor your looks, nor your keys, nor your character's name.
+- For two players to find each other, Linkpearl goes through a **rendezvous service**. It never sees your files or your looks. It does see pairing requests go by, with the characters' names and public keys, and the IP addresses of those who use it.
 - If you keep **Me signaler aux autres joueurs** (let other players see me, on by default), the service can know that your character is online: that is what lets others recognise you. You can turn it off in **Réglages > Visibilité** (Settings > Visibility).
 - You can host your own rendezvous service: see the [self-hosting guide](https://linkpearl-sync.github.io/expert.html#self-host). You and your friends just need to share at least one.
 

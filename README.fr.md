@@ -27,6 +27,9 @@ https://linkpearl-sync.github.io/repo.json
 
 Cliquez sur **+**, puis sur **Enregistrer**. Ouvrez ensuite `/xlplugins`, cherchez **Linkpearl Sync** et installez-le.
 
+> [!IMPORTANT]
+> La version 0.3.0 ne se connecte plus aux 0.2.x : vous et vos amis devez mettre à jour ensemble.
+
 **Prérequis :** [Penumbra](https://github.com/xivdev/Penumbra) et [Glamourer](https://github.com/Ottermandias/Glamourer), installés et activés.
 
 ---
@@ -39,7 +42,7 @@ Vous vous pairez avec un ami, en jeu, en deux clics. Dès lors, chacun voit l'au
   <img src="docs/images/comment-ca-marche.svg" alt="Deux joueurs reliés directement par un lien chiffré, le service de rendez-vous à l'écart" width="608">
 </p>
 
-- **De joueur à joueur.** Vos fichiers passent directement de votre jeu à celui de votre ami, chiffrés de bout en bout. Aucun serveur ne les stocke ni ne les redistribue.
+- **De joueur à joueur.** Vos fichiers passent directement de votre jeu à celui de votre ami, chiffrés de bout en bout. Aucun serveur ne les stocke ni ne les redistribue. Quand la connexion directe est impossible, ils passent par le relais du service de rendez-vous, qui les transporte sans pouvoir les lire.
 - **Seulement avec qui vous avez choisi.** Rien ne s'échange sans l'accord des deux.
 - **Au-delà des tenues.** Animations, effets visuels et sons moddés, et ce que montrent Customize+, SimpleHeels, Honorific, Moodles et PetNicknames.
 
@@ -84,6 +87,7 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 </p>
 
 - **Réappliquer** une apparence qui s'est mal posée : clic droit sur le personnage, **Linkpearl : réappliquer**.
+- **Direct ou relayé** : sur la page **Pairs**, une icône à côté du nom de chaque pair connecté indique si la session est directe ou passe par le relais, avec la latence en infobulle.
 - **Mettre un pair en pause** : page **Pairs**, bouton pause. La connexion se ferme et son apparence est retirée.
 - **Bloquer animations, effets ou sons** : pour tout le monde depuis la barre de titre de la fenêtre, ou pour un seul pair depuis la page **Pairs**. Rien n'est téléchargé de ce que vous bloquez.
 - **Le cache** : dossier et taille dans **Réglages > Cache**. Au-delà de la taille choisie, les apparences les plus anciennes partent, jamais celles que vous avez sous les yeux.
@@ -94,7 +98,7 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 ## Vie privée
 
 - Vos fichiers ne quittent votre jeu que vers les pairs que vous avez acceptés, chiffrés de bout en bout.
-- Pour que deux joueurs se trouvent, Linkpearl passe par un **service de rendez-vous**. Il ne voit ni vos fichiers, ni vos apparences, ni vos clés, ni le nom de votre personnage.
+- Pour que deux joueurs se trouvent, Linkpearl passe par un **service de rendez-vous**. Il ne voit jamais vos fichiers ni vos apparences. Il voit en revanche passer les demandes de pairage, avec les noms des personnages et leurs clés publiques, ainsi que les adresses IP de ceux qui l'utilisent.
 - Si vous activez **Me signaler aux autres joueurs** (réglage par défaut), le service peut savoir que votre personnage est en ligne : c'est ce qui permet aux autres de vous reconnaître. Vous pouvez le désactiver dans **Réglages > Visibilité**.
 - Vous pouvez héberger votre propre service de rendez-vous : voir le [guide d'auto-hébergement](https://linkpearl-sync.github.io/expert.html#self-host). Vous et vos amis devez simplement en partager au moins un.
 
