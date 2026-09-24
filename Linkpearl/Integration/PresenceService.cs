@@ -5,6 +5,7 @@ using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Crypto;
 using Linkpearl.Core.Groups;
+using Linkpearl.Core.Safety;
 using Linkpearl.Core.Identity;
 using Linkpearl.Core.Sync;
 using Linkpearl.Core.Transport.Rendezvous;
@@ -253,6 +254,11 @@ public sealed class PresenceService : IDisposable
     }
 
     public void SetGroups(IReadOnlyList<GroupRecord> groups) => _groups = groups;
+
+    /// <summary>Les listes des services, attachées une fois par le plugin.</summary>
+    private volatile ServiceBanBook? _bans;
+
+    public void SetServiceBans(ServiceBanBook bans) => _bans = bans;
 
     /// <summary>Branche l'admission. Appelé une fois par le plugin, avant la première ronde.</summary>
     public void Attach(AdmissionHost host, AdmissionCandidate candidate)
@@ -1133,6 +1139,16 @@ public sealed class PresenceService : IDisposable
                 });
 
             _log.Information($"{message.CharacterName} a accepté notre demande.");
+            return;
+        }
+
+        // Listé par un service actif : la demande est ignorée, comme le veut la
+        // spec. Screen dérive ce qui manque, dans son budget ; au-delà, le
+        // verdict reste en attente et la demande est ignorée aussi.
+        if (_bans?.Screen(sender, (salt, parameters) => BanList.Derive(message.CharacterName, message.WorldId, salt, parameters))
+                .Verdict is BanVerdict.Listed or BanVerdict.Pending)
+        {
+            _log.Information("Demande de pairage ignorée : expéditeur listé par un service, ou vérification impossible pour l'instant.");
             return;
         }
 

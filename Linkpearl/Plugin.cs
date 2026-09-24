@@ -103,6 +103,18 @@ public sealed class Plugin : IDalamudPlugin
     private readonly GroupBook _groups;
     private readonly GroupDialPlanner _groupPlanner;
 
+    /// <summary>Les listes de bannissement des services actifs, appliquées par empreinte.</summary>
+    private readonly ServiceBanBook _serviceBans;
+
+    /// <summary>Télécharge ces listes, à la connexion puis toutes les heures.</summary>
+    private readonly ServiceBanFetcher _banFetcher;
+
+    /// <summary>Dérive, sur le pool, ce qu'il faut pour vérifier les joueurs visibles.</summary>
+    private readonly ServiceBanScreening _banScreening;
+
+    /// <summary>Les services actifs vus à la ronde précédente, pour retélécharger quand ils changent.</summary>
+    private string _lastServices = string.Empty;
+
     /// <summary>Le côté membre de l'admission : défis, validations en attente.</summary>
     private readonly AdmissionHost _admissionHost;
 
@@ -214,7 +226,18 @@ public sealed class Plugin : IDalamudPlugin
         // Les deux côtés de l'admission vivent aussi longtemps que le plugin :
         // ils ne portent pas l'identité, ils la demandent au moment d'agir, et
         // un changement de personnage vide le carnet qu'ils consultent.
-        _admissionHost = new AdmissionHost(_groups, () => _pairing.Identity?.PublicKey, clock);
+        _serviceBans = new ServiceBanBook(clock);
+        _banFetcher = new ServiceBanFetcher(_configuration, _serviceBans, Log);
+        _banScreening = new ServiceBanScreening(_serviceBans, Log);
+        _presence.SetServiceBans(_serviceBans);
+
+        // Un candidat listé par un service actif n'est pas admis. La dérivation
+        // se fait à la demande, dans le budget du livre : voir ServiceBanBook.
+        _admissionHost = new AdmissionHost(
+            _groups, () => _pairing.Identity?.PublicKey, clock,
+            refuses: (request, print) => _serviceBans.Screen(
+                    print, (salt, parameters) => BanList.Derive(request.CharacterName, request.WorldId, salt, parameters))
+                .Verdict is not BanVerdict.Clear);
         _candidate = new AdmissionCandidate(clock);
         _presence.Attach(_admissionHost, _candidate);
         _groupActions = BuildGroupActions();
@@ -387,6 +410,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += Open;
 
         _ = Task.Run(() => RefreshLoopAsync(_shutdown.Token), _shutdown.Token);
+        _banFetcher.Start();
         _ = Task.Run(() => SyncLoopAsync(_shutdown.Token), _shutdown.Token);
 
         Commands.AddHandler(Command, new CommandInfo((_, _) => Open())
@@ -644,7 +668,7 @@ public sealed class Plugin : IDalamudPlugin
                 _clock,
                 new PluginLogSink(Log, "moteur")),
             _appearance, _applicator, _cacheKeeper.Store, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
-            new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups, policies: _groups);
+            new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups, policies: _groups, bans: _serviceBans);
 
         // Le moteur a déjà retiré l'entrée du carnet : il reste à l'écrire, et
         // à dire pourquoi une ligne vient de disparaître de la liste.
@@ -862,6 +886,26 @@ public sealed class Plugin : IDalamudPlugin
                             await _presence.RefreshDetectionAsync(_state.Nearby, ct).ConfigureAwait(false);
                         }
 
+                        // Un service ajouté ou retiré : sa liste ne doit pas
+                        // attendre l'heure pour compter, ou cesser de compter.
+                        var services = string.Join('|', _configuration.ActiveRendezvous.Select(entry => entry.Address));
+
+                        if (services != _lastServices)
+                        {
+                            _lastServices = services;
+                            _banFetcher.RefreshSoon();
+                        }
+
+                        // Les joueurs à vérifier : ceux qui ont le plugin, et les
+                        // paires du carnet, dont l'apparence se pose sans détection.
+                        var pinned = _pairing.Book.All
+                            .Select(pair => pair.PinnedFingerprint)
+                            .OfType<PlayerFingerprint>()
+                            .ToHashSet();
+
+                        _banScreening.Schedule([.. _state.Nearby.Where(player =>
+                            _presence.Detected.ContainsKey(player.Fingerprint) || pinned.Contains(player.Fingerprint))]);
+
                         // À chaque ronde et non seulement quand le champ change :
                         // un membre sorti du champ doit finir par partir, et
                         // c'est le passage du temps qui l'y conduit.
@@ -874,7 +918,7 @@ public sealed class Plugin : IDalamudPlugin
                             .Select(pair => pair.PinnedFingerprint)
                             .OfType<PlayerFingerprint>();
 
-                        _engine?.SetGroupPeers(_groupPlanner.Plan(self.Fingerprint, sightings, _groups.All, directly));
+                        _engine?.SetGroupPeers(_groupPlanner.Plan(self.Fingerprint, sightings, _groups.All, directly, _serviceBans));
                     }
                 }
                 else
@@ -1625,6 +1669,8 @@ public sealed class Plugin : IDalamudPlugin
         Fonts.Dispose();
 
         _selfLoop.Dispose();
+        _banFetcher.Dispose();
+        _banScreening.Dispose();
         _presence.Dispose();
 
         // Après la présence : c'est elle qui leur passe les trames reçues, et
