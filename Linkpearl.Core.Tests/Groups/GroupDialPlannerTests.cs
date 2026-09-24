@@ -249,4 +249,19 @@ public sealed class GroupDialPlannerTests
 
         Assert.Equal(fromAlice.PairSecret, fromBob.PairSecret);
     }
+
+    [Fact]
+    public void Un_verdict_qui_repasse_en_attente_ne_coupe_pas_un_membre_du_Public_deja_compose()
+    {
+        // Une liste qui reçoit sa première entrée remet tout le monde en
+        // attente : couper tout le Public d'un coup ferait clignoter un lieu
+        // entier. En attente refuse une nouvelle composition, pas une en cours.
+        var @public = PublicGroup.Create([PublicGroupTests.Service], _clock.UtcNow);
+        var planner = new GroupDialPlanner(_clock);
+        IReadOnlyList<GroupSighting> seen = [new GroupSighting(@public.Id, Bob, "Bob")];
+
+        Assert.Single(planner.Plan(Alice, seen, [@public], []));
+
+        Assert.Single(planner.Plan(Alice, seen, [@public], [], new FixedBans(new() { [Bob] = BanVerdict.Pending })));
+    }
 }

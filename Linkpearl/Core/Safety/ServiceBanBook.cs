@@ -55,12 +55,12 @@ public interface IServiceBans
 /// </remarks>
 public sealed class ServiceBanBook(IClock clock) : IServiceBans
 {
-    /// <summary>Au-delà, on oublie toutes les dérivations et on recommence.</summary>
+    /// <summary>Au-delà, on oublie les dérivations les plus anciennes.</summary>
     /// <remarks>
     /// Un lieu bondé compte une centaine de joueurs, fois deux ou trois sels :
-    /// 4 096 laisse des heures de passage avant d'oublier. Tout oublier d'un
-    /// coup est plus simple qu'un ordre d'ancienneté, et ne coûte que des
-    /// dérivations refaites en arrière-plan.
+    /// 4 096 laisse des heures de passage avant d'oublier. Les plus anciennes
+    /// d'abord, et non tout d'un coup : tout oublier remettrait chaque joueur
+    /// visible en attente, et ferait tomber d'un coup les sessions du Public.
     /// </remarks>
     public const int MaxRememberedDerivations = 4096;
 
@@ -77,6 +77,9 @@ public sealed class ServiceBanBook(IClock clock) : IServiceBans
     private readonly Dictionary<RendezvousAddress, BanList> _lists = [];
     private readonly Dictionary<(PlayerFingerprint Player, string Key), byte[]> _derived = [];
     private readonly Queue<DateTimeOffset> _onDemand = new();
+
+    /// <summary>L'ordre d'arrivée des dérivations, pour oublier les plus anciennes.</summary>
+    private readonly Queue<(PlayerFingerprint Player, string Key)> _arrivals = new();
 
     /// <summary>Levé hors du verrou quand une liste ou un verdict a pu changer.</summary>
     public event Action? Changed;
@@ -124,8 +127,13 @@ public sealed class ServiceBanBook(IClock clock) : IServiceBans
     {
         lock (_gate)
         {
-            if (_derived.Count >= MaxRememberedDerivations)
-                _derived.Clear();
+            if (_derived.ContainsKey((player, key)) is false)
+            {
+                while (_derived.Count >= MaxRememberedDerivations && _arrivals.TryDequeue(out var oldest))
+                    _derived.Remove(oldest);
+
+                _arrivals.Enqueue((player, key));
+            }
 
             _derived[(player, key)] = derived;
         }

@@ -39,15 +39,18 @@ public sealed class GroupDialPlanner(IClock clock)
         IServiceBans? bans = null)
     {
         // Un listé ne se compose nulle part. Un verdict en attente ne retient
-        // que le Public : ses membres sont des inconnus, alors qu'un groupe
-        // privé réunit des gens admis. Voir la décision 3 du plan de l'incrément 3.
-        bool Excluded(GroupRecord group, PlayerFingerprint member)
+        // que le Public, et seulement pour une composition nouvelle : ses
+        // membres sont des inconnus, alors qu'un groupe privé réunit des gens
+        // admis. Une session en cours ne se coupe pas pour autant, sans quoi
+        // la première entrée d'une liste, qui remet tout le monde en attente,
+        // ferait clignoter tout un lieu. Voir la décision 3 du plan de l'incrément 3.
+        bool Excluded(GroupRecord group, PlayerFingerprint member, bool composing)
         {
             var status = bans?.Status(member) ?? ServiceBanStatus.Clear;
 
             return group.Refuses(group.Members.GetValueOrDefault(member)?.Id, member)
                    || status.Verdict is BanVerdict.Listed
-                   || (status.Verdict is BanVerdict.Pending && group.IsPublic);
+                   || (composing && status.Verdict is BanVerdict.Pending && group.IsPublic);
         }
 
         var byId = groups.ToDictionary(group => group.Id);
@@ -63,7 +66,7 @@ public sealed class GroupDialPlanner(IClock clock)
         foreach (var seen in sightings
                      .Where(sighting => sighting.Member != ours
                                         && byId.TryGetValue(sighting.Group, out var group)
-                                        && Excluded(group, sighting.Member) is false)
+                                        && Excluded(group, sighting.Member, composing: _recent.ContainsKey(sighting.Member) is false) is false)
                      .GroupBy(sighting => sighting.Member))
         {
             // Un groupe privé commun passe avant le Public : l'ami qu'on y
@@ -82,7 +85,7 @@ public sealed class GroupDialPlanner(IClock clock)
         foreach (var (member, entry) in _recent.ToList())
             if (now - entry.Seen > Linger
                 || byId.TryGetValue(entry.Group, out var group) is false
-                || Excluded(group, member))
+                || Excluded(group, member, composing: false))
                 _recent.Remove(member);
 
         // Une paire du carnet l'emporte toujours. Le carnet entier, retraits

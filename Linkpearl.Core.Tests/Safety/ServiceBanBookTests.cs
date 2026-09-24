@@ -142,4 +142,21 @@ public sealed class ServiceBanBookTests
         for (var i = 0; i < ServiceBanBook.MaxOnDemandPerMinute * 2; i++)
             Assert.Equal(BanVerdict.Listed, book.Screen(Mallory, (_, _) => throw new InvalidOperationException("déjà dérivé")).Verdict);
     }
+
+    [Fact]
+    public void Deborder_le_cache_n_oublie_que_les_plus_anciennes_derivations()
+    {
+        // Tout oublier d'un coup remettrait tous les joueurs visibles en attente,
+        // et fermerait d'un coup toutes les sessions du Public.
+        var book = new ServiceBanBook(_clock);
+        book.SetList(One, Listing(SaltOne, ("mallory", "triche")));
+        var key = ServiceBanBook.KeyOf(SaltOne, Cheap);
+
+        for (var i = 0; i <= ServiceBanBook.MaxRememberedDerivations; i++)
+            book.Record(PlayerFingerprint.Of($"joueur{i}", 21), key, new byte[32]);
+
+        Assert.Equal(BanVerdict.Pending, book.Status(PlayerFingerprint.Of("joueur0", 21)).Verdict);
+        Assert.Equal(BanVerdict.Clear, book.Status(PlayerFingerprint.Of("joueur1", 21)).Verdict);
+        Assert.Equal(BanVerdict.Clear, book.Status(PlayerFingerprint.Of($"joueur{ServiceBanBook.MaxRememberedDerivations}", 21)).Verdict);
+    }
 }
