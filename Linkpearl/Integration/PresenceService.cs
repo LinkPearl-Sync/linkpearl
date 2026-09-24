@@ -98,8 +98,12 @@ public sealed class PresenceService : IDisposable
         /// <summary>Adresses tenues par cette connexion, qui ne fait qu'en accumuler.</summary>
         public int OpenedCount { get; set; }
 
-        /// <summary>Les groupes pour lesquels les boîtes ont été ouvertes.</summary>
-        public string OpenedGroups { get; set; } = string.Empty;
+        /// <summary>Les groupes dont cette connexion tient des boîtes de présence.</summary>
+        /// <remarks>
+        /// Un ensemble et non une empreinte : il faut savoir si un groupe a
+        /// disparu, pas seulement si quelque chose a changé.
+        /// </remarks>
+        public IReadOnlySet<GroupId> OpenedGroups { get; set; } = new HashSet<GroupId>();
 
         public string? Failure { get; set; }
 
@@ -220,8 +224,8 @@ public sealed class PresenceService : IDisposable
         => _groupPresence.TryGetValue(member, out var groups) ? groups : [];
 
     /// <summary>Ce qui distingue un jeu de groupes d'un autre, pour savoir s'il faut rouvrir.</summary>
-    private static string Signature(IReadOnlyList<GroupRecord> groups)
-        => string.Join(',', groups.Select(group => group.Id.ToString()).Order(StringComparer.Ordinal));
+    private static HashSet<GroupId> Signature(IReadOnlyList<GroupRecord> groups)
+        => [.. groups.Select(group => group.Id)];
 
     /// <summary>
     /// Ouvre nos boîtes, ou les rouvre si le personnage a changé.
@@ -248,11 +252,22 @@ public sealed class PresenceService : IDisposable
             if (session.Client is not null && session.OpenedFor != fingerprint)
                 Close(session);
 
+            var groups = Signature(_groups);
+
+            // Quitter un groupe coupe tout. Le service n'a pas d'opération pour
+            // fermer une boîte, et rouvrir sur la connexion en place ne fait
+            // qu'en ajouter : la présence du groupe quitté resterait visible de
+            // ses membres jusqu'à la prochaine reconnexion, des heures plus tard
+            // peut-être. On ferme donc la connexion, et la même ronde la rouvre
+            // à neuf, avec les seuls groupes restants.
+            if (session.Client is not null && session.OpenedGroups.IsSubsetOf(groups) is false)
+                Close(session);
+
             // Les adresses tournent toutes les trente minutes, et changent aussi
-            // quand on rejoint ou quitte un groupe.
+            // quand on rejoint un groupe.
             if (session.Client is { } open
                 && (session.OpenedWindow != MailboxAddress.IndexAt(_clock.UtcNow)
-                    || session.OpenedGroups != Signature(_groups)))
+                    || session.OpenedGroups.SetEquals(groups) is false))
                 await ReopenAsync(session, open, fingerprint, ct).ConfigureAwait(false);
 
             if (session.Client is not null || _clock.UtcNow < session.NextAttempt)
@@ -367,7 +382,12 @@ public sealed class PresenceService : IDisposable
             {
                 session.OpenedWindow = window;
                 session.OpenedCount += addresses.Count;
-                session.OpenedGroups = Signature(groups);
+
+                // L'union et non les seuls groupes courants : cette connexion
+                // garde les boîtes déjà ouvertes. Si un groupe a été quitté entre
+                // la vérification et ici, la ronde suivante le verra manquer et
+                // fermera la connexion.
+                session.OpenedGroups = new HashSet<GroupId>(session.OpenedGroups.Union(Signature(groups)));
             }
         }
         catch (Exception e)
