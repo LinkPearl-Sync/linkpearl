@@ -18,6 +18,38 @@ public sealed record RendezvousEntry(RendezvousAddress Address, string Label, bo
 /// </remarks>
 public static class RendezvousList
 {
+    /// <summary>Le service par défaut, par son nom.</summary>
+    public const string DefaultHost = "rdv.linkpearl.eorzea.events";
+
+    /// <summary>
+    /// L'adresse sous laquelle le service par défaut a d'abord été distribué.
+    /// </summary>
+    /// <remarks>
+    /// Une IP nue attache chaque installation à une machine précise : un
+    /// changement d'hébergeur aurait coupé tout le monde. Le nom se redirige.
+    /// </remarks>
+    public const string RetiredDefaultHost = "83.228.242.221";
+
+    /// <summary>
+    /// Remplace l'ancienne IP du service par défaut par son nom.
+    /// </summary>
+    /// <remarks>
+    /// Rend la liste telle quelle si elle ne la contient pas, pour que
+    /// l'appelant sache qu'il n'a rien à enregistrer. Le port, l'étiquette et
+    /// l'interrupteur de l'entrée sont gardés : seul le nom change.
+    /// </remarks>
+    public static IReadOnlyList<RendezvousEntry> RenameRetiredDefault(IReadOnlyList<RendezvousEntry> current)
+    {
+        if (current.Any(entry => entry.Address.Host == RetiredDefaultHost) is false)
+            return current;
+
+        return current
+            .Select(entry => entry.Address.Host == RetiredDefaultHost
+                ? entry with { Address = entry.Address with { Host = DefaultHost } }
+                : entry)
+            .ToList();
+    }
+
     /// <summary>
     /// Construit la liste depuis l'ancien réglage, si elle n'existe pas encore.
     /// </summary>

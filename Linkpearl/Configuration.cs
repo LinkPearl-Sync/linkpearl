@@ -20,7 +20,7 @@ public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
     /// Réglable, et c'est la raison d'être du projet : si ce service tombe ou
     /// reçoit une lettre d'avocat, on en change sans rien reconstruire.
     /// </remarks>
-    public string RendezvousHost { get; set; } = "83.228.242.221";
+    public string RendezvousHost { get; set; } = RendezvousList.DefaultHost;
 
     public int RendezvousPort { get; set; } = 47900;
 
@@ -48,9 +48,15 @@ public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
     /// </remarks>
     public void MigrateIfNeeded()
     {
-        var migrated = RendezvousList.Migrate(RendezvousHost, RendezvousPort, Rendezvous);
+        var migrated = RendezvousList.RenameRetiredDefault(
+            RendezvousList.Migrate(RendezvousHost, RendezvousPort, Rendezvous));
 
-        if (ReferenceEquals(migrated, Rendezvous))
+        var renamed = RendezvousHost == RendezvousList.RetiredDefaultHost;
+
+        if (renamed)
+            RendezvousHost = RendezvousList.DefaultHost;
+
+        if (ReferenceEquals(migrated, Rendezvous) && renamed is false)
             return;
 
         Rendezvous = [.. migrated];

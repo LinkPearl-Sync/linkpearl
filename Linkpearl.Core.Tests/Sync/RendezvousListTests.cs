@@ -53,4 +53,28 @@ public class RendezvousListTests
     {
         Assert.Empty(RendezvousList.Migrate("rdv exemple.ch", 47900, null));
     }
+    [Fact]
+    public void L_ancienne_ip_du_service_par_defaut_devient_son_nom()
+    {
+        var current = new[]
+        {
+            new RendezvousEntry(new RendezvousAddress(RendezvousList.RetiredDefaultHost, 47900), "", false),
+            new RendezvousEntry(new RendezvousAddress("rdv.ami.ch", 443), "Amie", true),
+        };
+
+        var renamed = RendezvousList.RenameRetiredDefault(current);
+
+        // Seul le nom change : l'interrupteur et les autres entrées restent.
+        Assert.Equal(new RendezvousAddress(RendezvousList.DefaultHost, 47900), renamed[0].Address);
+        Assert.False(renamed[0].Enabled);
+        Assert.Equal(current[1], renamed[1]);
+    }
+
+    [Fact]
+    public void Une_liste_sans_l_ancienne_ip_n_est_pas_retouchee()
+    {
+        var current = new[] { new RendezvousEntry(new RendezvousAddress("rdv.ami.ch", 443), "Amie", true) };
+
+        Assert.Same(current, RendezvousList.RenameRetiredDefault(current));
+    }
 }
