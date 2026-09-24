@@ -167,6 +167,16 @@ GroupId = SHA-256(matériau)[0..16]
 
 où le matériau est le secret du groupe (32 octets) pour un groupe partagé, ou sa clé de signature pour un groupe privé.
 
+Exemple : secret = octets 0x00 à 0x1f, `GroupId` = `630dcd2966c4336691125448bbb25b4f`.
+
+**Empreintes des exemples**, calculées par `PlayerFingerprint.Of`
+(`SHA-256("linkpearl:ident:v1" || nom normalisé en UTF-8 || monde (2, gros-boutiste))[0..16]`) :
+
+| Personnage | Empreinte |
+|---|---|
+| `alice`@21 | `e01e458cfd411c4eb2e0c5d509f02995` |
+| `bob`@21 | `b65c349dc0a65fb594b4117d93729e62` |
+
 **Boîte de présence**, fenêtres de trente minutes :
 
 ```
