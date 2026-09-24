@@ -48,6 +48,15 @@ internal static class HandshakeTranscript
         return CryptoPrimitives.Seal(sealingKey, HandshakeFormat.HandshakeNonce, payload, transcript);
     }
 
+    /// <summary>
+    /// Ouvre l'authentification du correspondant et décide s'il est admis.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="isAuthorized"/> n'est appelé qu'une fois la signature et
+    /// la liaison vérifiées, donc seulement pour une clé dont le correspondant a
+    /// prouvé détenir la partie privée. Ce contrat compte : l'admission d'un
+    /// membre de groupe épingle la clé qu'on lui passe.
+    /// </remarks>
     public static bool TryOpenAuthentication(
         ReadOnlySpan<byte> sealedPayload, ReadOnlySpan<byte> signatureContext, ReadOnlySpan<byte> transcript,
         ReadOnlySpan<byte> sealingKey, ReadOnlySpan<byte> bindingKey,
@@ -71,16 +80,13 @@ internal static class HandshakeTranscript
         var signature = payload.AsSpan(CryptoPrimitives.PublicPointLength, CryptoPrimitives.SignatureLength);
         var binding = payload.AsSpan(CryptoPrimitives.PublicPointLength + CryptoPrimitives.SignatureLength, 32);
 
-        // L'autorisation d'abord, et depuis le carnet local : inutile de faire
-        // le travail cryptographique pour une identité qu'on refuse de toute
-        // façon, et cela rend un rendez-vous malveillant incapable d'imposer un
-        // pair.
-        if (isAuthorized(point) is false)
-        {
-            rejection = "identité absente du carnet, ou différente de celle attendue";
-            return false;
-        }
-
+        // La preuve cryptographique d'abord, l'autorisation ensuite, jamais
+        // l'inverse. Pour une paire directe, l'autorisation est une simple
+        // comparaison avec le carnet et l'ordre serait indifférent ; mais pour
+        // un membre de groupe elle épingle la clé présentée et la persiste. La
+        // consulter avant la signature laisserait n'importe quel correspondant
+        // épingler une clé dont il ne détient pas la partie privée, rien qu'en
+        // atteignant ce point du handshake.
         ECDsa verifier;
         try
         {
@@ -104,6 +110,15 @@ internal static class HandshakeTranscript
         if (CryptographicOperations.FixedTimeEquals(binding, Bind(bindingKey, point, transcript)) is false)
         {
             rejection = "liaison entre identité et secret partagé invalide";
+            return false;
+        }
+
+        // L'autorisation vient toujours du carnet local : une identité prouvée
+        // mais inconnue reste refusée, et un rendez-vous malveillant ne peut pas
+        // remplacer une clé déjà épinglée.
+        if (isAuthorized(point) is false)
+        {
+            rejection = "identité absente du carnet, ou différente de celle attendue";
             return false;
         }
 

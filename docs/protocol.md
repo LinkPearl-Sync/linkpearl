@@ -91,7 +91,9 @@ service, en clair. Il en découle :
 | Rendez-vous malveillant, **après le pairage** | refuser le service, mentir sur une adresse, relayer ou non | faire accepter une autre identité : la clé est épinglée dans le carnet |
 
 C'est donc une **confiance au premier contact** (TOFU), dont le premier contact
-passe par le serveur. Pour un cercle qui héberge son propre service,
+passe par le serveur. Pour un membre de groupe, ce premier contact n'est pas le
+pairage mais le premier handshake avec lui, et il reste gagnable par qui arrive
+avant le vrai : voir [Groupes (noyau)](#groupes-noyau). Pour un cercle qui héberge son propre service,
 l'opérateur est l'un d'eux, et c'est assumé dans `pairage.md`. Pour le service
 public, c'est la limite principale du protocole.
 
@@ -198,12 +200,21 @@ Exemple : `31474004ac6d8e2d031c1e3553bd693b`.
 plus faible en hexadécimal. Les deux côtés voient le même résultat puisqu'ils
 ont les mêmes empreintes.
 
-**Modèle de confiance pour les groupes** : chaque membre peut calculer les
-jetons de tous les autres et des couples. La première clé vue d'un membre est
-épinglée dans le carnet de groupe ; un pair malveillant au pairage peut
-s'intercaler (TOFU), jamais un rendez-vous connu d'après : les jetons et les
-boîtes ne révèlent qu'à qui les calcule. Le service apprend qu'un joueur tient
-une boîte supplémentaire, jamais laquelle ni quel groupe elle porte.
+**Modèle de confiance pour les groupes** : chaque membre connaît le secret,
+donc peut calculer les jetons de tous les autres et de n'importe quel couple.
+La parade : la première clé vue pour un personnage est épinglée dans le carnet
+de groupe, et une autre clé pour ce personnage est « Contestée ». Le premier
+contact reste gagnable par qui arrive avant le vrai membre : un membre qui se
+présente sous l'empreinte d'un autre avant lui, ou quiconque a appris le
+secret (un service qui s'est intercalé à l'admission, par exemple), fait
+épingler sa propre clé. C'est un prix assumé, énoncé dans la spec des groupes,
+et non un risque exclu. Ce qui est exclu, c'est d'épingler sans preuve : la
+clé n'est présentée au carnet de groupe qu'une fois la signature du transcript
+et la liaison vérifiées (voir [Liaison des identités](#liaison-des-identités)),
+donc seulement par qui détient la partie privée. Une fois la clé épinglée, un
+rendez-vous peut faire échouer une connexion, pas la remplacer. Le service
+apprend qu'un joueur tient une boîte supplémentaire, jamais laquelle ni quel
+groupe elle porte.
 
 ## Rendez-vous et connexion
 
@@ -299,8 +310,11 @@ et les deux sens ont des clés distinctes.
 
 Vérifications à la réception d'une trame scellée, dans cet ordre
 (`HandshakeTranscript.TryOpenAuthentication`) : déchiffrement authentifié, taille,
-**autorisation par le carnet**, validité du point, signature sur le transcript,
-liaison en temps constant. Le premier échec clôt la session.
+validité du point, signature sur le transcript, liaison en temps constant, puis
+seulement **autorisation par le carnet**. Le premier échec clôt la session.
+L'autorisation vient en dernier parce que, pour un membre de groupe, elle
+épingle la clé présentée : la consulter avant la preuve laisserait épingler une
+clé dont le correspondant ne détient pas la partie privée.
 
 ### Liaison des identités
 
