@@ -22,7 +22,9 @@ public sealed record PendingValidation(
 /// sous un verrou. Le verrou du carnet de groupes est pris après le nôtre,
 /// jamais l'inverse.
 /// </remarks>
-public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, IClock clock) : IDisposable
+public sealed class AdmissionHost(
+    GroupBook book, Func<byte[]?> ourIdentityKey, IClock clock,
+    Func<AdmissionRequest, PlayerFingerprint, bool>? refuses = null) : IDisposable
 {
     /// <summary>Au-delà, on répond « trop d'essais » sans vérifier.</summary>
     /// <remarks>
@@ -167,6 +169,16 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
                 if (_pending.Count >= MaxPendingValidations)
                     return [];
 
+                // Listé par un service actif : aucune réponse, comme un banni du
+                // groupe. Après les plafonds et pour une demande neuve seulement :
+                // le filtre coûte une dérivation, et une inondation de demandes
+                // forgées ne doit pas la payer au-delà de ce que le plafond laisse.
+                if (refuses?.Invoke(request, candidate) is true)
+                {
+                    _answered[key] = now;
+                    return [];
+                }
+
                 _pending[key] = new Waiting(group.Id, request, candidate, now);
                 return [];
             }
@@ -186,6 +198,16 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
             if (_challenges.Count >= MaxLiveChallenges)
                 return [];
+
+            // Listé par un service actif : aucune réponse, comme un banni du
+            // groupe. Après les plafonds et pour une demande neuve seulement :
+            // le filtre coûte une dérivation, et une inondation de demandes
+            // forgées ne doit pas la payer au-delà de ce que le plafond laisse.
+            if (refuses?.Invoke(request, candidate) is true)
+            {
+                _answered[key] = now;
+                return [];
+            }
 
             var ephemeral = CryptoPrimitives.GenerateEphemeral();
             var challenge = new AdmissionChallenge(request.Nonce, CryptoPrimitives.ExportPublicPoint(ephemeral));

@@ -30,7 +30,8 @@ public sealed class AdmissionTests : IDisposable
     private byte[] CandidatePoint => CryptoPrimitives.ExportPublicPoint(_candidateIdentity);
 
     /// <summary>Un membre qui tient le groupe, et son hôte.</summary>
-    private (AdmissionHost Host, GroupBook Book, CreatedGroup Created) Member(string password = "lune", bool asOwner = false)
+    private (AdmissionHost Host, GroupBook Book, CreatedGroup Created) Member(
+        string password = "lune", bool asOwner = false, Func<AdmissionRequest, PlayerFingerprint, bool>? refuses = null)
     {
         var created = GroupGovernance.Create("Compagnie", password, PolicyFixture.Service, OwnerPoint, _clock.UtcNow);
         var book = new GroupBook(_clock);
@@ -38,7 +39,7 @@ public sealed class AdmissionTests : IDisposable
 
         using var stranger = CryptoPrimitives.GenerateIdentity();
         var ours = asOwner ? OwnerPoint : CryptoPrimitives.ExportPublicPoint(stranger);
-        var host = new AdmissionHost(book, () => ours, _clock);
+        var host = new AdmissionHost(book, () => ours, _clock, refuses);
         _disposables.Add(host);
         return (host, book, created);
     }
@@ -600,5 +601,44 @@ public sealed class AdmissionTests : IDisposable
         host.Dispose();
 
         Assert.Empty(host.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune")), Candidate));
+    }
+
+    [Fact]
+    public void Un_candidat_liste_ne_recoit_aucune_reponse_en_mode_mot_de_passe()
+    {
+        var calls = 0;
+        var (host, _, created) = Member(refuses: (_, _) => { calls++; return true; });
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune"));
+
+        Assert.Empty(host.OnRequest(request, Candidate));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void Un_candidat_liste_n_est_pas_propose_aux_moderateurs()
+    {
+        // Sans mot de passe, le groupe valide chaque entrée.
+        var (host, _, created) = Member(password: "", asOwner: true, refuses: (_, _) => true);
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, ""));
+
+        host.OnRequest(request, Candidate);
+
+        Assert.Empty(host.Pending);
+    }
+
+    [Fact]
+    public void Le_filtre_n_est_consulte_qu_une_fois_par_demande()
+    {
+        // Il coûte une dérivation PBKDF2 : un redépôt de la même demande, chaque
+        // minute, ne doit pas la refaire.
+        var calls = 0;
+        var (host, _, created) = Member(refuses: (_, _) => { calls++; return false; });
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune"));
+
+        host.OnRequest(request, Candidate);
+        _clock.Advance(AdmissionHost.ChallengeResendInterval);
+        host.OnRequest(request, Candidate);
+
+        Assert.Equal(1, calls);
     }
 }
