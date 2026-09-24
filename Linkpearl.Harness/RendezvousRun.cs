@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Linkpearl.Core.Crypto;
+using Linkpearl.Core.Transport;
 using Linkpearl.Core.Transport.Rendezvous;
 
 namespace Linkpearl.Harness;
@@ -77,33 +78,55 @@ public static class RendezvousRun
             Console.WriteLine($"Apparié. Bloc du pair : « {Encoding.UTF8.GetString(opened)} »");
         }
 
-        // Relais : le serveur met les deux sessions bout à bout.
-        await using var relay = new RendezvousClient();
+        // Relais : le serveur met les deux sessions bout à bout, et le lien
+        // relayé du plugin s'en sert tel quel. Un message d'un mégaoctet dans
+        // chaque sens éprouve la fragmentation sous la limite de trame du
+        // service, que le premier manifeste venu dépasse.
+        var relay = new RendezvousClient();
         await relay.ConnectAsync(host, port, ct).ConfigureAwait(false);
 
         Console.WriteLine("Ouverture du relais...");
 
-        if (await relay.OpenRelayAsync(tickets[0], ct).ConfigureAwait(false) is false)
+        // Le jeton que le plugin dérive, distinct de ceux de l'annonce.
+        var relayTicket = Linkpearl.Core.Sync.PeerConnector.RelayTicketFor(PairSecretForTest, sealedCandidates, partner);
+
+        if (await relay.OpenRelayAsync(relayTicket, ct).ConfigureAwait(false) is false)
         {
             Console.WriteLine("ÉCHEC : relais non ouvert.");
+            await relay.DisposeAsync().ConfigureAwait(false);
             return false;
         }
 
         Console.WriteLine("Relais ouvert.");
 
-        await relay.SendRelayAsync(Encoding.UTF8.GetBytes($"bonjour de {role}"), ct).ConfigureAwait(false);
+        await using var link = new RelayPeerLink(new RendezvousRelayPipe(relay), new DnsEndPoint(host, port));
 
-        var received = await relay.ReceiveRelayAsync(ct).ConfigureAwait(false);
+        var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Received += (_, payload) => received.TrySetResult(payload);
 
-        if (received is null)
+        var big = new byte[1024 * 1024];
+        new Random(role.GetHashCode()).NextBytes(big);
+        Encoding.UTF8.GetBytes($"bonjour de {role}").CopyTo(big, 0);
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await link.SendAsync(5, big, ct).ConfigureAwait(false);
+
+        var theirs = await received.Task.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+
+        if (theirs.Length != big.Length)
         {
-            Console.WriteLine("ÉCHEC : rien reçu par le relais.");
+            Console.WriteLine($"ÉCHEC : reçu {theirs.Length} octets par le relais au lieu de {big.Length}.");
             ok = false;
         }
         else
         {
-            Console.WriteLine($"Reçu par le relais : « {Encoding.UTF8.GetString(received)} »");
+            Console.WriteLine($"Reçu par le relais : « {Encoding.UTF8.GetString(theirs, 0, 11)}… », "
+                            + $"{theirs.Length} octets en {started.ElapsedMilliseconds} ms.");
         }
+
+        // Laisser passer au moins une sonde avant de lire la latence.
+        await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+        Console.WriteLine($"Aller-retour mesuré de bout en bout : {link.RoundTripMs} ms.");
 
         Console.WriteLine();
         Console.WriteLine(ok ? "TOUT EST PASSÉ." : "AU MOINS UNE ÉTAPE A ÉCHOUÉ.");

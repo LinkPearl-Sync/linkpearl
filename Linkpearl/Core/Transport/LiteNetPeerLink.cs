@@ -23,6 +23,8 @@ public sealed class LiteNetPeerLink(NetPeer peer) : IPeerLink
 {
     public bool IsOpen => peer.ConnectionState is ConnectionState.Connected;
 
+    public bool IsRelayed => false;
+
     public int RoundTripMs => peer.Ping * 2;
 
     public float PacketLossPercent => peer.Statistics.PacketLossPercent;

@@ -25,7 +25,7 @@ public interface IRendezvousDialer
 public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, string? Failure);
 
 /// <summary>
-/// Enchaîne ce qu'il faut pour joindre un pair : réflexion, annonce, perçage.
+/// Enchaîne ce qu'il faut pour joindre un pair : réflexion, annonce, perçage, relais.
 /// </summary>
 /// <remarks>
 /// Le rendez-vous n'intervient que pour échanger des adresses, et il ne les lit
@@ -53,6 +53,19 @@ public sealed class PeerConnector(
 
     private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v1"u8;
     private static ReadOnlySpan<byte> TokenInfo => "linkpearl:token:v1"u8;
+    private static ReadOnlySpan<byte> RelayInfo => "linkpearl:relay:v1"u8;
+
+    /// <summary>Temps laissé au perçage avant de se rabattre sur le relais.</summary>
+    private static readonly TimeSpan PunchBudget = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Attente du pair au relais.
+    /// </summary>
+    /// <remarks>
+    /// Sous les trente secondes que le service accorde, pour que ce soit nous
+    /// qui abandonnions et non lui qui nous coupe sans rien dire.
+    /// </remarks>
+    private static readonly TimeSpan RelayBudget = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// Le jeton qu'un pair doit présenter pour ouvrir une session avec nous.
@@ -133,10 +146,13 @@ public sealed class PeerConnector(
         if (pair.Rendezvous.Count == 0)
             return new ConnectionAttempt(null, false, "aucun lieu de rendez-vous enregistré pour ce pair");
 
-        var candidates = await GatherCandidatesAsync(ct).ConfigureAwait(false);
+        // Un pair en relais seul ne reçoit aucune de nos adresses : c'est tout
+        // l'objet de ce mode. Il nous trouve quand même, par le relais.
+        var relayOnly = pair.Policy is ConnectionPolicy.RelayOnly;
 
-        if (candidates.Count == 0)
-            return new ConnectionAttempt(null, false, "aucune adresse à offrir");
+        IReadOnlyList<IPEndPoint> candidates = relayOnly
+            ? []
+            : await GatherCandidatesAsync(ct).ConfigureAwait(false);
 
         var key = CandidateKey(pair.PairSecret);
         var sealedCandidates = CryptoPrimitives.Seal(
@@ -171,16 +187,98 @@ public sealed class PeerConnector(
             return new ConnectionAttempt(null, false, $"candidats refusés : {why}");
 
         var ordered = CandidateSet.InPriorityOrder(theirCandidates);
-        log.Info($"{pair.DisplayName} : {ordered.Count} adresse(s) à essayer.");
 
-        var token = TokenFor(pair.PairSecret);
-        links.Allow(token, pair.DisplayName);
+        // Décidé sur ce que les deux côtés voient à l'identique, les deux jeux
+        // de candidats : l'un tenterait sinon le perçage pendant que l'autre
+        // l'attend déjà au relais, et chacun attendrait l'autre pour rien.
+        if (candidates.Count > 0 && ordered.Count > 0)
+        {
+            log.Info($"{pair.DisplayName} : {ordered.Count} adresse(s) à essayer.");
 
-        var link = await links.ConnectAsync(ordered, token, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
+            var token = TokenFor(pair.PairSecret);
+            links.Allow(token, pair.DisplayName);
 
-        return link is null
-            ? new ConnectionAttempt(null, false, "perçage sans réponse : NAT symétrique des deux côtés ?")
-            : new ConnectionAttempt(link, false, null);
+            var link = await links.ConnectAsync(ordered, token, PunchBudget, ct).ConfigureAwait(false);
+
+            if (link is not null)
+                return new ConnectionAttempt(link, false, null);
+
+            log.Info($"{pair.DisplayName} : perçage sans réponse, passage au relais.");
+        }
+        else
+        {
+            log.Info($"{pair.DisplayName} : relais seul, l'un des deux n'offre aucune adresse.");
+        }
+
+        var ticket = RelayTicketFor(pair.PairSecret, sealedCandidates, match.Value.Theirs);
+        var relayed = await OpenRelayAsync(match.Value.At, ticket, ct).ConfigureAwait(false);
+
+        return relayed is null
+            ? new ConnectionAttempt(null, false, "ni perçage ni relais : le service refuse peut-être de relayer")
+            : new ConnectionAttempt(relayed, false, null);
+    }
+
+    /// <summary>
+    /// Le jeton sous lequel les deux pairs se retrouvent au relais.
+    /// </summary>
+    /// <remarks>
+    /// Dérivé du secret de paire et des deux blocs de candidats que l'échange
+    /// vient de faire circuler, dans un ordre qui ne dépend pas de qui calcule :
+    /// les deux côtés obtiennent le même jeton sans échanger un octet de plus.
+    /// Il change à chaque tentative, donc le service ne peut pas relier deux
+    /// relais d'une même paire par leur jeton.
+    /// </remarks>
+    public static byte[] RelayTicketFor(ReadOnlySpan<byte> pairSecret, ReadOnlySpan<byte> one, ReadOnlySpan<byte> other)
+    {
+        var inOrder = one.SequenceCompareTo(other) <= 0;
+        var low = inOrder ? one : other;
+        var high = inOrder ? other : one;
+
+        var message = new byte[RelayInfo.Length + low.Length + high.Length];
+        RelayInfo.CopyTo(message);
+        low.CopyTo(message.AsSpan(RelayInfo.Length));
+        high.CopyTo(message.AsSpan(RelayInfo.Length + low.Length));
+
+        return HMACSHA256.HashData(pairSecret, message)[..RendezvousTicket.SizeInBytes];
+    }
+
+    /// <summary>
+    /// Ouvre le relais sur le lieu qui a apparié, le seul que les deux ont atteint.
+    /// </summary>
+    /// <remarks>
+    /// Le service garde la première demande en attente jusqu'à trente
+    /// secondes ; les deux côtés arrivent ici à quelques secondes d'écart,
+    /// après le même budget de perçage.
+    /// </remarks>
+    private async Task<IPeerLink?> OpenRelayAsync(RendezvousAddress at, byte[] ticket, CancellationToken ct)
+    {
+        var client = new RendezvousClient();
+
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(RelayBudget);
+
+            await client.ConnectAsync(at.Host, at.Port, deadline.Token).ConfigureAwait(false);
+
+            // Les deux côtés arrivent ici après le même budget de perçage. Un
+            // service d'avant le 24 septembre 2026 garait alors les deux
+            // demandes sans les apparier, une fois sur deux au banc : quelques
+            // centaines de millisecondes d'écart suffisent à l'éviter.
+            await Task.Delay(Random.Shared.Next(0, 400), deadline.Token).ConfigureAwait(false);
+
+            if (await client.OpenRelayAsync(ticket, deadline.Token).ConfigureAwait(false))
+                return new RelayPeerLink(new RendezvousRelayPipe(client), new DnsEndPoint(at.Host, at.Port));
+
+            log.Info($"Relais refusé par {at.Host}.");
+        }
+        catch (Exception e) when (e is OperationCanceledException or IOException or System.Net.Sockets.SocketException)
+        {
+            log.Info($"Relais par {at.Host} sans réponse : {e.Message}");
+        }
+
+        await client.DisposeAsync().ConfigureAwait(false);
+        return null;
     }
 
     /// <summary>Nos adresses : celle que le rendez-vous voit, et nos adresses locales.</summary>

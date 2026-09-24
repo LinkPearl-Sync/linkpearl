@@ -38,6 +38,8 @@ internal sealed class MemoryLink : IPeerLink
 
     public bool IsOpen { get; private set; } = true;
 
+    public bool IsRelayed => false;
+
     public int RoundTripMs => 12;
 
     public float PacketLossPercent => 0;

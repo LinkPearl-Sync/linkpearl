@@ -13,6 +13,16 @@ public interface IPeerLink : IAsyncDisposable
     /// <summary>Vrai tant que le lien porte.</summary>
     bool IsOpen { get; }
 
+    /// <summary>
+    /// Vrai quand le lien passe par le relais d'un rendez-vous.
+    /// </summary>
+    /// <remarks>
+    /// Le reste du code n'a pas à le savoir. L'interface, si : un lien relayé
+    /// cache l'adresse de chacun à l'autre, et c'est une information que le
+    /// joueur doit pouvoir vérifier.
+    /// </remarks>
+    bool IsRelayed { get; }
+
     /// <summary>Temps d'aller-retour observé, en millisecondes.</summary>
     int RoundTripMs { get; }
 
