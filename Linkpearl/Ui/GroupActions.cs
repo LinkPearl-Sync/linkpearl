@@ -49,7 +49,7 @@ public sealed class GroupActions
 
     public required Action<GroupId, PlayerFingerprint, bool> SetPaused { get; init; }
 
-    public required Action<GroupId, PlayerFingerprint, TransientCategories> SetReceive { get; init; }
+    public required Action<GroupId, PlayerFingerprint, TransientCategories?> SetReceive { get; init; }
 
     /// <summary>Notre clé d'identité publique, point de 65 octets, pour calculer notre rôle.</summary>
     public required Func<byte[]?> OurIdentityKey { get; init; }
