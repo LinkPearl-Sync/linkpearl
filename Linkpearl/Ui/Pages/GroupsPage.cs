@@ -108,9 +108,7 @@ internal sealed class GroupsPage(
         switch (candidate.State)
         {
             case CandidacyState.Waiting:
-                Text.Small(
-                    "Demande envoyée. En attente d'un membre en ligne, ou d'un modérateur si le groupe valide "
-                  + "chaque entrée.", Theme.Accent);
+                Text.Small("Demande envoyée, en attente de la réponse du groupe.", Theme.Accent);
 
                 if (Btn.Draw("Annuler", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: "group_join_cancel"))
                     actions.CancelJoin();

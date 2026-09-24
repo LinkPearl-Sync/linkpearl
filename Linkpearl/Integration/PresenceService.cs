@@ -870,7 +870,9 @@ public sealed class PresenceService : IDisposable
         if (delivered == 0)
             return $"Demande pas encore envoyée ({failure}) : nouvel essai chaque minute.";
 
-        return "Demande envoyée. Un membre du groupe doit être en ligne pour vous répondre.";
+        // Rien de plus : à ce stade on ne connaît ni le mode d'admission ni qui
+        // répondra, et une réponse arrive souvent dans la seconde.
+        return "Demande envoyée au groupe.";
     }
 
     /// <summary>Les aléas des demandes que nous avons envoyées, en attente de réponse.</summary>
