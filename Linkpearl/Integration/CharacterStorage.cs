@@ -16,7 +16,7 @@ namespace Linkpearl.Integration;
 public static class CharacterStorage
 {
     /// <summary>Ce qui appartient à un personnage, et à lui seul.</summary>
-    public static readonly string[] Belongings = ["identity.key", "pairs.json", "invitations.json"];
+    public static readonly string[] Belongings = ["identity.key", "pairs.json", "invitations.json", "groups.json"];
 
     /// <summary>
     /// Écarte un fichier sans le détruire, et rend le nom sous lequel il reste.
