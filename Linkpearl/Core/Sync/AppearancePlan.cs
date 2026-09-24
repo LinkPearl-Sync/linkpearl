@@ -92,6 +92,20 @@ public static class AppearancePlanner
             }
         }
 
+        // La valeur d'un échange est un chemin de jeu, que Penumbra résout à son
+        // tour : il ne désigne jamais un fichier du disque. Il a passé la même
+        // politique que les chemins de jeu, dans ManifestValidator.
+        foreach (var swap in manifest.SwapsOrNone)
+        {
+            if (pathMap.ContainsKey(swap.GamePath))
+            {
+                rejection = $"deux contenus pour un même chemin de jeu : {swap.GamePath}";
+                return false;
+            }
+
+            pathMap[swap.GamePath] = swap.TargetGamePath;
+        }
+
         plan = new AppearancePlan(pathMap, manifest.MetaManipulations, manifest.GlamourerState) { Dropped = dropped };
         rejection = null;
         return true;

@@ -35,7 +35,8 @@ public sealed record CharacterManifest(
     IReadOnlyList<FileReplacement> Replacements,
     string MetaManipulations,
     string? GlamourerState,
-    CharacterExtras? Extras = null)
+    CharacterExtras? Extras = null,
+    IReadOnlyList<FileSwap>? Swaps = null)
 {
     /// <summary>
     /// 2 depuis les intégrations : un manifeste peut porter des extras. Un
@@ -44,6 +45,17 @@ public sealed record CharacterManifest(
     public const ushort CurrentVersion = 2;
 
     public CharacterExtras ExtrasOrNone => Extras ?? CharacterExtras.None;
+
+    /// <summary>
+    /// Les échanges : un chemin de jeu qui en joue un autre, sans fichier à
+    /// transférer. Forme de bien des mods d'animation, qui font jouer l'idle
+    /// d'une autre race.
+    /// </summary>
+    /// <remarks>
+    /// Ajoutés sans changer de version : un lecteur plus ancien ignore la clé,
+    /// et ne pose alors que les fichiers, ce qu'il faisait déjà.
+    /// </remarks>
+    public IReadOnlyList<FileSwap> SwapsOrNone => Swaps ?? [];
 }
 
 /// <summary>

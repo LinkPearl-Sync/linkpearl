@@ -23,7 +23,8 @@ public static class ManifestBuilder
         IEnumerable<ResolvedFile> files,
         string metaManipulations,
         string? glamourerState,
-        Quotas quotas)
+        Quotas quotas,
+        IEnumerable<FileSwap>? swaps = null)
     {
         var grouped = new Dictionary<BlobHash, (long Size, SortedSet<string> Paths)>();
         var skipped = new List<SkippedFile>();
@@ -59,8 +60,31 @@ public static class ManifestBuilder
             .Select(pair => new FileReplacement(pair.Value.Paths.ToArray(), pair.Key, pair.Value.Size))
             .ToArray();
 
+        var claimed = replacements.SelectMany(r => r.GamePaths).ToHashSet(StringComparer.Ordinal);
+        var kept = new SortedDictionary<string, FileSwap>(StringComparer.Ordinal);
+
+        foreach (var swap in swaps ?? [])
+        {
+            if (FileSwapPolicy.TryNormalize(swap, quotas, out var normalized, out var why) is false)
+            {
+                skipped.Add(new SkippedFile(swap.GamePath, why!));
+                continue;
+            }
+
+            // Un chemin déjà servi par un fichier, ou déjà échangé : le receveur
+            // refuserait le manifeste entier pour cette contradiction.
+            if (claimed.Contains(normalized!.GamePath) || kept.ContainsKey(normalized.GamePath))
+            {
+                skipped.Add(new SkippedFile(swap.GamePath, "chemin déjà remplacé"));
+                continue;
+            }
+
+            kept[normalized.GamePath] = normalized;
+        }
+
         return new ManifestBuildResult(
-            new CharacterManifest(CharacterManifest.CurrentVersion, replacements, metaManipulations, glamourerState),
+            new CharacterManifest(CharacterManifest.CurrentVersion, replacements, metaManipulations, glamourerState,
+                Swaps: kept.Count > 0 ? kept.Values.ToArray() : null),
             skipped);
     }
 }

@@ -41,6 +41,16 @@ public static class TransientPolicy
                 kept.Add(replacement with { GamePaths = paths });
         }
 
-        return changed ? manifest with { Replacements = kept } : manifest;
+        var swaps = manifest.SwapsOrNone.Where(s => allowed.Allows(s.GamePath)).ToList();
+        var swapsChanged = swaps.Count != manifest.SwapsOrNone.Count;
+
+        if (changed is false && swapsChanged is false)
+            return manifest;
+
+        return manifest with
+        {
+            Replacements = changed ? kept : manifest.Replacements,
+            Swaps = swapsChanged ? (swaps.Count > 0 ? swaps : null) : manifest.Swaps,
+        };
     }
 }

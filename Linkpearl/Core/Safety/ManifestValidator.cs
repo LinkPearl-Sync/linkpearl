@@ -109,6 +109,40 @@ public static class ManifestValidator
             }
         }
 
+        if (manifest.SwapsOrNone.Count > 0)
+        {
+            var served = manifest.Replacements.SelectMany(r => r.GamePaths).ToHashSet(StringComparer.Ordinal);
+
+            foreach (var swap in manifest.SwapsOrNone)
+            {
+                totalPaths++;
+                if (totalPaths > quotas.MaxGamePaths)
+                {
+                    rejection = $"plafond de chemins de jeu dépassé (plafond {quotas.MaxGamePaths})";
+                    return false;
+                }
+
+                if (FileSwapPolicy.TryNormalize(swap, quotas, out var normalized, out var why) is false)
+                {
+                    rejection = $"échange refusé : {why}";
+                    return false;
+                }
+
+                // Même exigence de forme canonique que pour les fichiers.
+                if (normalized != swap)
+                {
+                    rejection = "échange non canonique";
+                    return false;
+                }
+
+                if (served.Add(swap.GamePath) is false)
+                {
+                    rejection = $"deux contenus pour un même chemin de jeu : {swap.GamePath}";
+                    return false;
+                }
+            }
+        }
+
         if (ExtrasValidator.TryAccept(manifest.ExtrasOrNone, quotas, out var extrasRejection) is false)
         {
             rejection = extrasRejection;

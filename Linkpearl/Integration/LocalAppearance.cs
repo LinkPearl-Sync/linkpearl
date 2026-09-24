@@ -261,7 +261,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
                 resolved.Add(new ResolvedFile(gamePath, entry.Hash, entry.Size));
         }
 
-        var build = ManifestBuilder.Build(resolved, meta, glamourer, Quotas.Default);
+        var build = ManifestBuilder.Build(resolved, meta, glamourer, Quotas.Default, classified.Swaps);
 
         // Nettoyés ici, hors du thread du jeu, avant de rien annoncer : un
         // nom, un ContentId ou un GUID qui relie nos personnages ne quitte pas
@@ -304,6 +304,7 @@ public sealed class LocalAppearance : ILocalAppearance, IDisposable
 
         Description = $"{manifest.Replacements.Count} fichiers, "
                     + $"{manifest.Replacements.Sum(r => r.GamePaths.Count)} chemins de jeu, "
+                    + $"{manifest.SwapsOrNone.Count} échange(s), "
                     + $"{known.Values.Sum(e => e.Size) / 1024 / 1024} Mo, {hashed} haché(s)"
                     + $"{(build.Skipped.Count > 0 ? $", {build.Skipped.Count} écartés" : "")}";
 

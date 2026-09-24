@@ -61,6 +61,21 @@ public static class ManifestCodec
             WriteExtra(writer, "xm", extras.Moodles);
             WriteExtra(writer, "xp", extras.PetNicknames);
 
+            // Absente quand il n'y a aucun échange, pour la même raison que les
+            // extras : un manifeste d'avant garde son empreinte.
+            if (manifest.SwapsOrNone.Count > 0)
+            {
+                writer.WriteStartArray("w");
+                foreach (var swap in manifest.SwapsOrNone)
+                {
+                    writer.WriteStartArray();
+                    writer.WriteStringValue(swap.GamePath);
+                    writer.WriteStringValue(swap.TargetGamePath);
+                    writer.WriteEndArray();
+                }
+                writer.WriteEndArray();
+            }
+
             writer.WriteEndObject();
         }
 
@@ -81,6 +96,45 @@ public static class ManifestCodec
         return element.ValueKind is JsonValueKind.String
             ? element.GetString()
             : throw new JsonException($"extra {key} non textuel");
+    }
+
+    private static bool TryReadSwaps(JsonElement root, Quotas quotas, out List<FileSwap>? swaps, out string? rejection)
+    {
+        swaps = null;
+        rejection = null;
+
+        if (root.TryGetProperty("w", out var element) is false)
+            return true;
+
+        if (element.ValueKind is not JsonValueKind.Array)
+        {
+            rejection = "manifeste : liste d'échanges malformée";
+            return false;
+        }
+
+        if (element.GetArrayLength() > quotas.MaxGamePaths)
+        {
+            rejection = $"manifeste : plafond de chemins de jeu dépassé (plafond {quotas.MaxGamePaths})";
+            return false;
+        }
+
+        swaps = new List<FileSwap>(element.GetArrayLength());
+
+        foreach (var pair in element.EnumerateArray())
+        {
+            if (pair.ValueKind is not JsonValueKind.Array
+                || pair.GetArrayLength() != 2
+                || pair[0].ValueKind is not JsonValueKind.String
+                || pair[1].ValueKind is not JsonValueKind.String)
+            {
+                rejection = "manifeste : échange malformé";
+                return false;
+            }
+
+            swaps.Add(new FileSwap(pair[0].GetString()!, pair[1].GetString()!));
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -272,9 +326,12 @@ public static class ManifestCodec
                 ReadExtra(root, "xc"), ReadExtra(root, "xh"), ReadExtra(root, "xt"),
                 ReadExtra(root, "xm"), ReadExtra(root, "xp"));
 
+            if (TryReadSwaps(root, quotas, out var swaps, out rejection) is false)
+                return false;
+
             manifest = new CharacterManifest(
                 version, replacements, metaElement.GetString()!, glamourer,
-                extras.IsEmpty ? null : extras);
+                extras.IsEmpty ? null : extras, swaps);
             rejection = null;
             return true;
         }
