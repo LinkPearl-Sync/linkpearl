@@ -110,3 +110,52 @@ public class PeerConnectorTests
                 : Task.FromResult<byte[]?>([4, 2]);
     }
 }
+
+/// <summary>Le bloc de candidats, que le rendez-vous voit passer sans devoir le lire.</summary>
+public class CandidateSealingTests
+{
+    private static readonly byte[] Secret = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+
+    private static readonly System.Net.IPEndPoint[] Candidates =
+    [
+        new(System.Net.IPAddress.Parse("203.0.113.7"), 51000),
+        new(System.Net.IPAddress.Parse("192.168.1.20"), 51000),
+    ];
+
+    [Fact]
+    public void Un_bloc_scelle_se_rouvre_avec_le_meme_secret()
+    {
+        var sealedBlock = PeerConnector.SealCandidates(Secret, Candidates);
+
+        Assert.True(PeerConnector.TryOpenCandidates(Secret, sealedBlock, out var plain));
+        Assert.True(CandidateSet.TryDecode(plain, out var decoded, out _));
+        Assert.Equal(Candidates, decoded);
+    }
+
+    [Fact]
+    public void Deux_scellements_n_emploient_jamais_le_meme_nonce()
+    {
+        // La version 1 scellait sous un nonce nul et une clé fixe par paire :
+        // chaque annonce, des deux côtés, réemployait le même couple.
+        var first = PeerConnector.SealCandidates(Secret, Candidates);
+        var second = PeerConnector.SealCandidates(Secret, Candidates);
+
+        Assert.NotEqual(first[..12], second[..12]);
+        Assert.NotEqual(first, second);
+    }
+
+    [Fact]
+    public void Un_autre_secret_ne_rouvre_pas_le_bloc()
+    {
+        var other = (byte[])Secret.Clone();
+        other[0] ^= 1;
+
+        Assert.False(PeerConnector.TryOpenCandidates(other, PeerConnector.SealCandidates(Secret, Candidates), out _));
+    }
+
+    [Fact]
+    public void Un_bloc_trop_court_est_refuse_sans_lever()
+    {
+        Assert.False(PeerConnector.TryOpenCandidates(Secret, new byte[20], out _));
+    }
+}

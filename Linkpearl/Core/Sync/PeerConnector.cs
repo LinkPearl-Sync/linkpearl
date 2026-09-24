@@ -51,7 +51,7 @@ public sealed class PeerConnector(
 
     private readonly TimeSpan _announceBudget = announceBudget ?? DefaultAnnounceBudget;
 
-    private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v1"u8;
+    private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v2"u8;
     private static ReadOnlySpan<byte> TokenInfo => "linkpearl:token:v1"u8;
     private static ReadOnlySpan<byte> RelayInfo => "linkpearl:relay:v1"u8;
 
@@ -154,9 +154,7 @@ public sealed class PeerConnector(
             ? []
             : await GatherCandidatesAsync(ct).ConfigureAwait(false);
 
-        var key = CandidateKey(pair.PairSecret);
-        var sealedCandidates = CryptoPrimitives.Seal(
-            key, new byte[CryptoPrimitives.NonceLength], CandidateSet.Encode(candidates), CandidateKeyInfo);
+        var sealedCandidates = SealCandidates(pair.PairSecret, candidates);
 
         var announcement = new Announcement(
             new RendezvousTicket(clock).Announce(pair.PairSecret), sealedCandidates);
@@ -179,9 +177,9 @@ public sealed class PeerConnector(
                 : new ConnectionAttempt(null, false, "aucun lieu de rendez-vous commun joignable");
         }
 
-        if (CryptoPrimitives.TryOpen(
-                key, new byte[CryptoPrimitives.NonceLength], match.Value.Theirs, CandidateKeyInfo, out var plain) is false)
-            return new ConnectionAttempt(null, false, "bloc de candidats illisible : secret de paire différent ?");
+        if (TryOpenCandidates(pair.PairSecret, match.Value.Theirs, out var plain) is false)
+            return new ConnectionAttempt(
+                null, false, "bloc de candidats illisible : secret de paire différent, ou pair à mettre à jour ?");
 
         if (CandidateSet.TryDecode(plain, out var theirCandidates, out var why) is false)
             return new ConnectionAttempt(null, false, $"candidats refusés : {why}");
@@ -333,6 +331,39 @@ public sealed class PeerConnector(
 
             return await client.AnnounceAndWaitAsync(announcement, ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Scelle nos adresses pour le pair : aléa(12) || chiffré || étiquette(16).
+    /// </summary>
+    /// <remarks>
+    /// Un aléa neuf à chaque annonce. La version 1 scellait sous un nonce nul,
+    /// avec une clé qui ne change pas de toute la vie de la paire, et les deux
+    /// pairs scellaient chacun le leur : en AES-GCM, un couple clé-nonce
+    /// réutilisé livre le XOR des clairs et de quoi forger des étiquettes, et le
+    /// rendez-vous voit passer chaque bloc. L'étiquette de dérivation change
+    /// avec le format, pour que la clé dont la version 1 a pu laisser fuir de
+    /// quoi forger ne serve plus.
+    /// </remarks>
+    public static byte[] SealCandidates(ReadOnlySpan<byte> pairSecret, IReadOnlyList<IPEndPoint> candidates)
+    {
+        var nonce = RandomNumberGenerator.GetBytes(CryptoPrimitives.NonceLength);
+        var sealedBody = CryptoPrimitives.Seal(
+            CandidateKey(pairSecret), nonce, CandidateSet.Encode(candidates), CandidateKeyInfo);
+
+        return [.. nonce, .. sealedBody];
+    }
+
+    public static bool TryOpenCandidates(ReadOnlySpan<byte> pairSecret, ReadOnlySpan<byte> sealedBlock, out byte[] plain)
+    {
+        plain = [];
+
+        if (sealedBlock.Length < CryptoPrimitives.NonceLength + CryptoPrimitives.TagLength)
+            return false;
+
+        return CryptoPrimitives.TryOpen(
+            CandidateKey(pairSecret), sealedBlock[..CryptoPrimitives.NonceLength],
+            sealedBlock[CryptoPrimitives.NonceLength..], CandidateKeyInfo, out plain);
     }
 
     private static byte[] CandidateKey(ReadOnlySpan<byte> pairSecret)
