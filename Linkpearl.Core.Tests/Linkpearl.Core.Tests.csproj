@@ -13,7 +13,9 @@
          silencieux (aucune exception, aucune normalisation) faute des
          tables Unicode d'ICU, ce qui invaliderait tout test qui vérifie la
          normalisation NFC d'AdmissionSealing.ProofTag sans jamais le
-         signaler. -->
+         signaler. Conséquence : sous Linux, les tests exigent libicu
+         (paquet libicu ou libicu-dev selon la distribution), faute de quoi
+         le runtime refuse de démarrer. -->
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 

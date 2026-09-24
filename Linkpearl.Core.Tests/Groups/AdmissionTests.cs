@@ -124,14 +124,30 @@ public sealed class AdmissionTests : IDisposable
     }
 
     [Fact]
-    public void Une_demande_redeposee_ne_redefie_pas()
+    public void Une_demande_redeposee_recoit_le_meme_defi()
     {
         var (host, _, created) = Member();
         var candidate = NewCandidate();
         var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
 
+        var first = Assert.Single(host.OnRequest(request, Candidate));
+        var again = Assert.Single(host.OnRequest(request, Candidate));
+
+        Assert.Equal(first.Payload, again.Payload);
+        Assert.Equal(first.CharacterName, again.CharacterName);
+    }
+
+    [Fact]
+    public void Une_demande_rejouee_avec_un_autre_ephemere_ne_recoit_rien()
+    {
+        var (host, _, created) = Member();
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune"));
         Assert.Single(host.OnRequest(request, Candidate));
-        Assert.Empty(host.OnRequest(request, Candidate));
+
+        using var intruder = CryptoPrimitives.GenerateEphemeral();
+        var forged = request with { Ephemeral = CryptoPrimitives.ExportPublicPoint(intruder) };
+
+        Assert.Empty(host.OnRequest(forged, Candidate));
     }
 
     [Fact]
@@ -316,5 +332,225 @@ public sealed class AdmissionTests : IDisposable
         var welcome = Assert.Single(host.OnProof(Decode<AdmissionProof>(secondProof!)));
         Assert.True(candidate.OnWelcome(Decode<AdmissionWelcome>(welcome.Payload)));
         Assert.Equal(CandidacyState.Joined, candidate.State);
+    }
+
+    /// <summary>Un second membre du même groupe, avec son propre hôte.</summary>
+    private AdmissionHost OtherMember(GroupBook book)
+    {
+        using var identity = CryptoPrimitives.GenerateIdentity();
+        var key = CryptoPrimitives.ExportPublicPoint(identity);
+        var host = new AdmissionHost(book, () => key, _clock);
+        _disposables.Add(host);
+        return host;
+    }
+
+    [Fact]
+    public void Un_defieur_muet_rend_la_main_et_un_second_defi_est_accepte()
+    {
+        var (silent, book, created) = Member();
+        var other = OtherMember(book);
+        var candidate = NewCandidate();
+
+        var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
+        var challenge = Assert.Single(silent.OnRequest(request, Candidate));
+        Assert.NotNull(candidate.OnChallenge(Decode<AdmissionChallenge>(challenge.Payload)));
+        Assert.Equal(CandidacyState.Proving, candidate.State);
+
+        // La preuve se perd : le défieur ne répondra jamais.
+        _clock.Advance(AdmissionCandidate.ProofPatience - TimeSpan.FromSeconds(1));
+        Assert.Null(candidate.DueRedeposit());
+        Assert.Equal(CandidacyState.Proving, candidate.State);
+
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        var redeposit = candidate.DueRedeposit();
+        Assert.NotNull(redeposit);
+        Assert.Equal(CandidacyState.Waiting, candidate.State);
+
+        // Même aléa, même éphémère : c'est la même demande qui revient.
+        var again = Decode<AdmissionRequest>(redeposit!);
+        Assert.Equal(request.Nonce, again.Nonce);
+        Assert.Equal(request.Ephemeral, again.Ephemeral);
+
+        var second = Assert.Single(other.OnRequest(again, Candidate));
+        var proof = candidate.OnChallenge(Decode<AdmissionChallenge>(second.Payload));
+        var welcome = Assert.Single(other.OnProof(Decode<AdmissionProof>(proof!)));
+
+        Assert.True(candidate.OnWelcome(Decode<AdmissionWelcome>(welcome.Payload)));
+        Assert.Equal(CandidacyState.Joined, candidate.State);
+    }
+
+    [Fact]
+    public void Une_preuve_perdue_est_rejouee_sur_le_meme_defi()
+    {
+        var (host, _, created) = Member();
+        var candidate = NewCandidate();
+
+        var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
+        var challenge = Assert.Single(host.OnRequest(request, Candidate));
+        candidate.OnChallenge(Decode<AdmissionChallenge>(challenge.Payload));
+
+        _clock.Advance(AdmissionCandidate.ProofPatience);
+        var again = Assert.Single(host.OnRequest(Decode<AdmissionRequest>(candidate.DueRedeposit()!), Candidate));
+        Assert.Equal(challenge.Payload, again.Payload);
+        var proof = candidate.OnChallenge(Decode<AdmissionChallenge>(again.Payload));
+
+        var welcome = Assert.Single(host.OnProof(Decode<AdmissionProof>(proof!)));
+        Assert.True(candidate.OnWelcome(Decode<AdmissionWelcome>(welcome.Payload)));
+    }
+
+    [Fact]
+    public void Une_candidature_expire_aussi_en_attente_de_preuve()
+    {
+        var (host, _, created) = Member();
+        var candidate = NewCandidate();
+        var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
+
+        // Le défi arrive tard, quand la candidature touche à sa fin.
+        _clock.Advance(AdmissionCandidate.Lifetime - TimeSpan.FromSeconds(10));
+        var challenge = Assert.Single(host.OnRequest(request, Candidate));
+        candidate.OnChallenge(Decode<AdmissionChallenge>(challenge.Payload));
+        Assert.Equal(CandidacyState.Proving, candidate.State);
+
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.Null(candidate.DueRedeposit());
+        Assert.Equal(CandidacyState.Expired, candidate.State);
+    }
+
+    [Fact]
+    public void Une_demande_de_meme_alea_ne_remplace_pas_celle_qui_attend_un_moderateur()
+    {
+        var (host, _, created) = Member(password: "", asOwner: true);
+        var candidate = NewCandidate();
+        var request = Decode<AdmissionRequest>(Start(candidate, created, ""));
+        host.OnRequest(request, Candidate);
+        var seen = Assert.Single(host.Pending).LastSeen;
+
+        // Un porteur du code rejoue l'aléa avec son propre éphémère et un autre nom.
+        using var intruder = CryptoPrimitives.GenerateEphemeral();
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        host.OnRequest(request with { Ephemeral = CryptoPrimitives.ExportPublicPoint(intruder), CharacterName = "Autre Nom" }, Candidate);
+
+        var pending = Assert.Single(host.Pending);
+        Assert.Equal("Jhalen Tavari", pending.CharacterName);
+        Assert.Equal(seen, pending.LastSeen);
+
+        // La bienvenue approuvée reste scellée pour le vrai candidat.
+        var welcome = host.Approve(pending.Nonce);
+        Assert.Equal("Jhalen Tavari", welcome!.CharacterName);
+        Assert.True(candidate.OnWelcome(Decode<AdmissionWelcome>(welcome.Payload)));
+    }
+
+    [Fact]
+    public void Une_demande_identique_rafraichit_celle_qui_attend_un_moderateur()
+    {
+        var (host, _, created) = Member(password: "", asOwner: true);
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, ""));
+        host.OnRequest(request, Candidate);
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        host.OnRequest(request, Candidate);
+
+        Assert.Equal(_clock.UtcNow, Assert.Single(host.Pending).LastSeen);
+    }
+
+    private static AdmissionRequest WithFreshNonce(AdmissionRequest request)
+        => request with { Nonce = RandomNumberGenerator.GetBytes(AdmissionCodec.NonceLength) };
+
+    [Fact]
+    public void Au_dela_de_64_defis_vivants_la_demande_suivante_est_ignoree()
+    {
+        var (host, _, created) = Member();
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune"));
+
+        for (var i = 0; i < AdmissionHost.MaxLiveChallenges; i++)
+            Assert.Single(host.OnRequest(WithFreshNonce(request), Candidate));
+
+        Assert.Empty(host.OnRequest(WithFreshNonce(request), Candidate));
+    }
+
+    [Fact]
+    public void Au_dela_de_64_demandes_en_validation_la_suivante_est_ignoree()
+    {
+        var (host, _, created) = Member(password: "", asOwner: true);
+        var request = Decode<AdmissionRequest>(Start(NewCandidate(), created, ""));
+
+        for (var i = 0; i < AdmissionHost.MaxPendingValidations; i++)
+            host.OnRequest(WithFreshNonce(request), Candidate);
+
+        var last = WithFreshNonce(request);
+        host.OnRequest(last, Candidate);
+
+        Assert.Equal(AdmissionHost.MaxPendingValidations, host.Pending.Count);
+        Assert.DoesNotContain(host.Pending, pending => pending.Nonce.AsSpan().SequenceEqual(last.Nonce));
+    }
+
+    /// <summary>Un défi en cours, puis un changement de politique avant la preuve.</summary>
+    private AdmissionProof ProofThenChange(AdmissionHost host, GroupBook book, CreatedGroup created, Func<GroupRecord, byte[]> change)
+    {
+        var candidate = NewCandidate();
+        var request = Decode<AdmissionRequest>(Start(candidate, created, "lune"));
+        var challenge = Assert.Single(host.OnRequest(request, Candidate));
+        var proof = Decode<AdmissionProof>(candidate.OnChallenge(Decode<AdmissionChallenge>(challenge.Payload))!);
+
+        Assert.Equal(PolicyOffer.Adopted, book.OfferPolicy(created.Record.Id, change(book.Find(created.Record.Id)!)));
+        return proof;
+    }
+
+    [Fact]
+    public void Un_groupe_dissous_entre_defi_et_preuve_n_admet_pas()
+    {
+        var (host, book, created) = Member(asOwner: true);
+        var proof = ProofThenChange(host, book, created, GroupGovernance.Dissolve);
+
+        Assert.Empty(host.OnProof(proof));
+    }
+
+    [Fact]
+    public void Un_candidat_banni_entre_defi_et_preuve_n_obtient_rien()
+    {
+        var (host, book, created) = Member(asOwner: true);
+        var proof = ProofThenChange(host, book, created, record => GroupGovernance.Ban(record, new GroupBan(null, Candidate), null));
+
+        Assert.Empty(host.OnProof(proof));
+    }
+
+    [Fact]
+    public void Un_code_change_entre_defi_et_preuve_n_admet_pas()
+    {
+        var (host, book, created) = Member(asOwner: true);
+        var proof = ProofThenChange(host, book, created, record => GroupGovernance.NewCode(record, null));
+
+        Assert.Empty(host.OnProof(proof));
+    }
+
+    [Fact]
+    public void Un_passage_en_validation_entre_defi_et_preuve_n_admet_pas()
+    {
+        var (host, book, created) = Member(asOwner: true);
+        var proof = ProofThenChange(host, book, created, record => GroupGovernance.SetAdmission(record, AdmissionMode.Validation));
+
+        Assert.Empty(host.OnProof(proof));
+    }
+
+    [Fact]
+    public void Un_candidat_banni_avant_l_approbation_n_est_pas_admis()
+    {
+        var (host, book, created) = Member(password: "", asOwner: true);
+        host.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), created, "")), Candidate);
+        var pending = Assert.Single(host.Pending);
+
+        Assert.Equal(PolicyOffer.Adopted, book.OfferPolicy(created.Record.Id,
+            GroupGovernance.Ban(book.Find(created.Record.Id)!, new GroupBan(null, Candidate), null)));
+
+        Assert.Null(host.Approve(pending.Nonce));
+    }
+
+    [Fact]
+    public void Apres_dispose_l_hote_ne_cree_plus_rien()
+    {
+        var (host, _, created) = Member();
+        host.Dispose();
+
+        Assert.Empty(host.OnRequest(Decode<AdmissionRequest>(Start(NewCandidate(), created, "lune")), Candidate));
     }
 }

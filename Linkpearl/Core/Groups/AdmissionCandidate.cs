@@ -17,6 +17,7 @@ public enum CandidacyState
     /// <summary>Un membre a défié, mais nous n'avons pas de mot de passe à lui donner.</summary>
     NeedsPassword,
 
+    /// <summary>Preuve envoyée ; sans réponse, la candidature revient en attente (voir <see cref="AdmissionCandidate.ProofPatience"/>).</summary>
     Proving,
     Joined,
     Refused,
@@ -39,6 +40,17 @@ public sealed class AdmissionCandidate(IClock clock) : IDisposable
 
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// Sans bienvenue ni refus passé ce délai après le défi, la candidature
+    /// revient en attente et accepte un autre défi.
+    /// </summary>
+    /// <remarks>
+    /// Un membre qui défie puis se déconnecte, ou une preuve perdue en route,
+    /// gèlerait sinon la candidature jusqu'à son expiration. Le membre répond
+    /// dès qu'il lit sa boîte : une minute laisse passer plusieurs relèves.
+    /// </remarks>
+    public static readonly TimeSpan ProofPatience = TimeSpan.FromSeconds(60);
+
     private readonly Lock _gate = new();
     private ECDiffieHellman? _ephemeral;
     private AdmissionRequest? _request;
@@ -47,6 +59,7 @@ public sealed class AdmissionCandidate(IClock clock) : IDisposable
     private CandidacyState _state = CandidacyState.Idle;
     private DateTimeOffset _started;
     private DateTimeOffset _lastSent;
+    private DateTimeOffset _challenged;
 
     public CandidacyState State
     {
@@ -100,7 +113,7 @@ public sealed class AdmissionCandidate(IClock clock) : IDisposable
     {
         lock (_gate)
         {
-            if (_state is not CandidacyState.Waiting || _request is null)
+            if (_state is not (CandidacyState.Waiting or CandidacyState.Proving) || _request is null)
                 return null;
 
             var now = clock.UtcNow;
@@ -110,6 +123,17 @@ public sealed class AdmissionCandidate(IClock clock) : IDisposable
                 _state = CandidacyState.Expired;
                 DropEphemeral();
                 return null;
+            }
+
+            // Même aléa, même éphémère : une bienvenue tardive du premier
+            // défieur s'ouvre encore, et un défieur qui a gardé son défi le
+            // renvoie tel quel au redépôt, ce qui rattrape une preuve perdue.
+            if (_state is CandidacyState.Proving)
+            {
+                if (now - _challenged < ProofPatience)
+                    return null;
+
+                _state = CandidacyState.Waiting;
             }
 
             if (now - _lastSent < RedepositInterval)
@@ -142,6 +166,7 @@ public sealed class AdmissionCandidate(IClock clock) : IDisposable
             var tag = AdmissionSealing.ProofTag(_ephemeral, challenge.MemberEphemeral, _request.Nonce, _password, associated);
 
             _state = CandidacyState.Proving;
+            _challenged = clock.UtcNow;
             return AdmissionCodec.Encode(new AdmissionProof(_request.Code, _request.Nonce, challenge.MemberEphemeral, tag));
         }
     }

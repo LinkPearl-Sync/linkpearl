@@ -138,4 +138,6 @@ dotnet run --project Linkpearl.Harness -- --loss 2 --latency 80 --jitter 20
 La compilation du plugin depuis WSL a besoin des assemblies Dalamud dans
 `~/.xlcore/dalamud/Hooks/dev/`, que `deploy-plugin-dev.sh` aligne sur celles de XIVLauncher
 côté Windows avant de compiler. Le noyau et ses tests, eux, se compilent sans rien de tout
-cela : c'est tout l'intérêt de la règle 1.
+cela : c'est tout l'intérêt de la règle 1. Seule exigence : libicu sous Linux, car le
+projet de tests déroge à `InvariantGlobalization` pour que la normalisation Unicode des mots
+de passe soit réellement exercée.

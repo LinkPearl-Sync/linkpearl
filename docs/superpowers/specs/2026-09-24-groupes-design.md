@@ -224,8 +224,14 @@ utilise celui du code jusqu'à ce que la politique lui donne les autres.
    refus.
 
 Au-delà de **5 échecs par fenêtre** pour une même clé de candidat, le membre
-répond « trop d'essais » sans vérifier. Le compte est par membre, en mémoire :
-assez pour qu'essayer au hasard ne vaille rien.
+répond « trop d'essais » sans vérifier. Le compte est par membre, en mémoire.
+Il freine l'erreur honnête répétée, pas la devinette : une clé de candidat
+neuve par essai le contourne. Contre la devinette, la seule protection est
+l'entropie du mot de passe.
+
+Sans bienvenue ni refus une minute après le défi, le candidat revient en
+attente avec la même demande et accepte un autre défi. Un membre qui a gardé
+le défi le renvoie à l'identique au redépôt, ce qui rattrape une preuve perdue.
 
 ### Mode validation
 

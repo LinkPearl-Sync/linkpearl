@@ -24,8 +24,39 @@ public sealed record PendingValidation(
 /// </remarks>
 public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, IClock clock) : IDisposable
 {
-    /// <summary>Au-delà, deviner le mot de passe au hasard ne vaut plus rien.</summary>
+    /// <summary>Au-delà, on répond « trop d'essais » sans vérifier.</summary>
+    /// <remarks>
+    /// Le compte est par clé de candidat : il freine l'erreur honnête répétée,
+    /// pas la devinette, qu'une clé d'identité neuve par essai contourne sans
+    /// peine. Contre la devinette, la seule protection est l'entropie du mot
+    /// de passe.
+    /// </remarks>
     public const int MaxFailures = 5;
+
+    /// <summary>Au-delà, une demande nouvelle ne reçoit aucun défi.</summary>
+    /// <remarks>
+    /// La boîte d'admission est ouverte à quiconque tient le code : sans
+    /// plafond, un porteur du code ferait créer un éphémère et garder une
+    /// entrée par demande forgée, sans limite. 64 dépasse de loin les
+    /// candidatures simultanées plausibles d'un groupe de joueurs.
+    /// </remarks>
+    public const int MaxLiveChallenges = 64;
+
+    /// <summary>Au-delà, une demande nouvelle n'est pas proposée aux modérateurs.</summary>
+    /// <remarks>Même raison que <see cref="MaxLiveChallenges"/> : une page Demandes inondée ne sert plus à personne.</remarks>
+    public const int MaxPendingValidations = 64;
+
+    /// <summary>
+    /// Combien de réponses et de comptes d'échecs on garde au plus ; les plus
+    /// anciens sortent d'abord.
+    /// </summary>
+    /// <remarks>
+    /// Chaque aléa ou clé neuve y ajoute une entrée, et n'importe qui en
+    /// fabrique à volonté. Oublier une vieille réponse coûte au pire un défi
+    /// de plus ; oublier un vieux compte d'échecs ne coûte rien de plus que
+    /// ce que la clé neuve permet déjà (voir <see cref="MaxFailures"/>).
+    /// </remarks>
+    private const int MaxRemembered = 256;
 
     /// <summary>Le temps pour un candidat de répondre à un défi.</summary>
     public static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(10);
@@ -43,11 +74,16 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
     private readonly Dictionary<string, Challenge> _challenges = [];
     private readonly Dictionary<string, Waiting> _pending = [];
     private readonly Dictionary<string, DateTimeOffset> _answered = [];
-    private readonly Dictionary<PeerId, (int Count, long Window)> _failures = [];
+    private readonly Dictionary<PeerId, Failures> _failures = [];
+    private bool _disposed;
 
-    private sealed record Challenge(GroupId Group, AdmissionRequest Request, ECDiffieHellman Ephemeral, DateTimeOffset Created);
+    private sealed record Challenge(
+        GroupId Group, AdmissionRequest Request, PlayerFingerprint Candidate, ECDiffieHellman Ephemeral,
+        AdmissionOutbound Outbound, DateTimeOffset Created);
 
-    private sealed record Waiting(GroupId Group, AdmissionRequest Request, DateTimeOffset LastSeen);
+    private sealed record Waiting(GroupId Group, AdmissionRequest Request, PlayerFingerprint Candidate, DateTimeOffset LastSeen);
+
+    private readonly record struct Failures(int Count, long Window, DateTimeOffset Last);
 
     public IReadOnlyList<PendingValidation> Pending
     {
@@ -90,9 +126,13 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
             return [];
 
         var key = Convert.ToHexStringLower(request.Nonce);
+        var now = clock.UtcNow;
 
         lock (_gate)
         {
+            if (_disposed)
+                return [];
+
             Prune();
 
             if (_answered.ContainsKey(key))
@@ -100,18 +140,41 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
             if (policy.Attestation.Admission == AdmissionMode.Validation)
             {
-                _pending[key] = new Waiting(group.Id, request, clock.UtcNow);
+                // L'aléa circule en clair dans la demande : un porteur du code
+                // peut le rejouer avec son propre éphémère. Seule la demande
+                // identique rafraîchit l'attente, sans quoi la bienvenue que le
+                // modérateur approuve serait scellée pour l'intrus.
+                if (_pending.TryGetValue(key, out var waiting))
+                {
+                    if (SameRequest(waiting.Request, request))
+                        _pending[key] = waiting with { LastSeen = now };
+
+                    return [];
+                }
+
+                if (_pending.Count >= MaxPendingValidations)
+                    return [];
+
+                _pending[key] = new Waiting(group.Id, request, candidate, now);
                 return [];
             }
 
-            if (_challenges.ContainsKey(key))
+            // Un redépôt de la même demande veut dire que le candidat n'a rien
+            // reçu, ou que sa preuve s'est perdue : lui renvoyer le même défi
+            // le laisse la rejouer. Toute autre demande de même aléa est un
+            // rejeu, qui n'obtient rien.
+            if (_challenges.TryGetValue(key, out var live))
+                return SameRequest(live.Request, request) ? [live.Outbound with { Payload = [.. live.Outbound.Payload] }] : [];
+
+            if (_challenges.Count >= MaxLiveChallenges)
                 return [];
 
             var ephemeral = CryptoPrimitives.GenerateEphemeral();
-            _challenges[key] = new Challenge(group.Id, request, ephemeral, clock.UtcNow);
-
             var challenge = new AdmissionChallenge(request.Nonce, CryptoPrimitives.ExportPublicPoint(ephemeral));
-            return [new AdmissionOutbound(request.CharacterName, request.WorldId, group.Rendezvous, AdmissionCodec.Encode(challenge))];
+            var outbound = new AdmissionOutbound(request.CharacterName, request.WorldId, group.Rendezvous, AdmissionCodec.Encode(challenge));
+            _challenges[key] = new Challenge(group.Id, request, candidate, ephemeral, outbound, now);
+
+            return [outbound with { Payload = [.. outbound.Payload] }];
         }
     }
 
@@ -122,6 +185,9 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
         lock (_gate)
         {
+            if (_disposed)
+                return [];
+
             Prune();
 
             // Plusieurs membres défient le même candidat : la preuve désigne
@@ -132,25 +198,30 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
             _challenges.Remove(key);
             _answered[key] = clock.UtcNow;
+            KeepNewest(_answered, at => at);
         }
 
         using (challenge.Ephemeral)
         {
-            // Le groupe vient de l'aléa du défi, jamais de proof.Code : ce
-            // dernier ne figure dans aucune donnée associée, donc un porteur
-            // du réseau peut le modifier en route sans invalider l'étiquette.
-            // Le défi, lui, a été créé par OnRequest sur la base du code lu à
-            // ce moment-là dans Admitting : le groupe qu'il désigne est déjà
-            // celui pour lequel le candidat prouve tenir le mot de passe, sans
-            // qu'il soit besoin ni utile de revérifier proof.Code (voir le
-            // rapport de tâche pour la discussion de ce choix).
-            var group = book.Find(challenge.Group);
-
-            if (group?.Policy is not { Dissolved: false } policy)
-                return [];
-
+            // Le groupe vient du défi, jamais de proof.Code : ce dernier ne
+            // figure dans aucune donnée associée à l'étiquette, donc un porteur
+            // du réseau peut le modifier en route sans l'invalider. La politique
+            // a pu changer pendant les dix minutes du défi : on revérifie donc
+            // tout ce qu'OnRequest avait vérifié, contre le code de la demande
+            // mémorisée. Un code renouvelé révoque ainsi les défis en cours, et
+            // un groupe passé en validation n'admet plus sur simple mot de
+            // passe. Chaque cas se tait, comme OnRequest devant la même demande.
             var request = challenge.Request;
             var candidate = PeerId.Of(request.PublicKey);
+            var group = book.Find(challenge.Group);
+
+            if (group?.Policy is not { Dissolved: false } policy
+                || CanAdmit(group) is false
+                || policy.Attestation.Admission != AdmissionMode.Password
+                || policy.Code.AsSpan().SequenceEqual(request.Code) is false
+                || policy.IsBanned(candidate, challenge.Candidate))
+                return [];
+
             var window = MailboxAddress.IndexAt(clock.UtcNow);
 
             lock (_gate)
@@ -167,7 +238,8 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
                 lock (_gate)
                 {
                     var previous = _failures.TryGetValue(candidate, out var f) && f.Window == window ? f.Count : 0;
-                    _failures[candidate] = (previous + 1, window);
+                    _failures[candidate] = new Failures(previous + 1, window, clock.UtcNow);
+                    KeepNewest(_failures, entry => entry.Last);
                 }
 
                 return [Refuse(request, group, RefusalReason.WrongPassword)];
@@ -179,7 +251,10 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
     public AdmissionOutbound? Approve(byte[] nonce)
     {
-        if (TakePending(nonce) is not { } waiting || book.Find(waiting.Group) is not { Policy.Dissolved: false } group)
+        // Le bannissement a pu tomber pendant que la demande attendait.
+        if (TakePending(nonce) is not { } waiting
+            || book.Find(waiting.Group) is not { Policy: { Dissolved: false } policy } group
+            || policy.IsBanned(PeerId.Of(waiting.Request.PublicKey), waiting.Candidate))
             return null;
 
         using var ephemeral = CryptoPrimitives.GenerateEphemeral();
@@ -200,10 +275,11 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
         lock (_gate)
         {
-            if (_pending.Remove(key, out var waiting) is false)
+            if (_disposed || _pending.Remove(key, out var waiting) is false)
                 return null;
 
             _answered[key] = clock.UtcNow;
+            KeepNewest(_answered, at => at);
             return waiting;
         }
     }
@@ -215,6 +291,13 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
         => group is { OwnerKey: not null, Policy: { Dissolved: false } policy }
            && (policy.Attestation.Admission == AdmissionMode.Password
                || GroupGovernance.RoleOf(group, ourIdentityKey()) is not GroupRole.Member);
+
+    private static bool SameRequest(AdmissionRequest kept, AdmissionRequest incoming)
+        => kept.Code.AsSpan().SequenceEqual(incoming.Code)
+           && kept.PublicKey.AsSpan().SequenceEqual(incoming.PublicKey)
+           && kept.Ephemeral.AsSpan().SequenceEqual(incoming.Ephemeral)
+           && kept.WorldId == incoming.WorldId
+           && string.Equals(kept.CharacterName, incoming.CharacterName, StringComparison.Ordinal);
 
     private static AdmissionOutbound Welcome(AdmissionRequest request, GroupRecord group, ECDiffieHellman ephemeral)
     {
@@ -230,6 +313,13 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
 
     private static AdmissionOutbound Refuse(AdmissionRequest request, GroupRecord group, byte reason)
         => new(request.CharacterName, request.WorldId, group.Rendezvous, AdmissionCodec.Encode(new AdmissionRefusal(request.Nonce, reason)));
+
+    private static void KeepNewest<TKey, TValue>(Dictionary<TKey, TValue> map, Func<TValue, DateTimeOffset> at)
+        where TKey : notnull
+    {
+        while (map.Count > MaxRemembered)
+            map.Remove(map.MinBy(entry => at(entry.Value)).Key);
+    }
 
     private void Prune()
     {
@@ -263,10 +353,15 @@ public sealed class AdmissionHost(GroupBook book, Func<byte[]?> ourIdentityKey, 
     {
         lock (_gate)
         {
+            _disposed = true;
+
             foreach (var challenge in _challenges.Values)
                 challenge.Ephemeral.Dispose();
 
             _challenges.Clear();
+            _pending.Clear();
+            _answered.Clear();
+            _failures.Clear();
         }
     }
 }
