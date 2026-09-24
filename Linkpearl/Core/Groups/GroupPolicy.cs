@@ -57,8 +57,6 @@ public sealed record GroupPolicy(
     string Password, IReadOnlyList<GroupBan> Bans, bool Dissolved, GroupAttestation Attestation,
     byte[] Signer, byte[] Signature)
 {
-    private HashSet<PeerId>? _protected;
-
     /// <summary>
     /// Un pair protégé n'est jamais tenu pour banni, même par une empreinte de
     /// personnage qui le viserait : sans cela, quiconque connaît le personnage
@@ -75,14 +73,24 @@ public sealed record GroupPolicy(
     }
 
     /// <summary>Vrai si la clé appartient au propriétaire-membre ou à un modérateur attesté.</summary>
-    public bool IsProtected(PeerId peer) => Protected.Contains(peer);
+    public bool IsProtected(PeerId peer) => ProtectedPeers().Contains(peer);
 
-    // Champ calculé paresseusement, jamais dans le contrat d'égalité d'un
-    // record positionnel : course bénigne acceptée si deux threads le
-    // recalculent en même temps, le résultat est le même.
-    private HashSet<PeerId> Protected => _protected ??= ComputeProtected();
-
-    private HashSet<PeerId> ComputeProtected()
+    /// <summary>
+    /// Les pairs qu'aucun bannissement par clé ne peut viser : le
+    /// propriétaire-membre et chaque modérateur attesté.
+    /// </summary>
+    /// <remarks>
+    /// Recalculé à chaque appel, jamais mis en cache : un <c>record</c>
+    /// recopie ses champs privés dans un <c>with</c>, donc un cache survivrait
+    /// à un remplacement de <see cref="Attestation"/> et garderait protégé un
+    /// modérateur qu'une politique plus récente vient de retirer. Au plus dix-
+    /// sept décompressions de point P-256, négligeable face au coût d'un
+    /// bannissement mal jugé. Une clé qui ne se décompresse pas est ignorée
+    /// sans lever : une politique seulement décodée, pas encore acceptée, peut
+    /// en porter une mal formée, et <see cref="GroupPolicyRules.TryAccept"/> la
+    /// rejette par ailleurs avant qu'on s'y fie.
+    /// </remarks>
+    public IReadOnlySet<PeerId> ProtectedPeers()
     {
         var protectedPeers = new HashSet<PeerId>();
 
@@ -102,9 +110,7 @@ public sealed record GroupPolicy(
         }
         catch (CryptographicException)
         {
-            // Une politique seulement décodée, pas encore acceptée, peut porter
-            // une clé mal formée : ignorer plutôt que lever, TryAccept la
-            // rejettera de toute façon avant qu'on s'y fie.
+            // Voir la remarque de ProtectedPeers : ignorer plutôt que lever.
         }
     }
 

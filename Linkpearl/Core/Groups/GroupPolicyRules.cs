@@ -79,11 +79,20 @@ public static class GroupPolicyRules
             // signataire : pour écarter un modérateur, il faut d'abord le
             // retirer des modérateurs (tâche 4), pas le bannir sous
             // l'attestation qui l'y nomme encore.
-            var protectedPeers = new HashSet<PeerId>();
-            protectedPeers.Add(PeerId.Of(CryptoPrimitives.Decompress(candidate.Attestation.Owner)));
+            //
+            // GroupPolicy.ProtectedPeers ignore sans lever une clé qui ne se
+            // décompresse pas, pour rester utilisable sur une politique
+            // seulement décodée. Ici la politique va être acceptée : on
+            // décompresse d'abord explicitement Owner et chaque modérateur,
+            // pour qu'une clé malformée fasse échouer l'acceptation comme
+            // avant, via le catch ci-dessous, plutôt que d'être ignorée en
+            // silence par ProtectedPeers.
+            CryptoPrimitives.Decompress(candidate.Attestation.Owner);
 
             foreach (var moderator in candidate.Attestation.Moderators)
-                protectedPeers.Add(PeerId.Of(CryptoPrimitives.Decompress(moderator)));
+                CryptoPrimitives.Decompress(moderator);
+
+            var protectedPeers = candidate.ProtectedPeers();
 
             if (candidate.Bans.Any(ban => ban.Peer is { } peer && protectedPeers.Contains(peer)))
             {

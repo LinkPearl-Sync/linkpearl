@@ -255,4 +255,28 @@ public sealed class GroupPolicyTests : IDisposable
         Assert.False(GroupPolicyRules.TryAccept(encoded, Id, PolicyFixture.Compressed(other), out _, out var why));
         Assert.Equal("clé de groupe qui ne donne pas cet identifiant", why);
     }
+
+    [Fact]
+    public void Un_moderateur_retire_par_with_n_est_plus_protege()
+    {
+        var moderatorPeer = PeerOf(_moderator);
+        var policy = PolicyFixture.Policy(_group, Attested(), _group);
+
+        // Remplit ce qui aurait été un cache, si GroupPolicy en tenait un.
+        Assert.False(policy.IsBanned(moderatorPeer, null));
+        Assert.True(policy.IsProtected(moderatorPeer));
+
+        var withoutModerator = policy with { Attestation = policy.Attestation with { Moderators = [] } };
+
+        Assert.False(withoutModerator.IsProtected(moderatorPeer));
+    }
+
+    [Fact]
+    public void Un_moderateur_ne_ressuscite_pas_un_groupe_dissous()
+    {
+        var dissolved = PolicyFixture.Policy(_group, Attested(), _group, version: 10, dissolved: true);
+        var revived = PolicyFixture.Policy(_group, Attested(), _moderator, version: 15, dissolved: false);
+
+        Assert.False(GroupPolicyRules.IsNewer(revived, dissolved));
+    }
 }
