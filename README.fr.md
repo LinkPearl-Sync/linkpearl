@@ -108,6 +108,14 @@ Un groupe synchronise tous ses membres entre eux, sans les pairer un à un : une
 
 Le code est une porte, pas une clé : seul, il ne fait entrer personne. Après avoir exclu quelqu'un qui connaissait le mot de passe, changez le code et le mot de passe.
 
+### Public
+
+En tête de la page **Groupes**, la case **Public**, décochée par défaut. Cochée (la première fois, confirmez avec **Activer Public**), vous voyez l'apparence moddée de tout joueur visible qui l'a cochée aussi, et il voit la vôtre, sans code ni pairage. Ce sont des inconnus : leurs animations, VFX et sons sont coupés par défaut. Les cases **Animations**, **VFX** et **Sons** les rétablissent pour tout le Public ; sous **Joueurs rencontrés**, le bouton d'effets d'un joueur le règle à part, et **Suivre le Public** le ramène au réglage commun. **Bloquer**, en deux clics, fait qu'il ne vous voit plus et que vous ne le voyez plus ; la liste **Bloqués** permet de **Débloquer**. Décocher **Public** garde vos blocages pour la prochaine fois.
+
+### Listes de bannissement des services
+
+Chaque service de rendez-vous peut publier une liste de personnages bannis. Un personnage listé par l'un de vos services n'est ni pairé, ni admis dans vos groupes, ni vu par le Public, et son apparence n'est pas posée chez vous, même s'il est dans vos pairs. Sa ligne porte la puce **banni par un service**, avec le motif au survol. Une telle liste relève de la réputation, pas de la preuve : retirer un service de vos réglages lève ses bannissements.
+
 ---
 
 ## Vie privée

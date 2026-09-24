@@ -62,9 +62,11 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
    privés) : création, code, admission par mot de passe ou par validation d'un
    modérateur, politique signée et propagée, gouvernance, page Groupes,
    sauvegarde v2 ; protocole dans la section « Groupes privés » de
-   `protocol.md`. Reste l'incrément 3, le groupe Public et l'application des
-   listes de bannissement des services, puis les essais en jeu : créer,
-   rejoindre dans les deux modes, exclure, dissoudre, à deux personnages.
+   `protocol.md`. Incrément 3 livré le 24 septembre (groupe Public, listes de
+   bannissement des services servies par pages et appliquées partout) ;
+   sections « Groupe Public » et « Listes de bannissement » de `protocol.md`.
+   Restent les essais en jeu : créer, rejoindre dans les deux modes, exclure,
+   dissoudre, puis Public et un bannissement, à deux personnages.
 
 ## État des jalons
 
@@ -146,14 +148,16 @@ fois et ne mesure pas le moteur.
 - **SimpleHeels garde un décalage reçu** jusqu'à ce qu'on le désenregistre, ce
   qui exige un personnage visible : un pair retiré hors de vue garde son
   décalage chez nous jusqu'au rechargement de SimpleHeels.
-- **Les échanges de fichiers de Penumbra ne partent pas.** Le classement les
-  reconnaît (`FileSwap`) mais le manifeste ne les porte pas : un mod de pose
-  fait d'un simple échange vers une animation du jeu ne se synchronise pas.
 - **Le contrôle de squelette n'a aucun test automatique** : il passe par le
   chargeur Havok du jeu. À éprouver en jeu avec une animation d'un squelette
   étendu.
 - **Le rythme d'une milliseconde de LiteNetLib** reste à surveiller en jeu :
   rien n'a encore mesuré ce qu'il coûte au processeur.
+- **Un service tiers d'avant les trames de bannissement ne bannit personne** :
+  il répond « trame inattendue », et le plugin n'a alors aucune liste de lui.
+- **Vérifier un joueur visible contre une liste coûte de 0,1 à 0,3 s de
+  processeur** par sel de liste, une fois. Seuls les joueurs qui ont le plugin
+  ou sont au carnet sont vérifiés, et une liste vide ne coûte rien.
 - **Les groupes privés n'ont pas encore été éprouvés en jeu.** Tout ce qui
   décide est testé sous Linux ; l'interface et les boîtes d'admission sur un
   vrai service, non.
@@ -183,6 +187,11 @@ fois et ne mesure pas le moteur.
   Tout ce qui précède a été éprouvé sur une seule machine.
 - Les **groupes privés**, à deux personnages : créer un groupe, le rejoindre
   par mot de passe puis par validation, exclure un membre, dissoudre.
+- **Public**, à deux personnages : activé d'un côté puis des deux, effets
+  coupés puis réactivés pour tous puis pour un seul, bloquer, désactiver puis
+  réactiver (le blocage reste).
+- **Un bannissement** ajouté par la console d'un service local : la puce
+  « banni par un service », l'apparence retirée, la demande de pairage ignorée.
 
 ## Pièges appris à la dure
 

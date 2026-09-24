@@ -127,6 +127,19 @@ est son entropie.
 sa clé et son personnage, mais il peut encore interroger les boîtes de
 présence et savoir lesquels des membres dont il connaît le nom sont en ligne.
 
+**Dans le Public, le service sait tout de l'appartenance.** Il connaît le
+secret, puisque c'est une constante : il sait quels joueurs visibles l'un de
+l'autre l'ont activé, et peut les apparier. Il ne lit pas davantage le contenu,
+qui passe dans la session SIGMA-I. Un membre du Public est un inconnu : le
+premier contact avec lui est gagnable par qui arrive avant le vrai, comme dans
+tout groupe.
+
+**Une liste de bannissement relève de la réputation, pas de la preuve.** Un
+service ne voit aucun contenu, donc il ne peut vérifier aucune accusation.
+Chaque service actif peut imposer sa liste : un seul qui liste un personnage
+suffit à l'écarter partout. Retirer ce service de ses réglages lève ses
+bannissements.
+
 ## Pairage
 
 Fichiers : `Core/Sync/PairRequestMessage.cs`, `Integration/PresenceService.cs`,
@@ -566,6 +579,72 @@ Le verrouillage d'une victime, la fausse preuve et le faux refus sont du déni
 de service par un porteur du code ou un tiers : ils coûtent au candidat un
 nouvel essai, jamais un accès à qui n'en a pas.
 
+## Groupe Public
+
+Un groupe comme les autres, sans code, sans admission, sans politique et sans
+propriétaire. Quiconque l'active voit l'apparence de tout joueur visible qui
+l'a activé aussi, et en est vu.
+
+- **Secret constant** : `SHA-256("linkpearl:public:v1")` =
+  `41b3c4bdfd876a04e0c524eca45a469d6baf181d0657e464eeef4f59bfaa5a7a`.
+  `GroupId = SHA-256(secret)[0..16]` = `c92263f11cad477c5082acba30895596`.
+  Tout le reste en dérive comme pour un groupe privé : boîte de présence,
+  secret de paire de membres, identifiant de runtime (voir
+  [Groupes (noyau)](#groupes-noyau)).
+- **Aucune clé de groupe**, donc aucune politique : un `GroupPolicy` reçu pour
+  le Public est ignoré.
+- **Services** : ceux de la configuration du joueur, pas ceux d'une politique.
+- **Désactivé par défaut.** Désactivé, il reste enregistré, « dormant » : il
+  n'ouvre aucune boîte et ne compose personne, mais garde ses blocages.
+- **Modération locale** : un joueur bloqué (clé épinglée et empreinte de
+  personnage) n'est ni admis au handshake ni composé. La liste n'est jamais
+  transmise. S'y ajoutent les listes de bannissement des services (section
+  suivante) ; tant que la vérification d'un joueur visible n'est pas faite, un
+  membre du Public n'est pas composé.
+- **Animations, VFX et sons refusés par défaut** pour ses membres, réglables
+  pour tout le Public et membre par membre. Ce réglage ne touche que ce qu'on
+  reçoit : il ne change rien au fil.
+- Il compte dans les 48 sessions de groupe, et pas dans les 10 groupes d'un
+  personnage.
+
+## Listes de bannissement
+
+Chaque service publie une liste d'empreintes lentes de personnages
+(`BanList`, PBKDF2-SHA256 de `nom@monde` normalisé, sous un sel propre à la
+liste). Elle descend au plugin par deux trames du rendez-vous :
+
+```
+BanListQuery  0x15 | page (2, BE)
+BanListData   0x16 | page (2, BE) | pages (2, BE) | JSON UTF-8 d'une BanList
+```
+
+- **Pages de 64 entrées**, 64 pages au plus : une entrée pèse jusqu'à
+  860 octets en JSON indenté, et une liste compte au plus 4 096 entrées. Chaque
+  page est une liste complète, sous le même sel et le même coût, portant une
+  tranche des entrées. Le client les fusionne, refuse des pages sous deux sels
+  ou deux coûts, et ne compte qu'une fois une entrée vue sur deux pages (la
+  liste peut changer entre deux pages).
+- **Une page hors de la liste** reçoit une erreur, et la connexion reste.
+  Au-delà de 64 pages servies sur une connexion, le service répond par une
+  erreur et ferme : trois octets de demande pour 64 Kio de réponse feraient
+  sinon de lui un amplificateur.
+- **Le client** demande la liste de chaque service actif à la connexion, puis
+  toutes les heures, sur une connexion à part, et la garde en mémoire. Un échec
+  garde la liste précédente. **Un service qui ne connaît pas ces trames**
+  répond « trame inattendue » et ferme : il n'a pas de liste, et ne bannit
+  personne.
+- **Application** : un personnage listé par un seul service actif n'est pas
+  pairé (sa demande est ignorée, le bouton de demande n'est pas proposé), pas
+  admis dans un groupe, pas composé par un groupe ni par le Public, et son
+  apparence n'est pas posée, paire directe comprise. Le motif s'affiche au
+  survol de sa ligne.
+- **Coût** : une dérivation coûte de 0,1 à 0,3 s de processeur. Elle se fait
+  une fois par personnage et par sel, sur le pool de threads, pour les seuls
+  joueurs visibles qui ont le plugin ou sont au carnet. Une liste vide ne coûte
+  rien. Les dérivations à la demande (demande de pairage ou d'admission venue
+  d'un inconnu) sont plafonnées à 20 par minute ; au-delà, la demande est
+  ignorée.
+
 ## Rendez-vous et connexion
 
 Fichiers : `Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Sync/PeerConnector.cs`,
@@ -899,7 +978,10 @@ Les vecteurs des groupes (boîtes de présence et d'admission, secret de paire d
 groupe, clés de scellement de l'admission) sont figés dans les tests de
 `Linkpearl.Core.Tests/Groups/` (ceux de l'admission recalculés en Python) ; leurs
 valeurs sont reprises dans [Groupes (noyau)](#groupes-noyau) et
-[Groupes privés](#groupes-privés).
+[Groupes privés](#groupes-privés). Le secret et l'identifiant du Public sont
+figés par `PublicGroupTests.Le_secret_et_l_identifiant_sont_figes`, et les
+trames `bannissement-demande` et `bannissement-page` par
+`rendezvous-vectors.json`, commun au plugin et au service.
 
 Régénérer : `dotnet run --project Linkpearl.Harness -- vectors`. **Une
 modification de ce fichier est un changement de protocole sur le fil**, et doit

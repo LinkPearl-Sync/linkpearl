@@ -111,6 +111,14 @@ A group syncs all its members with each other, without pairing them one by one: 
 
 The code is a door, not a key: on its own, it lets no one in. After excluding someone who knew the password, change the code and the password.
 
+### Public
+
+At the top of the **Groupes** (Groups) page, the **Public** checkbox, unchecked by default. Checked (the first time, confirm with **Activer Public**, enable Public), you see the modded appearance of every visible player who checked it too, and they see yours, with no code and no pairing. They are strangers: their animations, VFX and sounds are off by default. The **Animations**, **VFX** and **Sons** (sounds) checkboxes turn them back on for all of Public; under **Joueurs rencontrés** (players met), a player's effects button sets them for that player alone, and **Suivre le Public** (follow Public) brings them back to the shared setting. **Bloquer** (block), in two clicks, means they no longer see you and you no longer see them; the **Bloqués** (blocked) list lets you **Débloquer** (unblock). Unchecking **Public** keeps your blocks for next time.
+
+### Services' ban lists
+
+Each rendezvous service can publish a list of banned characters. A character listed by one of your services is not paired, not admitted into your groups, not seen through Public, and their appearance is not applied on your side, even if they are one of your pairs. Their row carries the **banni par un service** (banned by a service) chip, with the reason on hover. Such a list is a matter of reputation, not proof: removing a service from your settings lifts its bans.
+
 ---
 
 ## Privacy
