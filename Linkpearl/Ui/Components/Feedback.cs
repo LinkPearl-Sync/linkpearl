@@ -17,9 +17,8 @@ internal static class Feedback
         using var color = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.BgSurface);
 
         ImGui.BeginTooltip();
-        ImGui.PushTextWrapPos(Theme.S(320f));
-        content();
-        ImGui.PopTextWrapPos();
+        using (Text.WrapAt(Theme.S(320f)))
+            content();
         ImGui.EndTooltip();
     }
 
@@ -133,6 +132,13 @@ internal static class Feedback
         var safe = Glyphs.Safe(text);
         var size = ImGui.CalcTextSize(safe);
 
+        // Trop long pour tenir sur une ligne : centrer n'a plus de sens, on replie.
+        if (size.X > ImGui.GetContentRegionAvail().X - Card.RightInset)
+        {
+            Text.Wrapped(text, color);
+            return;
+        }
+
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (ImGui.GetContentRegionAvail().X - size.X) * 0.5f);
         ImGui.TextColored(color, safe);
     }
@@ -161,7 +167,7 @@ internal static class Feedback
         ImGui.Dummy(new Vector2(0f, padY));
         ImGui.Indent(padX);
 
-        Text.WithIcon(icon, text, color, Theme.Text, wrap: true);
+        Text.WithIcon(icon, text, color, Theme.Text);
 
         ImGui.Unindent(padX);
         ImGui.Dummy(new Vector2(0f, padY - Theme.S(Theme.GapXs)));

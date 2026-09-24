@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using Dalamud.Plugin.Services;
 using Linkpearl.Core.Abstractions;
@@ -125,6 +126,24 @@ public sealed class PresenceService : IDisposable
                 return _sessions.Values.FirstOrDefault(session => session.Failure is not null)?.Failure;
         }
     }
+
+    /// <summary>La panne dite au joueur, dans sa langue.</summary>
+    /// <remarks>
+    /// Le message d'une <see cref="SocketException"/> est celui de Windows, dans
+    /// la langue du système et sans le nom en cause : « Le nom demandé est
+    /// valide mais aucune donnée du type requise n'a été trouvée » ne dit à
+    /// personne que c'est son DNS qui ne connaît pas le service.
+    /// </remarks>
+    private static string Describe(Exception e) => e switch
+    {
+        SocketException { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData or SocketError.TryAgain }
+            => "adresse du service introuvable (DNS)",
+        SocketException { SocketErrorCode: SocketError.ConnectionRefused }
+            => "le service refuse la connexion",
+        SocketException { SocketErrorCode: SocketError.TimedOut }
+            => "le service ne répond pas",
+        _ => e.Message,
+    };
 
     /// <summary>Les empreintes reconnues comme utilisant le plugin, avec leur fraîcheur.</summary>
     public IReadOnlyDictionary<PlayerFingerprint, DateTimeOffset> Detected => _detected;
@@ -264,7 +283,7 @@ public sealed class PresenceService : IDisposable
         {
             lock (_gate)
             {
-                session.Failure = e.Message;
+                session.Failure = Describe(e);
 
                 // Trente secondes avant de réessayer : un service éteint ne doit
                 // pas être sollicité à chaque ronde de détection.
@@ -364,7 +383,7 @@ public sealed class PresenceService : IDisposable
                 catch (Exception e)
                 {
                     lock (_gate)
-                        session.Failure = e.Message;
+                        session.Failure = Describe(e);
 
                     _log.Warning(e, $"Interrogation de présence en échec sur {session.At}.");
                     break;
@@ -585,7 +604,7 @@ public sealed class PresenceService : IDisposable
         catch (Exception e) when (ct.IsCancellationRequested is false)
         {
             lock (_gate)
-                session.Failure = e.Message;
+                session.Failure = Describe(e);
 
             _log.Warning(e, $"Écoute interrompue sur {session.At}.");
         }
