@@ -14,7 +14,7 @@
 Dans le jeu, tapez `/xlsettings`, ouvrez l'onglet **Experimental**, et collez cette adresse dans **Custom Plugin Repositories** :
 
 ```
-https://raw.githubusercontent.com/LinkPearl-Sync/linkpearl-sync-plugin/main/repo.json
+https://linkpearl-sync.github.io/repo.json
 ```
 
 Cliquez sur **+**, puis sur **Enregistrer**. Ouvrez ensuite `/xlplugins`, cherchez **Linkpearl Sync** et installez-le.

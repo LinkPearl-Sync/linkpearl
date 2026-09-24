@@ -33,6 +33,14 @@ identiques dans les deux dépôts, et ce sont eux qui attrapent une dérive. Ils
 cohérence de format, pas de la justesse du protocole : ils ont été produits par
 l'implémentation qu'ils testent.
 
+## Le site, et l'adresse que Dalamud interroge
+
+[linkpearl-sync.github.io](https://github.com/LinkPearl-Sync/linkpearl-sync.github.io), cloné dans
+`~/Projects/linkpearl-sync/site`, sert la page de présentation et `https://linkpearl-sync.github.io/repo.json`,
+l'adresse donnée aux joueurs. Le `repo.json` d'ici reste celui qui fait foi : la publication
+l'écrit, puis relance le site qui en reprend une copie. Ne jamais le supprimer ni le déplacer :
+les premiers joueurs ont l'ancienne adresse `raw.githubusercontent.com` dans leur Dalamud.
+
 ## Les trois règles dont la violation coûte le plus cher
 
 1. **`Linkpearl/Core/` ne référence jamais Dalamud.** C'est ce qui permet à

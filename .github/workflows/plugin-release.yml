@@ -162,3 +162,20 @@ jobs:
           git add repo.json
           git diff --staged --quiet || git commit -m "chore: manifeste du dépôt pour $TAG"
           git push origin main
+
+      - name: Republier le site
+        shell: bash
+        # Dalamud lit repo.json sur linkpearl-sync.github.io, qui en sert une
+        # copie reprise d'ici. Sans ce déclenchement, la nouvelle version n'y
+        # apparaîtrait qu'au passage horaire du site. GITHUB_TOKEN ne peut pas
+        # lancer un workflow d'un autre dépôt : il faut un jeton à grain fin
+        # limité à « Actions : écriture » sur le dépôt du site. S'il manque, la
+        # publication n'échoue pas pour autant, le passage horaire rattrape.
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::SITE_DISPATCH_TOKEN absent : le site se mettra à jour à son prochain passage horaire."
+            exit 0
+          fi
+          gh workflow run pages.yml -R LinkPearl-Sync/linkpearl-sync.github.io
