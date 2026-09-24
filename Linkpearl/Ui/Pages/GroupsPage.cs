@@ -59,6 +59,19 @@ internal sealed class GroupsPage(
     /// <remarks>Repliée par défaut : on y vient rarement, et rien ne doit s'y toucher par mégarde.</remarks>
     private readonly HashSet<GroupId> _managing = [];
 
+    /// <summary>Carte dépliée ou non, par groupe, le temps de la session.</summary>
+    private readonly Dictionary<GroupId, bool> _expanded = [];
+
+    /// <summary>
+    /// Jusqu'à ce nombre de groupes, leurs cartes s'ouvrent dépliées.
+    /// </summary>
+    /// <remarks>
+    /// Une carte ouverte, membres et code compris, occupe vite la hauteur de la
+    /// fenêtre : au-delà de deux, la page devient un défilement où l'on cherche
+    /// son groupe. Replier par défaut garde tous les noms à l'écran d'un coup.
+    /// </remarks>
+    private const int MaxExpandedByDefault = 2;
+
     /// <summary>Le groupe dont le code vient d'être copié, et jusqu'à quand le bouton le dit.</summary>
     /// <remarks>Sans ce retour, rien ne distingue un clic réussi d'un clic perdu.</remarks>
     private (GroupId Id, DateTime Until)? _copied;
@@ -106,7 +119,7 @@ internal sealed class GroupsPage(
         var ours = actions.OurIdentityKey();
 
         foreach (var group in all.OrderBy(group => group.Name, StringComparer.OrdinalIgnoreCase))
-            DrawGroup(group, GroupGovernance.RoleOf(group, ours), known);
+            DrawGroup(group, GroupGovernance.RoleOf(group, ours), known, all.Count);
     }
 
     private void DrawJoin()
@@ -232,7 +245,7 @@ internal sealed class GroupsPage(
                    Theme.TextFaint);
     }
 
-    private void DrawGroup(GroupRecord group, GroupRole role, IReadOnlyList<PeerStatus> known)
+    private void DrawGroup(GroupRecord group, GroupRole role, IReadOnlyList<PeerStatus> known, int groupCount)
     {
         var id = group.Id.ToString();
         var policy = group.Policy;
@@ -248,11 +261,23 @@ internal sealed class GroupsPage(
         // dans la pile d'ImGui, ce qui isole les boutons d'un groupe à l'autre.
         using var card = Card.Begin($"group_{id}", accent: dissolved ? Theme.Danger : null);
 
-        // Le nom vient de la politique, donc du réseau : Text.H2 le passe par Glyphs.Safe.
-        Text.H2(group.Name);
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        // L'état est fixé à la première image où le groupe paraît, puis
+        // mémorisé : recalculé à chaque image, l'arrivée d'un troisième groupe
+        // replierait d'un coup ceux que l'on était en train de lire.
+        if (_expanded.TryGetValue(group.Id, out var expanded) is false)
+        {
+            expanded = groupCount <= MaxExpandedByDefault;
+            _expanded[group.Id] = expanded;
+        }
 
-        DrawChips(group, role, policy);
+        if (DrawHeader(group, role, policy, known, expanded))
+        {
+            expanded = !expanded;
+            _expanded[group.Id] = expanded;
+        }
+
+        if (expanded is false)
+            return;
 
         if (manages && GroupGovernance.CodeOf(group) is { } code)
             DrawInvite(group, policy!, code);
@@ -269,6 +294,87 @@ internal sealed class GroupsPage(
             ImGui.Dummy(Theme.S(0f, Theme.GapM));
             DrawManagement(group, role, policy!);
         }
+    }
+
+    /// <summary>
+    /// L'en-tête d'une carte de groupe : chevron, nom et puces, cliquable sur toute sa largeur.
+    /// </summary>
+    /// <returns>Vrai si l'en-tête vient d'être cliqué.</returns>
+    /// <remarks>
+    /// Le bouton invisible est posé après coup sur la surface dessinée : sa
+    /// hauteur dépend des polices du nom et des puces, qu'on ne connaît
+    /// qu'après les avoir dessinés. Rien d'interactif ne s'y trouve dessous,
+    /// donc il ne vole aucun clic.
+    /// </remarks>
+    private static bool DrawHeader(GroupRecord group, GroupRole role, GroupPolicy? policy,
+                                   IReadOnlyList<PeerStatus> known, bool expanded)
+    {
+        var start = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X - Card.RightInset;
+
+        var glyph = (expanded ? Icons.Expanded : Icons.Collapsed).S();
+        var chevronWidth = ImGui.CalcTextSize(Icons.Expanded.S()).X;
+        var gutter = chevronWidth + Theme.S(Theme.GapM);
+
+        float nameHeight;
+
+        using (Fonts.PushH2())
+            nameHeight = ImGui.GetTextLineHeight();
+
+        // Le chevron dans une réserve à gauche, centré sur la ligne du nom : en
+        // police de corps posé à côté d'un titre, il flotterait au-dessus.
+        ImGui.Dummy(new Vector2(chevronWidth, nameHeight));
+        ImGui.SameLine(0f, Theme.S(Theme.GapM));
+
+        // Le nom vient de la politique, donc du réseau : Text.H2 le passe par Glyphs.Safe.
+        Text.H2(group.Name);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+
+        // Les puces s'alignent sous le nom, pas sous le chevron.
+        ImGui.Indent(gutter);
+        DrawChips(group, role, policy);
+
+        if (expanded is false)
+            DrawOnlineSummary(group, known);
+
+        ImGui.Unindent(gutter);
+
+        var end = ImGui.GetCursorScreenPos();
+        var height = end.Y - start.Y - ImGui.GetStyle().ItemSpacing.Y;
+
+        ImGui.SetCursorScreenPos(start);
+        var clicked = ImGui.InvisibleButton("header", new Vector2(Math.Max(1f, width), Math.Max(1f, height)));
+        var hovered = ImGui.IsItemHovered();
+
+        if (hovered)
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+        var chevronSize = ImGui.CalcTextSize(glyph);
+        ImGui.GetWindowDrawList().AddText(
+            new Vector2(start.X, MathF.Round(start.Y + (nameHeight - chevronSize.Y) * 0.5f)),
+            ImGui.GetColorU32(hovered ? Theme.Accent : Theme.TextFaint), glyph);
+
+        return clicked;
+    }
+
+    /// <summary>Replié, le nombre de membres joints : ce qu'on vient chercher sans rouvrir la carte.</summary>
+    /// <remarks>Joint ou apparence posée, la même frontière que la pastille des membres.</remarks>
+    private static void DrawOnlineSummary(GroupRecord group, IReadOnlyList<PeerStatus> known)
+    {
+        var online = 0;
+
+        foreach (var status in known)
+        {
+            if (status.Group == group.Id && status.State is not PeerSessionState.Disconnected
+                && status.View.Fingerprint is { } fingerprint && group.Members.ContainsKey(fingerprint))
+                online++;
+        }
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapM));
+
+        // Calé sur le texte des puces, qui portent un rembourrage vertical.
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + Theme.S(Theme.GapXs));
+        Text.Small($"{online} en ligne", online > 0 ? Theme.Online : Theme.TextFaint);
     }
 
     /// <summary>Le titre d'une section de la carte d'un groupe, un cran sous celui des cartes.</summary>
