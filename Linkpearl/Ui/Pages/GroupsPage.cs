@@ -31,7 +31,7 @@ namespace Linkpearl.Ui.Pages;
 /// </remarks>
 internal sealed class GroupsPage(
     GroupBook groups, AdmissionCandidate candidate, Func<IReadOnlyList<PeerStatus>> statuses, GroupActions actions,
-    GroupEntryWindow entry)
+    GroupEntryWindow entry, IServiceBans bans)
 {
     /// <summary>
     /// La dissolution n'est relayée que par le propriétaire : l'oublier trop
@@ -98,9 +98,10 @@ internal sealed class GroupsPage(
         Text.Small("Un groupe synchronise tous ses membres entre eux, sans les pairer un à un.");
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
+        DrawPublic();
         DrawEntry();
 
-        var all = groups.All;
+        var all = groups.All.Where(group => group.IsPublic is false).ToList();
 
         if (all.Count == 0)
         {
@@ -115,6 +116,108 @@ internal sealed class GroupsPage(
 
         foreach (var group in all.OrderBy(group => group.Name, StringComparer.OrdinalIgnoreCase))
             DrawGroup(group, GroupGovernance.RoleOf(group, ours), known, all.Count);
+    }
+
+    private const string PublicWarning =
+        "Tout joueur visible qui a aussi activé Public verra votre apparence moddée, et vous la sienne.";
+
+    /// <summary>Vrai tant que l'avertissement attend sa réponse, avant la première activation.</summary>
+    private bool _publicWarningOpen;
+
+    /// <summary>
+    /// L'interrupteur du Public, ses effets, ses joueurs rencontrés et bloqués.
+    /// </summary>
+    /// <remarks>
+    /// En tête de page, avant les groupes privés : c'est le seul réglage de la
+    /// page qui expose le joueur à des inconnus, et il doit se voir sans
+    /// défiler. L'avertissement s'affiche à la première activation.
+    /// </remarks>
+    private void DrawPublic()
+    {
+        var @public = groups.Public;
+        var enabled = @public is { Dormant: false };
+        var toggled = enabled;
+
+        if (ImGui.Checkbox("Public##public_toggle", ref toggled) && toggled != enabled)
+        {
+            if (toggled && actions.PublicWarningSeen() is false)
+                _publicWarningOpen = true;
+            else
+                actions.SetPublic(toggled);
+        }
+
+        ImGui.SameLine();
+        Text.Small(enabled
+            ? "Activé : vous voyez les joueurs visibles qui l'ont activé, et ils vous voient."
+            : "Désactivé : seuls vos pairs et vos groupes vous voient.");
+
+        if (_publicWarningOpen)
+            DrawPublicWarning();
+
+        if (@public is null)
+            return;
+
+        var receive = @public.DefaultReceive;
+        var animations = receive.Animations;
+        var vfx = receive.Vfx;
+        var sounds = receive.Sounds;
+
+        Text.Small("Effets des joueurs du Public que vous n'avez pas réglés un par un :");
+
+        var changed = ImGui.Checkbox("Animations##public_anim", ref animations);
+        ImGui.SameLine();
+        changed |= ImGui.Checkbox("VFX##public_vfx", ref vfx);
+        ImGui.SameLine();
+        changed |= ImGui.Checkbox("Sons##public_sounds", ref sounds);
+
+        if (changed)
+            actions.SetDefaultReceive(PublicGroup.Id, new TransientCategories(animations, vfx, sounds));
+
+        if (enabled && @public.Members.Count > 0 && ImGui.CollapsingHeader($"Joueurs rencontrés ({@public.Members.Count})##public_members"))
+        {
+            using var scope = ImRaii.PushId("public");
+            DrawMembers(@public, GroupRole.Member, statuses());
+        }
+
+        if (@public.Blocked.Count > 0)
+            DrawBlocked(@public);
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+    }
+
+    private void DrawPublicWarning()
+    {
+        Text.Small(PublicWarning, Theme.Idle);
+
+        if (Btn.Draw("Activer Public", BtnTone.Primary, BtnSize.Small, Icons.World, id: "public_confirm"))
+        {
+            actions.AcknowledgePublicWarning();
+            actions.SetPublic(true);
+            _publicWarningOpen = false;
+        }
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+        if (Btn.Draw("Annuler", BtnTone.Secondary, BtnSize.Small, Icons.Close, id: "public_cancel"))
+            _publicWarningOpen = false;
+    }
+
+    private void DrawBlocked(GroupRecord @public)
+    {
+        Text.Small($"Bloqués ({@public.Blocked.Count})");
+
+        foreach (var (ban, index) in @public.Blocked.Select((ban, index) => (ban, index)))
+        {
+            var name = ban.Fingerprint is { } print && @public.Members.TryGetValue(print, out var member)
+                ? Glyphs.Safe(member.DisplayName)
+                : "joueur bloqué";
+
+            ImGui.TextColored(Theme.Text, name);
+            ImGui.SameLine();
+
+            if (Btn.Draw("Débloquer", BtnTone.Secondary, BtnSize.Small, Icons.Resume, id: $"unblock_{index}"))
+                actions.Unblock(PublicGroup.Id, ban);
+        }
     }
 
     /// <summary>Les deux portes d'entrée, et où en est une candidature pour qui a fermé sa fenêtre.</summary>
@@ -507,6 +610,12 @@ internal sealed class GroupsPage(
         AlignToFrame();
         ImGui.TextColored(Theme.Text, Glyphs.Safe(member.DisplayName));
 
+        if (bans.Status(member.Fingerprint) is { Verdict: BanVerdict.Listed })
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            BanChip.Draw(bans, member.Fingerprint);
+        }
+
         if (moderator)
         {
             ImGui.SameLine(0f, Theme.S(Theme.GapS));
@@ -539,6 +648,15 @@ internal sealed class GroupsPage(
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
         DrawReceive(group, member, id);
+
+        // Le Public n'a ni politique ni modérateurs : bloquer chez soi est sa
+        // seule modération, avec les listes des services.
+        if (group.IsPublic)
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            DrawBlock(group, member, id);
+            return;
+        }
 
         if (policy is null || policy.Dissolved)
             return;
@@ -681,6 +799,36 @@ internal sealed class GroupsPage(
 
         if (changed)
             actions.SetReceive(group.Id, member.Fingerprint, new TransientCategories(animations, vfx, sounds));
+
+        // Un membre du Public réglé à la main ne suit plus le réglage commun :
+        // ce bouton l'y ramène.
+        if (group.IsPublic && member.Receive is not null
+            && Btn.Draw("Suivre le Public", BtnTone.Ghost, BtnSize.Small, Icons.Refresh, id: $"follow_{id}"))
+            actions.SetReceive(group.Id, member.Fingerprint, null);
+    }
+
+    /// <summary>Bloque un membre du Public, en deux clics comme l'exclusion.</summary>
+    private void DrawBlock(GroupRecord group, GroupMember member, string id)
+    {
+        var key = $"block_{group.Id}_{id}";
+        var confirming = IsConfirming(key);
+
+        if (Btn.Icon(Icons.Blocked, $"block_{id}",
+                     tone: confirming ? BtnTone.Danger : BtnTone.Ghost,
+                     tooltip: confirming
+                         ? "Cliquer encore pour bloquer ce joueur"
+                         : "Bloquer : il ne vous verra plus et vous ne le verrez plus, dans le Public."))
+        {
+            if (confirming)
+            {
+                _confirming = null;
+                actions.Block(group.Id, member.Fingerprint);
+            }
+            else
+            {
+                _confirming = (key, DateTime.UtcNow.AddSeconds(4));
+            }
+        }
     }
 
     /// <summary>La gestion : une sous-carte par réglage, la zone sensible à part et en dernier.</summary>

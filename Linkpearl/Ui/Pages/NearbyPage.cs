@@ -1,6 +1,7 @@
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Bindings.ImGui;
 using Linkpearl.Integration;
+using Linkpearl.Core.Safety;
 using Linkpearl.Ui.Components;
 
 namespace Linkpearl.Ui.Pages;
@@ -23,7 +24,8 @@ namespace Linkpearl.Ui.Pages;
 /// n'est pas encore pairé.
 /// </remarks>
 internal sealed class NearbyPage(
-    PluginState state, PresenceService presence, PairingService pairing, Action<NearbyPlayer> requestPair)
+    PluginState state, PresenceService presence, PairingService pairing, Action<NearbyPlayer> requestPair,
+    IServiceBans bans)
 {
     private string _filter = "";
 
@@ -130,6 +132,15 @@ internal sealed class NearbyPage(
             // une demande que le carnet rejetterait, sans que rien ne le dise.
             AlignToFrame();
             Chip.Draw("déjà pairé", Theme.Online, Icons.Applied);
+            return;
+        }
+
+        // Listé par un service actif : sa demande serait ignorée chez nous, et
+        // la nôtre n'a pas lieu d'être. La puce remplace le bouton, motif au survol.
+        if (bans.Status(player.Fingerprint) is { Verdict: BanVerdict.Listed })
+        {
+            AlignToFrame();
+            BanChip.Draw(bans, player.Fingerprint);
             return;
         }
 

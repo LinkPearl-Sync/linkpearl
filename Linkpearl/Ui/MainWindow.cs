@@ -48,7 +48,8 @@ public sealed class MainWindow : ThemedWindow
         BackupState backupState, Action<string, string?> backup, Action<string, string?> restore,
         CacheKeeper cacheKeeper, Action showOnboarding,
         GroupBook groupBook, AdmissionCandidate candidate, GroupActions groupActions,
-        Func<IReadOnlyList<PendingValidation>> admissions, GroupEntryWindow groupEntry)
+        Func<IReadOnlyList<PendingValidation>> admissions, GroupEntryWindow groupEntry,
+        IServiceBans serviceBans)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -60,8 +61,8 @@ public sealed class MainWindow : ThemedWindow
         _cacheKeeper  = cacheKeeper;
         _cacheChooser = new CacheChooser(cacheKeeper);
 
-        var nearby = new NearbyPage(state, presence, pairing, requestPair);
-        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair, setPairReceive);
+        var nearby = new NearbyPage(state, presence, pairing, requestPair, serviceBans);
+        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair, setPairReceive, serviceBans);
         _backup = new BackupCard(backupState, backup, restore);
         var settings = new SettingsPage(
             configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding);
@@ -69,7 +70,7 @@ public sealed class MainWindow : ThemedWindow
         _requests = new RequestsPage(
             state, presence, accept, decline, admissions, groupActions.Approve, groupActions.Decline);
 
-        var groups = new GroupsPage(groupBook, candidate, statuses, groupActions, groupEntry);
+        var groups = new GroupsPage(groupBook, candidate, statuses, groupActions, groupEntry, serviceBans);
 
         _shell = new AppShell(
         [

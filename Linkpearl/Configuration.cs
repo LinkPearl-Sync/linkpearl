@@ -134,5 +134,11 @@ public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
     /// </remarks>
     public bool BackupReminded { get; set; }
 
+    /// <summary>
+    /// Vrai une fois l'avertissement de Public lu.
+    /// </summary>
+    /// <remarks>La spec veut qu'il s'affiche une fois : la première activation, pas chaque bascule.</remarks>
+    public bool PublicWarningSeen { get; set; }
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

@@ -51,6 +51,23 @@ public sealed class GroupActions
 
     public required Action<GroupId, PlayerFingerprint, TransientCategories?> SetReceive { get; init; }
 
+    /// <summary>Active ou désactive le Public ; désactivé, il garde ses blocages.</summary>
+    public required Action<bool> SetPublic { get; init; }
+
+    /// <summary>Vrai si l'avertissement de Public a déjà été lu.</summary>
+    public required Func<bool> PublicWarningSeen { get; init; }
+
+    /// <summary>Note que l'avertissement de Public a été lu.</summary>
+    public required Action AcknowledgePublicWarning { get; init; }
+
+    /// <summary>Bloque un membre chez soi, par son personnage et sa clé épinglée.</summary>
+    public required Action<GroupId, PlayerFingerprint> Block { get; init; }
+
+    public required Action<GroupId, GroupBan> Unblock { get; init; }
+
+    /// <summary>Les effets acceptés des membres qu'on n'a pas réglés un par un.</summary>
+    public required Action<GroupId, TransientCategories> SetDefaultReceive { get; init; }
+
     /// <summary>Notre clé d'identité publique, point de 65 octets, pour calculer notre rôle.</summary>
     public required Func<byte[]?> OurIdentityKey { get; init; }
 }

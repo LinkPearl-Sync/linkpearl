@@ -24,7 +24,7 @@ namespace Linkpearl.Ui.Pages;
 internal sealed class PairsPage(
     PairingService pairing, Func<IReadOnlyList<PeerStatus>> statuses,
     Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
-    Action<PeerId, TransientCategories> setReceive)
+    Action<PeerId, TransientCategories> setReceive, IServiceBans bans)
 {
     private string _filter = "";
 
@@ -132,6 +132,12 @@ internal sealed class PairsPage(
         ImGui.TableNextColumn();
         AlignToFrame();
         ImGui.TextColored(Theme.Text, Glyphs.Safe(pair.DisplayName));
+
+        if (bans.Status(pair.PinnedFingerprint ?? default) is { Verdict: BanVerdict.Listed })
+        {
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            BanChip.Draw(bans, pair.PinnedFingerprint);
+        }
 
         if (status is { State: not PeerSessionState.Disconnected, Route: { } route })
         {

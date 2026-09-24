@@ -372,7 +372,8 @@ public sealed class Plugin : IDalamudPlugin
             _candidate,
             _groupActions,
             () => _admissionHost.Pending,
-            _groupEntry);
+            _groupEntry,
+            _serviceBans);
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -852,6 +853,10 @@ public sealed class Plugin : IDalamudPlugin
                         // plus tard.
                         TakeJoinedGroup();
 
+                        // Les services du Public sont ceux de la configuration :
+                        // ils suivent un service ajouté ou retiré sans rien réactiver.
+                        _groups.SetPublicServices(ActiveServices());
+
                         _presence.SetGroups(_groups.All);
                         await _presence.EnsureOpenAsync(self.Fingerprint, ct).ConfigureAwait(false);
 
@@ -1330,8 +1335,22 @@ public sealed class Plugin : IDalamudPlugin
         Decline = pending => AnswerAdmission(_admissionHost.Decline(pending.Nonce)),
         SetPaused = _groups.SetPaused,
         SetReceive = _groups.SetReceive,
+        SetPublic = enabled => _groups.SetPublic(enabled, ActiveServices()),
+        PublicWarningSeen = () => _configuration.PublicWarningSeen,
+        AcknowledgePublicWarning = () =>
+        {
+            _configuration.PublicWarningSeen = true;
+            _configuration.Save();
+        },
+        Block = _groups.Block,
+        Unblock = _groups.Unblock,
+        SetDefaultReceive = _groups.SetDefaultReceive,
         OurIdentityKey = () => _pairing.Identity?.PublicKey,
     };
+
+    /// <summary>Les services actifs de la configuration : ceux du Public.</summary>
+    private List<RendezvousAddress> ActiveServices()
+        => [.. _configuration.ActiveRendezvous.Select(entry => entry.Address)];
 
     /// <summary>Crée un groupe dont nous sommes le propriétaire, et en donne le code.</summary>
     /// <returns>Vrai si le groupe existe désormais, pour que sa fenêtre se ferme.</returns>
