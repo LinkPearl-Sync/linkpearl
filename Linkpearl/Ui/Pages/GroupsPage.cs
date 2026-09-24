@@ -655,7 +655,7 @@ internal sealed class GroupsPage(
     /// <remarks>Copie de celui des pairs : accentué dès qu'une catégorie est bloquée.</remarks>
     private void DrawReceive(GroupRecord group, GroupMember member, string id)
     {
-        var receive = member.Receive;
+        var receive = group.ReceiveOf(member);
         var limited = receive != TransientCategories.All;
 
         if (Btn.Icon(Icons.Effects, $"effects_{id}",

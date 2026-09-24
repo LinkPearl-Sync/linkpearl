@@ -31,8 +31,15 @@ public sealed record GroupMember
 
     public bool Paused { get; init; }
 
-    /// <summary>Les animations, VFX et sons acceptés de ce membre.</summary>
-    public TransientCategories Receive { get; init; } = TransientCategories.All;
+    /// <summary>
+    /// Les animations, VFX et sons acceptés de ce membre, ou null pour suivre le groupe.
+    /// </summary>
+    /// <remarks>
+    /// Null tant qu'on n'a rien réglé pour lui : il suit alors
+    /// <see cref="GroupRecord.DefaultReceive"/>, et « tout réactiver pour le
+    /// Public » le libère avec les autres. Un réglage posé d'un clic l'emporte.
+    /// </remarks>
+    public TransientCategories? Receive { get; init; }
 
     /// <summary>
     /// La clé d'identité complète épinglée, point de 65 octets.
@@ -76,4 +83,31 @@ public sealed record GroupRecord
 
     /// <summary>La politique vérifiée la plus récente. Nulle tant qu'aucun membre ne l'a transmise.</summary>
     public GroupPolicy? Policy { get; init; }
+
+    /// <summary>
+    /// Vrai pour un Public désactivé, gardé pour ses blocages et ses réglages.
+    /// </summary>
+    /// <remarks>
+    /// Il n'ouvre aucune boîte et ne compose personne. Le retirer du carnet
+    /// ferait perdre, à chaque désactivation, les joueurs qu'on avait bloqués.
+    /// Toujours faux pour un groupe privé.
+    /// </remarks>
+    public bool Dormant { get; init; }
+
+    /// <summary>
+    /// Les joueurs qu'on a bloqués dans ce groupe. Local, jamais transmis.
+    /// </summary>
+    /// <remarks>Le Public n'a pas de politique : c'est sa seule modération avec les listes des services.</remarks>
+    public IReadOnlyList<GroupBan> Blocked { get; init; } = [];
+
+    /// <summary>Ce qu'on accepte d'un membre qu'on n'a pas réglé un par un.</summary>
+    public TransientCategories DefaultReceive { get; init; } = TransientCategories.All;
+
+    public bool IsPublic => PublicGroup.Is(Id);
+
+    /// <summary>Vrai si la politique bannit ce membre ou si on l'a bloqué.</summary>
+    public bool Refuses(PeerId? key, PlayerFingerprint? member)
+        => Policy?.IsBanned(key, member) is true || Blocked.Any(ban => ban.Matches(key, member));
+
+    public TransientCategories ReceiveOf(GroupMember? member) => member?.Receive ?? DefaultReceive;
 }

@@ -27,9 +27,18 @@ public static class GroupBookCodec
         string Fingerprint, string? Id, string DisplayName, long? LastSeenAt, bool Paused, int Receive,
         string? PublicKey = null);
 
+    private sealed record BanDto(string? Peer, string? Fingerprint);
+
     private sealed record GroupDto(
         string Id, string Name, string Secret, string[] Rendezvous, long JoinedAt, MemberDto[] Members,
-        string? OwnerKey = null, string? SigningKey = null, string? Policy = null);
+        string? OwnerKey = null, string? SigningKey = null, string? Policy = null,
+        bool Dormant = false, BanDto[]? Blocked = null, int? DefaultReceive = null);
+
+    /// <summary>Un membre sans réglage propre, qui suit le groupe.</summary>
+    private const int ReceiveFollowsGroup = -1;
+
+    /// <summary>Même borne que les bannis d'une politique.</summary>
+    private const int MaxBlocked = 256;
 
     /// <summary>Même borne que la clé PKCS#8 qu'une identité ECDSA P-256 exporte.</summary>
     private const int MaxSigningKeyLength = 1024;
@@ -54,17 +63,26 @@ public static class GroupBookCodec
                 member.DisplayName,
                 member.LastSeenAt?.ToUnixTimeSeconds(),
                 member.Paused,
-                ToBits(member.Receive),
+                member.Receive is { } receive ? ToBits(receive) : ReceiveFollowsGroup,
                 member.PublicKey is { } publicKey ? Convert.ToHexStringLower(publicKey) : null))],
             group.OwnerKey is { } ownerKey ? Convert.ToHexStringLower(ownerKey) : null,
             group.SigningKey is { } signingKey ? Convert.ToHexStringLower(signingKey) : null,
-            group.Policy is { } policy ? Convert.ToHexStringLower(GroupPolicyCodec.Encode(policy)) : null)).ToList());
+            group.Policy is { } policy ? Convert.ToHexStringLower(GroupPolicyCodec.Encode(policy)) : null,
+            group.IsPublic && group.Dormant,
+            [.. group.Blocked.Select(ban => new BanDto(
+                ban.Peer is { } peer ? Convert.ToHexStringLower(peer.ToBytes()) : null,
+                ban.Fingerprint is { } print ? Convert.ToHexStringLower(print.ToBytes()) : null))],
+            ToBits(group.DefaultReceive))).ToList());
 
     public static IReadOnlyList<GroupRecord> Decode(ReadOnlySpan<byte> json)
     {
         var dtos = JsonSerializer.Deserialize<List<GroupDto?>>(json) ?? [];
+        var groups = dtos.Select(Rehydrate).OfType<GroupRecord>().ToList();
 
-        return [.. dtos.Select(Rehydrate).OfType<GroupRecord>().Take(GroupBook.MaxGroups)];
+        // Le Public ne compte pas dans les dix : il n'ouvre qu'une boîte de
+        // présence par fenêtre, et aucune d'admission.
+        return [.. groups.Where(group => group.IsPublic is false).Take(GroupBook.MaxGroups),
+                .. groups.Where(group => group.IsPublic).Take(1)];
     }
 
     public static bool IsValid(byte[] json)
@@ -97,9 +115,6 @@ public static class GroupBookCodec
                 .OfType<RendezvousAddress>()
                 .ToList();
 
-            // Un groupe sans service est injoignable, comme un pair sans service.
-            if (places.Count == 0)
-                return null;
 
             var members = (dto.Members ?? [])
                 .Select(RehydrateMember)
@@ -109,6 +124,26 @@ public static class GroupBookCodec
                 .ToDictionary(same => same.Key, same => same.First());
 
             var id = GroupId.FromBytes(Convert.FromHexString(dto.Id));
+            var isPublic = PublicGroup.Is(id);
+
+            // Le Public tire ses services de la configuration : il vit sans en
+            // avoir d'enregistré. Un groupe privé sans service est injoignable,
+            // comme un pair sans service.
+            if (places.Count == 0 && isPublic is false)
+                return null;
+
+            // L'identifiant du Public avec un autre secret, ou une clé, ferait
+            // composer sous des boîtes que personne n'ouvre, ou prêter une
+            // autorité à ce qui n'en a aucune.
+            if (isPublic && (secret.AsSpan().SequenceEqual(PublicGroup.Secret) is false
+                             || dto.OwnerKey is not null || dto.SigningKey is not null || dto.Policy is not null))
+                return null;
+
+            var blocked = (dto.Blocked ?? [])
+                .Take(MaxBlocked)
+                .Select(RehydrateBan)
+                .OfType<GroupBan>()
+                .ToList();
 
             byte[]? ownerKey = null;
 
@@ -171,6 +206,11 @@ public static class GroupBookCodec
                 OwnerKey = ownerKey,
                 SigningKey = signingKey,
                 Policy = policy,
+                Dormant = isPublic && dto.Dormant,
+                Blocked = blocked,
+                DefaultReceive = dto.DefaultReceive is { } bits
+                    ? FromBits(bits)
+                    : isPublic ? TransientCategories.None : TransientCategories.All,
             };
         }
         catch (Exception e) when (e is FormatException or ArgumentException or NullReferenceException)
@@ -215,11 +255,26 @@ public static class GroupBookCodec
                 DisplayName = dto.DisplayName,
                 LastSeenAt = dto.LastSeenAt is { } seen ? DateTimeOffset.FromUnixTimeSeconds(seen) : null,
                 Paused = dto.Paused,
-                Receive = FromBits(dto.Receive),
+                Receive = dto.Receive == ReceiveFollowsGroup ? null : FromBits(dto.Receive),
                 PublicKey = publicKey,
             };
         }
         catch (Exception e) when (e is FormatException or ArgumentException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
+    private static GroupBan? RehydrateBan(BanDto? dto)
+    {
+        try
+        {
+            var peer = dto?.Peer is { } peerHex ? PeerId.FromBytes(Convert.FromHexString(peerHex)) : (PeerId?)null;
+            var print = dto?.Fingerprint is { } printHex ? PlayerFingerprint.FromBytes(Convert.FromHexString(printHex)) : (PlayerFingerprint?)null;
+
+            return peer is null && print is null ? null : new GroupBan(peer, print);
+        }
+        catch (Exception e) when (e is FormatException or ArgumentException)
         {
             return null;
         }

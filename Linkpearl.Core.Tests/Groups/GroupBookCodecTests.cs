@@ -79,4 +79,61 @@ public sealed class GroupBookCodecTests
         Assert.True(GroupBookCodec.IsValid(GroupBookCodec.Encode([])));
         Assert.False(GroupBookCodec.IsValid("pas du json"u8.ToArray()));
     }
+
+    [Fact]
+    public void Public_dormant_se_relit_avec_ses_blocages_et_ses_reglages()
+    {
+        var bob = PlayerFingerprint.Of("bob", 21);
+        var alice = PlayerFingerprint.Of("alice", 21);
+        var group = PublicGroup.Create([], DateTimeOffset.FromUnixTimeSeconds(1_700_000_000)) with
+        {
+            Dormant = true,
+            Blocked = [new GroupBan(null, bob)],
+            DefaultReceive = new TransientCategories(true, false, false),
+            Members = new Dictionary<PlayerFingerprint, GroupMember>
+            {
+                [alice] = new() { Fingerprint = alice, DisplayName = "Alice", Receive = TransientCategories.All },
+                [bob] = new() { Fingerprint = bob, DisplayName = "Bob" },
+            },
+        };
+
+        var back = Assert.Single(GroupBookCodec.Decode(GroupBookCodec.Encode([group])));
+
+        Assert.True(back.IsPublic);
+        Assert.True(back.Dormant);
+        Assert.Empty(back.Rendezvous);    // Public vit sans service enregistré : ils viennent de la configuration
+        Assert.Equal(group.Blocked, back.Blocked);
+        Assert.Equal(group.DefaultReceive, back.DefaultReceive);
+        Assert.Equal(TransientCategories.All, back.Members[alice].Receive);
+        Assert.Null(back.Members[bob].Receive);
+    }
+
+    [Fact]
+    public void Un_faux_Public_est_rejete()
+    {
+        // L'identifiant du Public avec un autre secret : un fichier altéré qui
+        // ferait composer le Public sous des boîtes que personne d'autre n'ouvre.
+        var forged = PublicGroup.Create([], DateTimeOffset.UnixEpoch) with { Secret = new byte[32] };
+
+        Assert.Empty(GroupBookCodec.Decode(GroupBookCodec.Encode([forged])));
+    }
+
+    [Fact]
+    public void Un_groupe_prive_ne_peut_pas_etre_dormant()
+    {
+        var group = GroupBookTests.Group([.. Enumerable.Range(0, 32).Select(i => (byte)i)], DateTimeOffset.UnixEpoch) with { Dormant = true };
+
+        Assert.False(Assert.Single(GroupBookCodec.Decode(GroupBookCodec.Encode([group]))).Dormant);
+    }
+
+    [Fact]
+    public void Public_ne_compte_pas_dans_les_dix_groupes()
+    {
+        var groups = Enumerable.Range(0, GroupBook.MaxGroups)
+            .Select(i => GroupBookTests.Group([.. Enumerable.Range(0, 32).Select(b => (byte)(b + i))], DateTimeOffset.UnixEpoch))
+            .Append(PublicGroup.Create([], DateTimeOffset.UnixEpoch))
+            .ToList();
+
+        Assert.Equal(GroupBook.MaxGroups + 1, GroupBookCodec.Decode(GroupBookCodec.Encode(groups)).Count);
+    }
 }

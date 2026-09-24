@@ -103,7 +103,7 @@ public sealed class GroupDialPlanner(IClock clock)
             Trust = PairTrust.Accepted,
             PairedAt = group.JoinedAt,
             PinnedFingerprint = theirs,
-            Receive = known?.Receive ?? TransientCategories.All,
+            Receive = group.ReceiveOf(known),
             Group = new GroupOrigin(group.Id, ours, theirs),
         };
     }
