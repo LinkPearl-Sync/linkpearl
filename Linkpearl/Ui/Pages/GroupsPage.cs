@@ -136,58 +136,140 @@ internal sealed class GroupsPage(
     {
         var @public = groups.Public;
         var enabled = @public is { Dormant: false };
-        var toggled = enabled;
 
-        if (ImGui.Checkbox("Public##public_toggle", ref toggled) && toggled != enabled)
         {
-            if (toggled && actions.PublicWarningSeen() is false)
-                _publicWarningOpen = true;
-            else
-                actions.SetPublic(toggled);
+            // Une carte comme les groupes privés, accentuée tant qu'elle est
+            // active : c'est l'état qui expose le joueur, il doit se voir de loin.
+            using var card = Card.Begin("public_card", accent: enabled ? Theme.Online : null);
+
+            DrawPublicHeader(enabled);
+
+            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+            Text.Small(enabled
+                           ? "Vous voyez les joueurs visibles qui l'ont activé, et ils vous voient."
+                           : "Seuls vos pairs et vos groupes vous voient.",
+                       Theme.TextFaint);
+
+            if (_publicWarningOpen)
+                DrawPublicWarning();
+
+            if (@public is not null)
+            {
+                // Les effets ne se règlent qu'actif : désactivé, personne du
+                // Public n'est reçu, et trois boutons sans effet brouilleraient
+                // la carte. Les blocages, eux, restent visibles : ils survivent.
+                if (enabled)
+                {
+                    ImGui.Dummy(Theme.S(0f, Theme.GapM));
+                    DrawPublicEffects(@public);
+
+                    if (@public.Members.Count > 0)
+                    {
+                        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+                        DrawPublicMembers(@public);
+                    }
+                }
+
+                if (@public.Blocked.Count > 0)
+                {
+                    ImGui.Dummy(Theme.S(0f, Theme.GapM));
+                    DrawBlocked(@public);
+                }
+            }
         }
-
-        ImGui.SameLine();
-        Text.Small(enabled
-            ? "Activé : vous voyez les joueurs visibles qui l'ont activé, et ils vous voient."
-            : "Désactivé : seuls vos pairs et vos groupes vous voient.");
-
-        if (_publicWarningOpen)
-            DrawPublicWarning();
-
-        if (@public is null)
-            return;
-
-        var receive = @public.DefaultReceive;
-        var animations = receive.Animations;
-        var vfx = receive.Vfx;
-        var sounds = receive.Sounds;
-
-        Text.Small("Effets des joueurs du Public que vous n'avez pas réglés un par un :");
-
-        var changed = ImGui.Checkbox("Animations##public_anim", ref animations);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("VFX##public_vfx", ref vfx);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("Sons##public_sounds", ref sounds);
-
-        if (changed)
-            actions.SetDefaultReceive(PublicGroup.Id, new TransientCategories(animations, vfx, sounds));
-
-        if (enabled && @public.Members.Count > 0 && ImGui.CollapsingHeader($"Joueurs rencontrés ({@public.Members.Count})##public_members"))
-        {
-            using var scope = ImRaii.PushId("public");
-            DrawMembers(@public, GroupRole.Member, statuses());
-        }
-
-        if (@public.Blocked.Count > 0)
-            DrawBlocked(@public);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
     }
 
+    /// <summary>Le titre de la carte, et l'interrupteur calé à droite comme les actions d'une ligne.</summary>
+    private void DrawPublicHeader(bool enabled)
+    {
+        ImGui.AlignTextToFramePadding();
+        Text.WithIcon(Icons.World, "Public", enabled ? Theme.Online : Theme.Accent);
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+        ImGui.AlignTextToFramePadding();
+        Text.Small(enabled ? "activé" : "désactivé", enabled ? Theme.Online : Theme.TextFaint);
+
+        var label = enabled ? "Désactiver" : "Activer";
+        var icon = enabled ? Icons.Hidden : Icons.World;
+
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
+        var room = ImGui.GetContentRegionAvail().X - Card.RightInset - Btn.Measure(label, BtnSize.Small, icon);
+
+        if (room > 0f)
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + room);
+
+        // Pendant l'avertissement, le bouton se tait : c'est l'avertissement
+        // qui porte la confirmation, et deux boutons « Activer » se liraient mal.
+        if (Btn.Draw(label, enabled ? BtnTone.Secondary : BtnTone.Primary, BtnSize.Small, icon,
+                     id: "public_toggle", disabled: _publicWarningOpen))
+        {
+            if (enabled is false && actions.PublicWarningSeen() is false)
+                _publicWarningOpen = true;
+            else
+                actions.SetPublic(enabled is false);
+        }
+    }
+
+    /// <summary>
+    /// Les trois catégories d'effets, en boutons allumés ou éteints comme le mode d'admission.
+    /// </summary>
+    private void DrawPublicEffects(GroupRecord @public)
+    {
+        Section(Icons.Effects, "Effets reçus");
+
+        var receive = @public.DefaultReceive;
+
+        (string Label, FontAwesomeIcon Icon, bool On, Func<bool, TransientCategories> With)[] toggles =
+        [
+            ("Animations", Icons.Animations, receive.Animations, on => receive with { Animations = on }),
+            ("VFX", Icons.Vfx, receive.Vfx, on => receive with { Vfx = on }),
+            ("Sons", Icons.Sounds, receive.Sounds, on => receive with { Sounds = on }),
+        ];
+
+        for (var i = 0; i < toggles.Length; i++)
+        {
+            var (label, icon, on, with) = toggles[i];
+
+            if (i > 0)
+                ImGui.SameLine(0f, Theme.S(Theme.GapXs));
+
+            if (Btn.Draw(label, on ? BtnTone.Primary : BtnTone.Secondary, BtnSize.Small, icon, id: $"public_fx_{i}",
+                         tooltip: on ? "Reçus. Cliquer pour les bloquer." : "Bloqués. Cliquer pour les recevoir."))
+                actions.SetDefaultReceive(PublicGroup.Id, with(on is false));
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+        Text.Small("Pour les joueurs que vous n'avez pas réglés un par un.", Theme.TextFaint);
+    }
+
+    /// <summary>Vrai quand la liste des joueurs rencontrés est dépliée.</summary>
+    /// <remarks>Repliée par défaut : dans une foule, elle repousserait les groupes privés hors de l'écran.</remarks>
+    private bool _publicMembersOpen;
+
+    private void DrawPublicMembers(GroupRecord @public)
+    {
+        var glyph = _publicMembersOpen ? Icons.Expanded : Icons.Collapsed;
+
+        if (Btn.Draw($"Joueurs rencontrés ({@public.Members.Count})", BtnTone.Ghost, BtnSize.Small, glyph,
+                     id: "public_members"))
+            _publicMembersOpen = !_publicMembersOpen;
+
+        if (_publicMembersOpen is false)
+            return;
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+
+        using var scope = ImRaii.PushId("public");
+        DrawMembers(@public, GroupRole.Member, statuses());
+    }
+
     private void DrawPublicWarning()
     {
-        Text.Small(PublicWarning, Theme.Idle);
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+        Feedback.Alert(Theme.Idle, Icons.Warning, PublicWarning);
+        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
 
         if (Btn.Draw("Activer Public", BtnTone.Primary, BtnSize.Small, Icons.World, id: "public_confirm"))
         {
@@ -204,18 +286,27 @@ internal sealed class GroupsPage(
 
     private void DrawBlocked(GroupRecord @public)
     {
-        Text.Small($"Bloqués ({@public.Blocked.Count})");
+        Section(Icons.Blocked, $"Bloqués ({@public.Blocked.Count})");
 
         foreach (var (ban, index) in @public.Blocked.Select((ban, index) => (ban, index)))
         {
+            using var scope = ImRaii.PushId(index);
+
             var name = ban.Fingerprint is { } print && @public.Members.TryGetValue(print, out var member)
                 ? Glyphs.Safe(member.DisplayName)
                 : "joueur bloqué";
 
-            ImGui.TextColored(Theme.Text, name);
-            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            Text.Body(name);
 
-            if (Btn.Draw("Débloquer", BtnTone.Secondary, BtnSize.Small, Icons.Resume, id: $"unblock_{index}"))
+            // Calé à droite, comme « Lever » dans la liste des exclus.
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+            var room = ImGui.GetContentRegionAvail().X - Card.RightInset - Btn.Measure("Débloquer", BtnSize.Small, Icons.Resume);
+
+            if (room > 0f)
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + room);
+
+            if (Btn.Draw("Débloquer", BtnTone.Ghost, BtnSize.Small, Icons.Resume, id: "unblock"))
                 actions.Unblock(PublicGroup.Id, ban);
         }
     }
