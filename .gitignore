@@ -6,3 +6,4 @@ obj/
 # Corpus de test et mesures du jalon 2 : volumineux, jamais versionnes.
 corpus/
 measurements/
+.superpowers/
