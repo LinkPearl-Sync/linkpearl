@@ -133,6 +133,25 @@ Commande : `dotnet run -c Release --project Linkpearl.Harness -- fakepeer
 --channels 32 --no-limit --latency 20`. Le mode `endtoend` sert un blob à la
 fois et ne mesure pas le moteur.
 
+## Ce qui a changé le 24
+
+Deux régressions vues en jeu sur la v0.3.1, à deux comptes sur une machine.
+
+- **Les teintures avancées des armes d'un pair disparaissaient.** L'état
+  Glamourer était appliqué avec `ApplyFlag.Once`, qui efface les teintures
+  avancées dès que le matériau se recharge avec une autre table de couleurs :
+  c'est ce que fait notre redessin sur une arme moddée. Le drapeau est retiré
+  (`GlamourerIpc`).
+- **Les idles empruntées à une autre race ne partaient pas.** Les échanges de
+  chemins de jeu de Penumbra étaient classés (`FileSwap`) puis jetés. Ils
+  voyagent maintenant sous une clé facultative du manifeste, que les clients
+  plus anciens ignorent, passent la même politique que les chemins de fichier
+  avec une extension identique des deux côtés (`FileSwapPolicy`), et suivent le
+  blocage des animations. Confirmé en jeu.
+- Au passage, **un échange que Penumbra écrit avec des antislashs** (la cible
+  d'une animation empruntée) était pris pour un fichier local et signalé absent
+  du disque (`ResourcePathClassifier`).
+
 ## Ce qui reste de mémoire
 
 - **L'éviction du cache ne connaît pas ce qui est à l'écran.** `EvictToAsync`
@@ -222,3 +241,7 @@ fois et ne mesure pas le moteur.
 - La réflexion d'adresse doit partir de la socket qui portera les liens.
 - Sous WSL, `/tmp` vit en mémoire : un banc qui n'y nettoie pas fausse les
   mesures suivantes avant de tout bloquer.
+- `ApplyFlag.Once` de Glamourer n'est pas anodin : l'état posé ne survit pas
+  au rechargement d'un matériau, et les teintures avancées partent avec lui.
+- Penumbra rend la cible d'un échange de chemin avec des antislashs, comme un
+  chemin Windows : ce n'est pas pour autant un fichier local.
