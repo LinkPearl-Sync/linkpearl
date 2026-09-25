@@ -82,20 +82,27 @@ bloqué ou danger.
 
 | Poignée | Aujourd'hui | Demain |
 |---|---|---|
-| `Title`, `H2` | Inter SemiBold | Fredoka SemiBold |
-| `Body`, `Small` | Inter Regular | Nunito Regular |
-| gras au fil du texte | Inter SemiBold | Nunito Bold |
+| `Title`, `H2` | Inter SemiBold | Fredoka SemiBold, Inter SemiBold en secours |
+| `Body`, `Small` | Inter Regular | Nunito Regular, Inter Regular en secours |
+
+Aucun gras au fil du texte n'existe aujourd'hui : Inter SemiBold ne sert qu'aux
+titres. Nunito Bold n'est donc pas embarqué.
 
 - **Fichiers statiques**, pas variables : l'atlas ImGui ne choisit pas la graisse
-  d'une police variable.
+  d'une police variable. Google Fonts ne publie que les fichiers variables ; les
+  instances statiques sont tirées par `scripts/generer-polices.sh`, avec
+  fonttools 4.66.0, depuis `google/fonts` au commit `23e54b5`. Le script est ce
+  qui rend les fichiers embarqués reproductibles.
 - Licence OFL : les fichiers sont embarqués comme Inter l'est, avec leur
-  `OFL.txt` à côté dans `Assets/Fonts/`. Inter est retiré.
-- **Les mêmes plages de glyphes** qu'aujourd'hui (Latin-1, Latin étendu A et B,
-  diacritiques combinants, ponctuation générale), pour les accents français et
-  les noms de personnage. La règle déjà écrite dans `Fonts.cs` reste vraie : un
-  glyphe du fichier absent des plages s'affiche en caractère de remplacement. Il
-  faut donc vérifier la couverture réelle des nouveaux fichiers, glyphe par
-  glyphe, et non la supposer.
+  `OFL.txt` à côté dans `Assets/Fonts/`.
+- **Inter reste, fusionné derrière**, comme police de secours. Mesuré le 25
+  septembre sur les chaînes de l'interface : Nunito n'a ni `→`, ni `◆`, ni `◇` ;
+  Fredoka n'a pas non plus `≈`, et ne couvre que 10 caractères sur 128 du latin
+  étendu A, qu'un nom de groupe peut porter. À la fusion, ImGui garde le premier
+  glyphe venu : Nunito et Fredoka dessinent tout ce qu'elles ont, Inter le reste.
+- **Les mêmes plages de glyphes** qu'aujourd'hui. Le script de génération
+  vérifie que chaque caractère des chaînes de l'interface existe dans la police
+  principale ou dans Inter, et échoue sinon.
 - FontAwesome reste fusionné dans le corps de texte.
 - La tolérance à l'échec ne change pas : si les nouveaux fichiers ne se chargent
   pas, la police de Dalamud prend le relais.
@@ -121,8 +128,8 @@ pas leurs valeurs qui posent problème, c'est leur usage irrégulier.
   (centre `#1D3B9A`). ImGui n'a pas de dégradé radial : c'est l'approximation.
   `ThemedWindow` le peint sous chaque fenêtre du plugin.
 - **`Glow`** : trois contours arrondis qui s'élargissent en s'estompant, en
-  `Accent`. Carte active, entrée active de la barre latérale, champ qui a le
-  focus, interrupteur allumé.
+  `Accent`. Carte active, entrée active de la barre latérale, interrupteur
+  allumé.
 - **`Pearl`** : cercles superposés (bord lavande, corps bleu, reflet blanc en haut
   à gauche) et un léger halo. Remplace les points de statut neutres et sert de
   curseur à l'interrupteur allumé.
@@ -170,12 +177,15 @@ Chaque passage suit la même liste : aucun widget ImGui brut (`Checkbox`,
   mode d'admission ; `EffectsPicker` pour les membres et pour Public ; `Fold` ;
   carte Public en `Glow` quand elle est activée.
 - **Demandes** : orange sur « Accepter », logo sur l'état vide.
-- **Réglages** : `Toggle` pour les cinq cases à libellé et les deux sans libellé
-  (identité active, choix de service).
-- **Onboarding** : couleurs en dur de `OnboardingArt` sur les jetons, cases en
-  `Toggle`.
+- **Réglages** : `Toggle` pour les quatre cases à libellé, et un interrupteur
+  seul (`Toggle.Switch`) pour les deux sans libellé : service actif, service
+  proposé par un annuaire.
+- **Onboarding** : couleurs en dur de `OnboardingArt` sur les jetons, points de
+  progression en perles.
 - **Rejoindre ou créer un groupe** : orange sur le bouton qui valide.
-- **Notifications de demande** : cartes nuit, orange sur « Accepter ».
+- **Notifications de demande** : orange sur « Accepter ». Leur fenêtre n'a pas de
+  fond (`NoBackground`) et flotte sur le décor du jeu : leurs cartes restent
+  opaques, en `BgSurface`, là où les autres sont translucides.
 - **Badges de transfert en jeu** : pilule marine, texte `Text`, barre de
   progression `Accent`. Ils doivent se lire sur n'importe quel décor du jeu, donc
   le fond reste opaque à 85 % au moins.
@@ -186,12 +196,14 @@ Chaque passage suit la même liste : aucun widget ImGui brut (`Checkbox`,
 
 Un commit et un déploiement par étape.
 
-1. **Essai des points risqués**, sur la seule page Groupes : `NightBackground`,
-   `Glow` de la carte Public, `Pearl`, Fredoka et Nunito. L'utilisateur juge en
-   jeu. Ce qui fait bon marché est simplifié ou abandonné ici, avant tout le
-   reste.
-2. **Fondations** : palette, polices, `Surface`, `Toggle`, `EffectsPicker`, `Fold`,
-   `Btn`, `Card`, `EmptyState`, `Text`.
+1. **Essai des points risqués** : polices, palette, `NightBackground`, `Glow`,
+   `Pearl`. La palette étant globale, l'essai porte sur tout le plugin d'un coup,
+   et la carte Public activée en est le banc : halo, perle et titres en Fredoka
+   y sont réunis. L'utilisateur juge en jeu. Ce qui fait bon marché est
+   simplifié ou abandonné ici, avant tout le reste.
+2. **Composants** : `Btn` (tons `Action` et `Selected`), `Text.Label`, `Toggle`,
+   `EffectsPicker`, `Fold`, `EmptyState`. Chacun arrive avec le premier écran
+   qui s'en sert, pour ne jamais livrer un composant que rien n'emploie.
 3. Le cadre.
 4. Autour de vous.
 5. Pairs.
@@ -217,9 +229,14 @@ Un commit et un déploiement par étape.
   `deploy-plugin-dev.sh`.
 - En jeu, l'utilisateur juge : aucun test ne dit si c'est joli. Chaque étape dit
   quoi regarder, y compris à une échelle Dalamud au-dessus de 100 %.
-- À la fin, par recherche dans `Linkpearl/Ui` : plus de `ImGui.Checkbox`, de
-  `CollapsingHeader`, de `ImGui.Button(` hors des composants, ni de `Hex(0x`
-  hors de `Theme.cs`.
+- **`UiConventionTests`**, dans les tests du noyau qui tournent sous Linux : les
+  sources de `Linkpearl/Ui` y sont embarquées comme celles du noyau le sont pour
+  `ArchitectureTests`, et le test refuse `ImGui.Checkbox(`,
+  `ImGui.CollapsingHeader(`, `ImGui.SameLine()` sans espacement, `ImGui.Button(`
+  hors de `Components/`, `BtnTone.Primary`, et `Hex(0x` hors de `Theme.cs`.
+  Chaque règle tient la liste des fichiers pas encore repris ; chaque étape en
+  retire les siens, et la liste finit vide. Le test ne dit pas si c'est joli,
+  seulement que plus rien ne contourne les composants.
 
 ## Hors périmètre
 
