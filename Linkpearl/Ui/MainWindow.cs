@@ -49,7 +49,7 @@ public sealed class MainWindow : ThemedWindow
         CacheKeeper cacheKeeper, Action showOnboarding,
         GroupBook groupBook, AdmissionCandidate candidate, GroupActions groupActions,
         Func<IReadOnlyList<PendingValidation>> admissions, GroupEntryWindow groupEntry,
-        IServiceBans serviceBans)
+        IServiceBans serviceBans, OpenCircle openCircle)
         : base("Linkpearl",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -76,7 +76,8 @@ public sealed class MainWindow : ThemedWindow
             pairing, statuses, setPaused, reapply, unpair, setPairReceive, serviceBans, nudge);
         _backup = new BackupCard(backupState, backup, restore);
         var settings = new SettingsPage(
-            configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding);
+            configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding,
+            openCircle);
 
         _requests = new RequestsPage(
             state, presence, accept, decline, admissions, groupActions.Approve, groupActions.Decline);

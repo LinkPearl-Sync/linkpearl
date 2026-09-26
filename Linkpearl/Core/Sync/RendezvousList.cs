@@ -21,6 +21,9 @@ public static class RendezvousList
     /// <summary>Le service par défaut, par son nom.</summary>
     public const string DefaultHost = "rdv.linkpearl.eorzea.events";
 
+    /// <summary>L'autorité du cercle ouvert : le service du projet, sur son port habituel.</summary>
+    public static readonly RendezvousAddress Authority = new(DefaultHost, RendezvousAddress.DefaultPort);
+
     /// <summary>
     /// L'adresse sous laquelle le service par défaut a d'abord été distribué.
     /// </summary>

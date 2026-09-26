@@ -35,6 +35,15 @@ public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
     /// </remarks>
     public List<RendezvousEntry> Rendezvous { get; set; } = [];
 
+    /// <summary>
+    /// Passer par le cercle ouvert pour les pairs déjà épinglés.
+    /// </summary>
+    /// <remarks>
+    /// Activé par défaut : il ne voit jamais passer une clé, et il répartit la
+    /// charge et le relais. Désactivé, tout passe par les services de la liste.
+    /// </remarks>
+    public bool OpenCircle { get; set; } = true;
+
     /// <summary>Les services activés, ceux que le moteur emploiera.</summary>
     public IReadOnlyList<RendezvousEntry> ActiveRendezvous =>
         Rendezvous.Where(entry => entry.Enabled).ToList();

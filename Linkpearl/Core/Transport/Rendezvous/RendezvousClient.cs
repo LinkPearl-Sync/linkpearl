@@ -206,6 +206,44 @@ public sealed class RendezvousClient : IAsyncDisposable
         return BanListPages.TryMerge(pages, out var merged, out var rejection) ? (merged, null) : (null, rejection);
     }
 
+    /// <summary>
+    /// Récupère la liste signée du cercle ouvert, page après page.
+    /// </summary>
+    /// <remarks>
+    /// Rend les octets bruts : rien n'est cru avant la vérification de la
+    /// signature, faite par l'appelant. Une page manquante ou incohérente
+    /// rend un échec lisible, jamais une exception.
+    /// </remarks>
+    public async Task<(byte[]? Document, string? Failure)> QueryConsensusAsync(CancellationToken ct)
+    {
+        using var document = new MemoryStream();
+        var total = 1;
+
+        for (var page = 0; page < total; page++)
+        {
+            await SendAsync(RendezvousWire.ConsensusQuery(page), ct).ConfigureAwait(false);
+
+            var frame = await ReadFrameAsync(ct).ConfigureAwait(false);
+
+            if (frame is null)
+                return (null, "connexion fermée par le service");
+
+            if (frame[0] == RendezvousKind.Error)
+                return (null, System.Text.Encoding.UTF8.GetString(frame.AsSpan(1)));
+
+            if (RendezvousWire.TryReadConsensusPage(frame, out var index, out var count, out var chunk, out var why) is false)
+                return (null, why);
+
+            if (index != page || (page > 0 && count != total))
+                return (null, "pages incohérentes");
+
+            total = count;
+            document.Write(chunk);
+        }
+
+        return (document.ToArray(), null);
+    }
+
     /// <summary>Dépose une demande dans la boîte de quelqu'un.</summary>
     public Task DepositAsync(ReadOnlyMemory<byte> address, ReadOnlyMemory<byte> payload, CancellationToken ct)
         => SendAsync(RendezvousWire.MailboxDeposit(address.Span, payload.Span), ct);

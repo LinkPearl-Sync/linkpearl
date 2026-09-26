@@ -41,7 +41,8 @@ public sealed class DiscoveryState
 /// </remarks>
 internal sealed class SettingsPage(
     Configuration configuration, DiscoveryState discovery, Action<RendezvousAddress> discover, BackupCard backup,
-    Action<bool> setUploadLimited, CacheChooser cacheChooser, CacheKeeper cacheKeeper, Action showOnboarding)
+    Action<bool> setUploadLimited, CacheChooser cacheChooser, CacheKeeper cacheKeeper, Action showOnboarding,
+    OpenCircle openCircle)
 {
     private string _newAddress = "";
 
@@ -214,6 +215,24 @@ internal sealed class SettingsPage(
             "Chaque service activé apprend que votre personnage est en ligne et qui se tient autour "
           + "de vous. En ajouter augmente vos chances de voir du monde, et le nombre de personnes "
           + "qui le savent.");
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+        var open = configuration.OpenCircle;
+
+        if (Toggle.Draw("Cercle ouvert", ref open, "open_circle",
+                        hint: "Pour les pairs déjà reconnus, passer par des services admis automatiquement "
+                            + "après trois jours d'observation. Ils ne voient jamais passer une clé : le premier "
+                            + "pairage reste sur les services de la liste ci-dessus."))
+        {
+            configuration.OpenCircle = open;
+            configuration.Save();
+            openCircle.Enabled = open;
+        }
+
+        Text.Small(openCircle.Current is { } list
+            ? $"{list.Entries.Count} service(s) ouvert(s), liste valable jusqu'au {DateTimeOffset.FromUnixTimeSeconds(list.Expires).ToLocalTime():d MMMM HH:mm}."
+            : "Aucune liste valable : tout passe par les services ci-dessus.", Theme.TextFaint);
     }
 
     /// <summary>Identité : sauvegarde du personnage et de son carnet, et la présentation.</summary>

@@ -109,6 +109,12 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Télécharge ces listes, à la connexion puis toutes les heures.</summary>
     private readonly ServiceBanFetcher _banFetcher;
 
+    /// <summary>La liste signée du cercle ouvert, et le droit d'y passer.</summary>
+    private readonly OpenCircle _openCircle;
+
+    /// <summary>La redemande à l'autorité, toutes les six heures.</summary>
+    private readonly ConsensusFetcher _consensusFetcher;
+
     /// <summary>Dérive, sur le pool, ce qu'il faut pour vérifier les joueurs visibles.</summary>
     private readonly ServiceBanScreening _banScreening;
 
@@ -228,6 +234,8 @@ public sealed class Plugin : IDalamudPlugin
         // un changement de personnage vide le carnet qu'ils consultent.
         _serviceBans = new ServiceBanBook(clock);
         _banFetcher = new ServiceBanFetcher(_configuration, _serviceBans, Log);
+        _openCircle = new OpenCircle(ConsensusKeys.Trusted, clock) { Enabled = _configuration.OpenCircle };
+        _consensusFetcher = new ConsensusFetcher(_openCircle, Path.Combine(root, "consensus.bin"), Log);
         _banScreening = new ServiceBanScreening(_serviceBans, Log);
         _presence.SetServiceBans(_serviceBans);
 
@@ -374,7 +382,8 @@ public sealed class Plugin : IDalamudPlugin
             _groupActions,
             () => _admissionHost.Pending,
             _groupEntry,
-            _serviceBans);
+            _serviceBans,
+            _openCircle);
 
         // Clic droit sur un personnage appairé : réappliquer, comme le font
         // les autres outils de synchronisation. C'est le geste que les joueurs
@@ -413,6 +422,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _ = Task.Run(() => RefreshLoopAsync(_shutdown.Token), _shutdown.Token);
         _banFetcher.Start();
+        _consensusFetcher.Start();
         _ = Task.Run(() => SyncLoopAsync(_shutdown.Token), _shutdown.Token);
 
         Commands.AddHandler(Command, new CommandInfo((_, _) => Open())
@@ -668,7 +678,8 @@ public sealed class Plugin : IDalamudPlugin
                 _links,
                 new RendezvousEndpoint(_configuration.RendezvousHost, _configuration.RendezvousPort),
                 _clock,
-                new PluginLogSink(Log, "moteur")),
+                new PluginLogSink(Log, "moteur"),
+                circle: _openCircle),
             _appearance, _applicator, _cacheKeeper.Store, _pairing.Id!.Value, _pairing.Identity!.Key, _clock,
             new PluginLogSink(Log, "moteur"), _engineSettings, groups: _groups, policies: _groups, bans: _serviceBans);
 
@@ -1693,6 +1704,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _selfLoop.Dispose();
         _banFetcher.Dispose();
+        _consensusFetcher.Dispose();
         _banScreening.Dispose();
         _presence.Dispose();
 
