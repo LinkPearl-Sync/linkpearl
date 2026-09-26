@@ -74,8 +74,8 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 |---|---|
 | 0, décider et mesurer | Fait pour l'utilisateur. Son cercle reste à interroger. |
 | 1, boucle jeu locale | **Clos**, voir `jalon-1-resultats.md`. |
-| 2, débit | **Mesuré**, voir `jalon-2-debit.md`, puis dépassé le 23 (voir plus bas). Le ping en jeu reste à mesurer. |
-| 2 bis, traversée de NAT | NAT classé favorable. Test de paire réel en attente d'une seconde personne. |
+| 2, débit | **Mesuré**, voir `jalon-2-debit.md`, puis dépassé le 23 (voir plus bas). Le ping en jeu n'a pas été mesuré (#9, retirée le 24). |
+| 2 bis, traversée de NAT | NAT classé favorable. Pas de test entre deux réseaux réels : retiré de la feuille de route le 24 (#9). |
 | 3, crypto et protocole | **Clos**. Pas de relecture formelle (#8, fermée le 24), voir plus bas. |
 | 4, cache et transfert | **Clos**. Transfert par tronçons depuis le 23. |
 | 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit dans son propre dépôt. |
@@ -239,10 +239,6 @@ Pendant les essais en jeu de la refonte, hors du plan :
 
 ## Ce qui attend l'utilisateur en jeu
 
-- Mesurer le **ping de FFXIV pendant un transfert**, maintenant que le limiteur
-  est débrayé par défaut.
-- Le **test de paire réel** entre deux réseaux, quand quelqu'un sera disponible.
-  Tout ce qui précède a été éprouvé sur une seule machine.
 - Les **groupes privés**, à deux personnages : créer un groupe, le rejoindre
   par mot de passe puis par validation, exclure un membre, dissoudre.
 - **Public**, à deux personnages : activé d'un côté puis des deux, effets
