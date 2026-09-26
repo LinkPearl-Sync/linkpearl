@@ -42,7 +42,7 @@ public class UiConventionTests
     {
         {
             "ImGui.Checkbox(", "un réglage oui/non passe par Toggle", [],
-            ["Pages.SettingsPage.cs"]
+            []
         },
         {
             "ImGui.CollapsingHeader(", "un en-tête repliable passe par Fold", [],
@@ -50,7 +50,7 @@ public class UiConventionTests
         },
         {
             "ImGui.SameLine()", "l'espacement se dit, il ne se laisse pas au défaut d'ImGui", [],
-            ["NameplateLegend.cs", "Pages.SettingsPage.cs"]
+            ["NameplateLegend.cs"]
         },
         {
             "ImGui.Button(", "un bouton passe par Btn", ["Components.Btn.cs"], []

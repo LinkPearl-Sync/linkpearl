@@ -74,17 +74,15 @@ internal sealed class SettingsPage(
 
         var discoverable = configuration.Discoverable;
 
-        if (ImGui.Checkbox("Me signaler aux autres joueurs##discoverable", ref discoverable))
+        if (Toggle.Draw("Me signaler aux autres joueurs", ref discoverable, "discoverable",
+                        hint: "Sans cela, personne ne peut vous reconnaître ni vous adresser une demande. Avec, "
+                            + "l'opérateur de chaque service peut savoir que votre personnage est en ligne : pour "
+                            + "qu'un inconnu puisse vous reconnaître, il faut bien que quelque chose soit calculable "
+                            + "à partir de votre nom."))
         {
             configuration.Discoverable = discoverable;
             configuration.Save();
         }
-
-        Feedback.Hint(
-            "Sans cela, personne ne peut vous reconnaître ni vous adresser une demande. Avec, "
-          + "l'opérateur de chaque service peut savoir que votre personnage est en ligne : pour "
-          + "qu'un inconnu puisse vous reconnaître, il faut bien que quelque chose soit calculable "
-          + "à partir de votre nom.");
 
         // Exception voulue à la règle « tout en infobulle » : ce qui se paie
         // en vie privée se lit avant de cocher, pas au survol d'une icône.
@@ -94,27 +92,23 @@ internal sealed class SettingsPage(
 
         var glyphs = configuration.ShowNameplateGlyphs;
 
-        if (ImGui.Checkbox("Glyphe à côté du nom##nameplate_glyphs", ref glyphs))
+        if (Toggle.Draw("Glyphe à côté du nom", ref glyphs, "nameplate_glyphs", hintContent: NameplateLegend.Draw))
         {
             configuration.ShowNameplateGlyphs = glyphs;
             configuration.Save();
         }
 
-        Feedback.Hint(NameplateLegend.Draw);
-
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         var badges = configuration.ShowTransferBadges;
 
-        if (ImGui.Checkbox("Badges de transfert##transfer_badges", ref badges))
+        if (Toggle.Draw("Badges de transfert", ref badges, "transfer_badges",
+                        hint: "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
+                            + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée."))
         {
             configuration.ShowTransferBadges = badges;
             configuration.Save();
         }
-
-        Feedback.Hint(
-            "Un badge aux pieds d'un pair visible dont l'apparence n'est pas encore là : connexion, "
-          + "attente, réception avec sa progression, application. Il disparaît dès qu'elle est posée.");
     }
 
     /// <summary>Cache : où les apparences reçues vivent sur le disque, et combien.</summary>
@@ -182,13 +176,11 @@ internal sealed class SettingsPage(
 
         var limited = configuration.LimitUpload;
 
-        if (ImGui.Checkbox("Brider l'envoi##limit_upload", ref limited))
+        if (Toggle.Draw("Brider l'envoi", ref limited, "limit_upload",
+                        hint: "Bridé, l'envoi démarre lentement et recule dès que le ping gonfle : une tenue met des "
+                            + "minutes à arriver, mais le jeu reste fluide en donjon. Libre, elle arrive en quelques "
+                            + "secondes, au prix d'un ping plus haut pendant le transfert."))
             setUploadLimited(limited);
-
-        Feedback.Hint(
-            "Bridé, l'envoi démarre lentement et recule dès que le ping gonfle : une tenue met des "
-          + "minutes à arriver, mais le jeu reste fluide en donjon. Libre, elle arrive en quelques "
-          + "secondes, au prix d'un ping plus haut pendant le transfert.");
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
@@ -213,7 +205,7 @@ internal sealed class SettingsPage(
 
         ImGui.SetNextItemWidth(Card.FullWidth - Theme.S(110f) - Feedback.HintWidth);
         ImGui.InputTextWithHint("##nouveau", "rdv.exemple.ch ou rdv.exemple.ch:443", ref _newAddress, 260);
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Ajouter", BtnTone.Secondary, BtnSize.Small, Icons.Invite, id: "add_rdv"))
             Add(_newAddress);
@@ -248,13 +240,14 @@ internal sealed class SettingsPage(
 
         var enabled = entry.Enabled;
 
-        if (ImGui.Checkbox("##actif", ref enabled))
+        if (Toggle.Switch(ref enabled, "actif",
+                          enabled ? "Service actif. Cliquer pour le couper." : "Service coupé. Cliquer pour l'activer."))
         {
             configuration.Rendezvous[index] = entry with { Enabled = enabled };
             configuration.Save();
         }
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapM));
 
         // L'adresse et le libellé peuvent venir d'un annuaire, donc du réseau.
         var shown = entry.Label.Length > 0
@@ -269,15 +262,15 @@ internal sealed class SettingsPage(
         // Deux boutons carrés et l'espace qui les sépare : une largeur fixe
         // ne suivait ni l'échelle ni l'espacement, et poussait la corbeille
         // contre le bord.
-        var buttons = ImGui.GetFrameHeight() * 2f + ImGui.GetStyle().ItemSpacing.X;
+        var buttons = ImGui.GetFrameHeight() * 2f + Theme.S(Theme.GapS);
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - buttons);
 
         if (Btn.Icon(Icons.Refresh, "discover", tooltip: "Demander à ce service ceux qu'il connaît"))
             discover(entry.Address);
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Icon(Icons.Remove, "remove", BtnTone.Danger, "Retirer ce service"))
         {
@@ -323,7 +316,7 @@ internal sealed class SettingsPage(
             using var id = Dalamud.Interface.Utility.Raii.ImRaii.PushId(offered.Address);
             using var disabled = Dalamud.Interface.Utility.Raii.ImRaii.Disabled(known);
 
-            if (ImGui.Checkbox("##choisi", ref chosen))
+            if (Toggle.Switch(ref chosen, "choisi"))
             {
                 if (chosen)
                     discovery.Chosen.Add(offered.Address);
@@ -331,7 +324,7 @@ internal sealed class SettingsPage(
                     discovery.Chosen.Remove(offered.Address);
             }
 
-            ImGui.SameLine();
+            ImGui.SameLine(0f, Theme.S(Theme.GapM));
 
             Text.Body(offered.Label.Length > 0
                 ? $"{Glyphs.Safe(offered.Label)}  ({Glyphs.Safe(offered.Address)})"
@@ -339,7 +332,7 @@ internal sealed class SettingsPage(
 
             if (known)
             {
-                ImGui.SameLine();
+                ImGui.SameLine(0f, Theme.S(Theme.GapS));
                 Text.Small("déjà dans votre liste", Theme.TextFaint);
             }
         }
@@ -355,7 +348,7 @@ internal sealed class SettingsPage(
             discovery.Reset();
         }
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Fermer", BtnTone.Ghost, BtnSize.Small, id: "close_discovery"))
             discovery.Reset();
