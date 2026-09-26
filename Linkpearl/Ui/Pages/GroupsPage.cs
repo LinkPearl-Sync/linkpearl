@@ -201,7 +201,7 @@ internal sealed class GroupsPage(
 
         // Pendant l'avertissement, le bouton se tait : c'est l'avertissement
         // qui porte la confirmation, et deux boutons « Activer » se liraient mal.
-        if (Btn.Draw(label, enabled ? BtnTone.Secondary : BtnTone.Primary, BtnSize.Small, icon,
+        if (Btn.Draw(label, BtnTone.Secondary, BtnSize.Small, icon,
                      id: "public_toggle", disabled: _publicWarningOpen))
         {
             if (enabled is false && actions.PublicWarningSeen() is false)
@@ -216,7 +216,7 @@ internal sealed class GroupsPage(
     /// </summary>
     private void DrawPublicEffects(GroupRecord @public)
     {
-        Section(Icons.Effects, "Effets reçus");
+        Text.Label("Effets reçus");
 
         var receive = @public.DefaultReceive;
 
@@ -234,7 +234,7 @@ internal sealed class GroupsPage(
             if (i > 0)
                 ImGui.SameLine(0f, Theme.S(Theme.GapXs));
 
-            if (Btn.Draw(label, on ? BtnTone.Primary : BtnTone.Secondary, BtnSize.Small, icon, id: $"public_fx_{i}",
+            if (Btn.Draw(label, on ? BtnTone.Selected : BtnTone.Secondary, BtnSize.Small, icon, id: $"public_fx_{i}",
                          tooltip: on ? "Reçus. Cliquer pour les bloquer." : "Bloqués. Cliquer pour les recevoir."))
                 actions.SetDefaultReceive(PublicGroup.Id, with(on is false));
         }
@@ -270,7 +270,7 @@ internal sealed class GroupsPage(
         Feedback.Alert(Theme.Idle, Icons.Warning, PublicWarning);
         ImGui.Dummy(Theme.S(0f, Theme.GapXs));
 
-        if (Btn.Draw("Activer Public", BtnTone.Primary, BtnSize.Small, Icons.World, id: "public_confirm"))
+        if (Btn.Draw("Activer Public", BtnTone.Action, BtnSize.Small, Icons.World, id: "public_confirm"))
         {
             actions.AcknowledgePublicWarning();
             actions.SetPublic(true);
@@ -285,7 +285,7 @@ internal sealed class GroupsPage(
 
     private void DrawBlocked(GroupRecord @public)
     {
-        Section(Icons.Blocked, $"Bloqués ({@public.Blocked.Count})");
+        Text.Label($"Bloqués ({@public.Blocked.Count})");
 
         foreach (var (ban, index) in @public.Blocked.Select((ban, index) => (ban, index)))
         {
@@ -318,7 +318,7 @@ internal sealed class GroupsPage(
     /// </remarks>
     private void DrawEntry()
     {
-        if (Btn.Draw("Rejoindre un groupe", BtnTone.Primary, BtnSize.Small, Icons.Invite, id: "open_join"))
+        if (Btn.Draw("Rejoindre un groupe", BtnTone.Action, BtnSize.Small, Icons.Invite, id: "open_join"))
             entry.OpenJoin();
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
@@ -386,7 +386,7 @@ internal sealed class GroupsPage(
             DrawInvite(group, policy!, code);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
-        Section(Icons.Pairs, "Membres");
+        Text.Label("Membres");
         DrawMembers(group, role, known);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
@@ -480,13 +480,6 @@ internal sealed class GroupsPage(
         Text.Small($"{online} en ligne", online > 0 ? Theme.Online : Theme.TextFaint);
     }
 
-    /// <summary>Le titre d'une section de la carte d'un groupe, un cran sous celui des cartes.</summary>
-    private static void Section(FontAwesomeIcon icon, string title)
-    {
-        Text.WithIcon(icon, title, Theme.TextFaint, Theme.TextMuted);
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
-    }
-
     /// <summary>Rôle, taille, mode d'entrée et état du groupe, d'un coup d'œil.</summary>
     private static void DrawChips(GroupRecord group, GroupRole role, GroupPolicy? policy)
     {
@@ -544,7 +537,7 @@ internal sealed class GroupsPage(
         var service = text[InvitationTicket.Length..];
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
-        Section(Icons.Invite, "Inviter");
+        Text.Label("Inviter");
 
         var copied = _copied is { } c && c.Id == group.Id && c.Until > DateTime.UtcNow;
         var copyLabel = copied ? "Copié" : "Copier le code";
@@ -950,7 +943,7 @@ internal sealed class GroupsPage(
 
         // Deux boutons accolés plutôt que des cases radio : le mode choisi se
         // lit à sa couleur, et chaque choix porte son icône comme ailleurs.
-        if (Btn.Draw("Mot de passe", password ? BtnTone.Primary : BtnTone.Secondary, BtnSize.Small, Icons.Lock,
+        if (Btn.Draw("Mot de passe", password ? BtnTone.Selected : BtnTone.Secondary, BtnSize.Small, Icons.Lock,
                      id: "mode_password", disabled: blocked,
                      tooltip: blocked ? "Définissez d'abord un mot de passe, dans la carte ci-dessous." : null)
             && password is false)
@@ -958,7 +951,7 @@ internal sealed class GroupsPage(
 
         ImGui.SameLine(0f, Theme.S(Theme.GapXs));
 
-        if (Btn.Draw("Validation par un modérateur", password ? BtnTone.Secondary : BtnTone.Primary, BtnSize.Small,
+        if (Btn.Draw("Validation par un modérateur", password ? BtnTone.Secondary : BtnTone.Selected, BtnSize.Small,
                      Icons.Moderator, id: "mode_validation")
             && password)
             actions.Edit(group.Id, (current, _) => GroupGovernance.SetAdmission(current, AdmissionMode.Validation));

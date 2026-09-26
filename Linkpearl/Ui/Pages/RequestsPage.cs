@@ -69,7 +69,7 @@ internal sealed class RequestsPage(
 
             ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-            if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept,
+            if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept,
                          id: $"accept_{request.Id.ToHex()}"))
                 accept(request);
 
@@ -104,7 +104,7 @@ internal sealed class RequestsPage(
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-        if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept, id: $"admission_accept_{id}"))
+        if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept, id: $"admission_accept_{id}"))
             approve(pending);
 
         ImGui.SameLine();

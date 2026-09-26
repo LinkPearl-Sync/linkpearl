@@ -63,6 +63,20 @@ internal static class Text
         Draw(text, color ?? Theme.TextMuted);
     }
 
+    /// <summary>
+    /// Titre de section à l'intérieur d'une carte, à la manière des libellés du
+    /// site : petites capitales discrètes.
+    /// </summary>
+    /// <remarks>
+    /// Sans icône : un titre de section n'est pas une action, et les icônes de
+    /// la carte sont celles de ses boutons.
+    /// </remarks>
+    public static void Label(string text)
+    {
+        Small(text.ToUpperInvariant(), Theme.TextFaint);
+        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXs)));
+    }
+
     /// <summary>Texte replié sur la largeur disponible.</summary>
     /// <remarks>Toutes les aides replient désormais : ce nom reste pour les appelants qui le disent.</remarks>
     public static void Wrapped(string text, Vector4? color = null) => Draw(text, color ?? Theme.Text);

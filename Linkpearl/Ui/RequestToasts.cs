@@ -141,7 +141,7 @@ internal sealed class RequestToasts : ThemedWindow
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept, id: $"toast_accept_{id}"))
+        if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept, id: $"toast_accept_{id}"))
             _accept(request);
 
         ImGui.SameLine();
@@ -169,7 +169,7 @@ internal sealed class RequestToasts : ThemedWindow
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        if (Btn.Draw("Accepter", BtnTone.Success, BtnSize.Small, Icons.Accept, id: $"toast_admission_accept_{id}"))
+        if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept, id: $"toast_admission_accept_{id}"))
             _approve(pending);
 
         ImGui.SameLine();

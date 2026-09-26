@@ -213,7 +213,7 @@ internal sealed class OnboardingWindow : ThemedWindow
 
         ImGui.SetCursorPosX(right - nextWidth);
 
-        if (Btn.Draw(nextLabel, BtnTone.Primary, id: "onboarding_next"))
+        if (Btn.Draw(nextLabel, BtnTone.Action, id: "onboarding_next"))
         {
             if (last)
             {

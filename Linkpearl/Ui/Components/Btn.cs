@@ -7,10 +7,13 @@ namespace Linkpearl.Ui.Components;
 
 internal enum BtnTone
 {
-    /// <summary>Action principale de l'écran. Une seule par vue.</summary>
-    Primary,
+    /// <summary>L'action principale de l'écran, en orange pompon. Une seule par vue.</summary>
+    Action,
 
-    /// <summary>Action courante, surface neutre surélevée.</summary>
+    /// <summary>L'option choisie dans un groupe de boutons, teintée du halo.</summary>
+    Selected,
+
+    /// <summary>Action courante, surface translucide bordée.</summary>
     Secondary,
 
     /// <summary>Action discrète : pas de fond, sauf au survol.</summary>
@@ -37,7 +40,7 @@ internal enum BtnSize
 /// </summary>
 /// <remarks>
 /// La couleur du libellé est déduite de la luminance du fond, ce qui garantit
-/// la lisibilité même sur l'accent nacré, qui est clair, et permet de changer
+/// la lisibilité même sur l'orange, qui est clair, et permet de changer
 /// la palette sans repasser sur chaque bouton.
 /// </remarks>
 internal static class Btn
@@ -56,16 +59,23 @@ internal static class Btn
         using var color = ImRaii.PushColor(ImGuiCol.Button, normal)
                                 .Push(ImGuiCol.ButtonHovered, hovered)
                                 .Push(ImGuiCol.ButtonActive,  active)
-                                .Push(ImGuiCol.Text,          Theme.TextOn(normal));
+                                .Push(ImGuiCol.Text,          TextFor(tone, normal));
 
-        // Le contour des champs de saisie ne doit pas déborder sur les boutons,
-        // qui se distinguent déjà par leur fond.
-        using var flat = ImRaii.PushStyle(ImGuiStyleVar.FrameBorderSize, 0f);
+        // En pilule, comme les boutons du site : le rayon vaut la moitié de la
+        // hauteur, ce qui reste juste à toute échelle. Le contour des champs de
+        // saisie ne doit pas déborder sur les boutons, d'où la bordure nulle.
+        var rounding = ImGui.GetFrameHeight() * 0.5f;
+
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.FrameBorderSize, 0f)
+                                .Push(ImGuiStyleVar.FrameRounding, rounding);
 
         bool clicked;
 
         using (ImRaii.Disabled(disabled))
+        {
             clicked = ImGui.Button($"{caption}##{id ?? label}", Dimensions(size, caption));
+            Outline(tone, rounding);
+        }
 
         // Hors de la portée désactivée : un widget désactivé ne remonte pas le survol.
         if (tooltip != null)
@@ -86,7 +96,7 @@ internal static class Btn
         using var color = ImRaii.PushColor(ImGuiCol.Button, normal)
                                 .Push(ImGuiCol.ButtonHovered, hovered)
                                 .Push(ImGuiCol.ButtonActive,  active)
-                                .Push(ImGuiCol.Text,          Theme.TextOn(normal));
+                                .Push(ImGuiCol.Text,          TextFor(tone, normal));
 
         using var flat = ImRaii.PushStyle(ImGuiStyleVar.FrameBorderSize, 0f);
 
@@ -108,6 +118,8 @@ internal static class Btn
                 new Vector2(MathF.Round((min.X + max.X - size.X) * 0.5f),
                             MathF.Round((min.Y + max.Y - size.Y) * 0.5f)),
                 ImGui.GetColorU32(ImGuiCol.Text), glyph);
+
+            Outline(tone, Theme.S(Theme.RadiusFrame));
         }
 
         if (tooltip != null)
@@ -150,11 +162,50 @@ internal static class Btn
 
     private static (Vector4 Normal, Vector4 Hovered, Vector4 Active) Palette(BtnTone tone) => tone switch
     {
-        BtnTone.Primary => (Theme.Accent, Theme.AccentHover, Theme.AccentActive),
-        BtnTone.Danger  => (Theme.Danger, Theme.DangerHover, Theme.Mix(Theme.Danger, Theme.BgBase, 0.3f)),
-        BtnTone.Success => (Theme.Online, Theme.Mix(Theme.Online, Theme.Text, 0.2f),
-                            Theme.Mix(Theme.Online, Theme.BgBase, 0.3f)),
-        BtnTone.Ghost   => (Vector4.Zero, Theme.Mix(Theme.BgRaised, Theme.Accent, 0.18f), Theme.BgHover),
-        _               => (Theme.BgRaised, Theme.Mix(Theme.BgHover, Theme.Accent, 0.15f), Theme.BgSurface),
+        BtnTone.Action   => (Theme.Action, Theme.ActionHover, Theme.ActionActive),
+        BtnTone.Selected => (Theme.Alpha(Theme.Accent, 0.20f), Theme.Alpha(Theme.Accent, 0.30f),
+                             Theme.Alpha(Theme.Accent, 0.38f)),
+        BtnTone.Danger   => (Theme.Danger, Theme.DangerHover, Theme.Mix(Theme.Danger, Theme.BgBase, 0.3f)),
+        BtnTone.Success  => (Theme.Online, Theme.Mix(Theme.Online, Theme.Text, 0.2f),
+                             Theme.Mix(Theme.Online, Theme.BgBase, 0.3f)),
+        BtnTone.Ghost    => (Vector4.Zero, Theme.Alpha(Theme.Text, 0.08f), Theme.Alpha(Theme.Text, 0.12f)),
+        _                => (Theme.Alpha(Theme.Text, 0.06f), Theme.Alpha(Theme.Text, 0.11f),
+                             Theme.Alpha(Theme.Text, 0.04f)),
     };
+
+    /// <summary>
+    /// Couleur du libellé.
+    /// </summary>
+    /// <remarks>
+    /// Les tons translucides sont du blanc à quelques pour cent : leur
+    /// luminance, calculée sur la seule couleur, les ferait passer pour clairs
+    /// et leur donnerait un texte sombre, illisible sur la nuit.
+    /// </remarks>
+    private static Vector4 TextFor(BtnTone tone, Vector4 background) => tone switch
+    {
+        BtnTone.Action                                         => Theme.TextOnAction,
+        BtnTone.Selected or BtnTone.Secondary or BtnTone.Ghost => Theme.Text,
+        _                                                      => Theme.TextOn(background),
+    };
+
+    /// <summary>
+    /// Liseré des tons translucides.
+    /// </summary>
+    /// <remarks>
+    /// Sans lui, un bouton secondaire posé sur une carte translucide n'a plus de
+    /// bord, et un bouton choisi ne se distingue que par une teinte.
+    /// </remarks>
+    private static void Outline(BtnTone tone, float rounding)
+    {
+        Vector4? line = tone switch
+        {
+            BtnTone.Selected  => Theme.Accent,
+            BtnTone.Secondary => Theme.Border,
+            _                 => null,
+        };
+
+        if (line is { } color)
+            ImGui.GetWindowDrawList().AddRect(ImGui.GetItemRectMin(), ImGui.GetItemRectMax(),
+                ImGui.GetColorU32(color), rounding, ImDrawFlags.None, 1f);
+    }
 }

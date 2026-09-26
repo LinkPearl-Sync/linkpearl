@@ -344,7 +344,7 @@ internal sealed class SettingsPage(
 
         ImGui.Dummy(Theme.S(0f, Theme.GapM));
 
-        if (Btn.Draw($"Ajouter les {discovery.Chosen.Count} cochés", BtnTone.Primary, BtnSize.Small,
+        if (Btn.Draw($"Ajouter les {discovery.Chosen.Count} cochés", BtnTone.Action, BtnSize.Small,
                      Icons.Accept, disabled: discovery.Chosen.Count == 0, id: "add_chosen"))
         {
             foreach (var address in discovery.Chosen)

@@ -56,6 +56,9 @@ public class UiConventionTests
             "ImGui.Button(", "un bouton passe par Btn", ["Components.Btn.cs"], []
         },
         {
+            "BtnTone.Primary", "l'orange est à l'action (BtnTone.Action), le choix au halo (BtnTone.Selected)", [], []
+        },
+        {
             "Hex(0x", "une couleur vient d'un jeton de Theme", ["Theme.cs"],
             ["NameplateGlyphs.cs", "Onboarding.OnboardingArt.cs"]
         },

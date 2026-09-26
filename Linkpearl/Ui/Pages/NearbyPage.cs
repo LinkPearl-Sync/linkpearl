@@ -147,7 +147,7 @@ internal sealed class NearbyPage(
         // revient jamais. On laisse donc renvoyer, en disant qu'on l'a déjà fait.
         var sent = presence.PendingOutgoing.ContainsKey(player.Fingerprint);
 
-        if (Btn.Draw(sent ? "Renvoyer" : "Demander", sent ? BtnTone.Secondary : BtnTone.Primary,
+        if (Btn.Draw(sent ? "Renvoyer" : "Demander", sent ? BtnTone.Secondary : BtnTone.Action,
                      BtnSize.Small, Icons.Invite,
                      tooltip: sent ? "Demande déjà envoyée, sans réponse pour l'instant" : "Demander le pairage",
                      id: $"pair_{id}"))

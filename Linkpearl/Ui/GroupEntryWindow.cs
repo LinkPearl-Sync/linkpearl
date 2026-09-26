@@ -135,7 +135,7 @@ public sealed class GroupEntryWindow : ThemedWindow
         // vérifie la preuve la remplacerait sous ses pieds.
         var busy = _candidate.State is CandidacyState.Waiting or CandidacyState.Proving;
 
-        if (Btn.Draw("Rejoindre", BtnTone.Primary, BtnSize.Small, Icons.Invite, id: "group_join",
+        if (Btn.Draw("Rejoindre", BtnTone.Action, BtnSize.Small, Icons.Invite, id: "group_join",
                      disabled: busy || _joinCode.Trim().Length == 0))
         {
             _actions.Join(_joinCode, _joinPassword);
@@ -212,7 +212,7 @@ public sealed class GroupEntryWindow : ThemedWindow
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
-        if (Btn.Draw("Créer", BtnTone.Primary, BtnSize.Small, Icons.Accept, id: "group_create",
+        if (Btn.Draw("Créer", BtnTone.Action, BtnSize.Small, Icons.Accept, id: "group_create",
                      disabled: GroupPolicyCodec.IsValidName(_createName.Trim()) is false)
             && _actions.Create(_createName.Trim(), _createPassword))
         {

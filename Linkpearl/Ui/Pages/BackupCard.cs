@@ -82,7 +82,7 @@ internal sealed class BackupCard(BackupState state, Action<string, string?> back
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        if (Btn.Draw("Sauvegarder…", BtnTone.Primary, BtnSize.Small, Icons.Backup,
+        if (Btn.Draw("Sauvegarder…", BtnTone.Action, BtnSize.Small, Icons.Backup,
                      disabled: state.Running || mismatch, id: "backup_save"))
         {
             var password = _password.Length > 0 ? _password : null;
@@ -133,7 +133,7 @@ internal sealed class BackupCard(BackupState state, Action<string, string?> back
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
-        submitted |= Btn.Draw("Restaurer", BtnTone.Primary, BtnSize.Small, Icons.Restore,
+        submitted |= Btn.Draw("Restaurer", BtnTone.Action, BtnSize.Small, Icons.Restore,
                               disabled: state.Running || _restorePassword.Length == 0, id: "restore_confirm");
 
         if (submitted && state.Running is false && _restorePassword.Length > 0)
