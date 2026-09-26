@@ -50,4 +50,24 @@ public class ConsensusWireTests
     [Fact]
     public void Une_page_hors_du_plafond_ne_se_demande_pas()
         => Assert.ThrowsAny<ArgumentException>(() => RendezvousWire.ConsensusQuery(RendezvousWire.MaxConsensusPages));
+
+    [Fact]
+    public void Une_demande_d_etat_du_reseau_fait_l_aller_retour()
+    {
+        Assert.True(RendezvousWire.TryReadNetworkStatusQuery(RendezvousWire.NetworkStatusQuery(2), out var page));
+        Assert.Equal(2, page);
+        Assert.False(RendezvousWire.TryReadNetworkStatusQuery(RendezvousWire.ConsensusQuery(2), out _));
+    }
+
+    [Fact]
+    public void Une_page_d_etat_du_reseau_fait_l_aller_retour()
+    {
+        var frame = RendezvousWire.NetworkStatusPage(0, 2, new byte[] { 7, 8 });
+
+        Assert.True(RendezvousWire.TryReadNetworkStatusPage(frame, out var page, out var pages, out var chunk, out var why), why);
+        Assert.Equal(0, page);
+        Assert.Equal(2, pages);
+        Assert.Equal(new byte[] { 7, 8 }, chunk);
+        Assert.False(RendezvousWire.TryReadConsensusPage(frame, out _, out _, out _, out _));
+    }
 }
