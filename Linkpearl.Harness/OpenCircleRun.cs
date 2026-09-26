@@ -153,6 +153,10 @@ public static class OpenCircleRun
         var bobBook = new PairBook(clock);
         bobBook.Load([FederationRun.Pair(aliceId, alicePublic, pairSecret, "Alice", anchor)]);
 
+        // Les services « ouverts » tournent sur la boucle locale, que le client
+        // refuse d'ordinaire pour un lieu du cercle ouvert : le harnais lève ce
+        // filtre, et lui seul.
+        //
         // Chacun son cercle, comme deux plugins distincts qui auraient reçu la
         // même liste de l'autorité.
         var aliceCircle = new OpenCircle([ServiceConsensus.PublicPoint(key)], clock);
@@ -181,13 +185,13 @@ public static class OpenCircleRun
 
         await using var alice = new SyncEngine(
             aliceBook,
-            new PeerConnector(aliceLinks, FederationRun.Endpoint(settings.Anchor), clock, aliceLog, circle: aliceCircle),
+            new PeerConnector(aliceLinks, FederationRun.Endpoint(settings.Anchor), clock, aliceLog, circle: aliceCircle, acceptOpenAddress: _ => true),
             new StaticAppearance(manifest, alicePrint), new NarratingApplicator(aliceStore),
             aliceStore, aliceId, aliceIdentity, clock, new ConsoleLog("Alice"), engineSettings);
 
         await using var bob = new SyncEngine(
             bobBook,
-            new PeerConnector(bobLinks, FederationRun.Endpoint(settings.Anchor), clock, bobLog, circle: bobCircle),
+            new PeerConnector(bobLinks, FederationRun.Endpoint(settings.Anchor), clock, bobLog, circle: bobCircle, acceptOpenAddress: _ => true),
             new StaticAppearance(null, bobPrint), narrator,
             bobStore, bobId, bobIdentity, clock, new ConsoleLog("Bob"), engineSettings);
 

@@ -91,6 +91,27 @@ public class ServiceConsensusTests
     }
 
     [Theory]
+    [InlineData("8.8.8.8", true)]
+    [InlineData("83.228.242.221", true)]
+    [InlineData("2001:1600:18:202::1e4", true)]
+    [InlineData("::ffff:8.8.8.8", true)]
+    [InlineData("127.0.0.1", false)]
+    [InlineData("10.1.2.3", false)]
+    [InlineData("172.16.0.1", false)]
+    [InlineData("192.168.1.1", false)]
+    [InlineData("169.254.1.1", false)]
+    [InlineData("100.64.0.1", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("224.0.0.1", false)]
+    [InlineData("::1", false)]
+    [InlineData("fe80::1", false)]
+    [InlineData("fd00::1", false)]
+    [InlineData("ff02::1", false)]
+    [InlineData("::ffff:10.0.0.1", false)]
+    public void Seules_les_adresses_publiques_sont_joignables(string address, bool expected)
+        => Assert.Equal(expected, ServiceConsensus.IsPublicAddress(IPAddress.Parse(address)));
+
+    [Theory]
     [InlineData("203.0.113.57", "f2298267ef14beca")]
     [InlineData("203.0.113.200", "f2298267ef14beca")]
     [InlineData("203.0.114.1", "c54a51a214749b54")]

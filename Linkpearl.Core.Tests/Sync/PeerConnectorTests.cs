@@ -107,6 +107,24 @@ public class PeerConnectorTests
         Assert.True(dialer.Asked.Single().At < TimeSpan.FromSeconds(2));
     }
 
+    private static Func<string, CancellationToken, Task<System.Net.IPAddress[]>> Resolving(params string[] addresses)
+        => (_, _) => Task.FromResult(addresses.Select(System.Net.IPAddress.Parse).ToArray());
+
+    [Fact]
+    public async Task Un_nom_ouvert_qui_ne_mene_qu_au_reseau_local_n_est_pas_joint()
+        => Assert.Null(await PeerConnector.PublicHostAsync(
+            "rdv.piege.ch", Resolving("192.168.1.1", "127.0.0.1", "fd00::1"), ServiceConsensus.IsPublicAddress, CancellationToken.None));
+
+    [Fact]
+    public async Task Un_nom_ouvert_mene_a_sa_premiere_adresse_publique()
+        => Assert.Equal("83.228.242.221", await PeerConnector.PublicHostAsync(
+            "rdv.ami.ch", Resolving("10.0.0.5", "83.228.242.221"), ServiceConsensus.IsPublicAddress, CancellationToken.None));
+
+    [Fact]
+    public async Task Une_adresse_litterale_privee_n_est_pas_jointe()
+        => Assert.Null(await PeerConnector.PublicHostAsync(
+            "127.0.0.1", Resolving(), ServiceConsensus.IsPublicAddress, CancellationToken.None));
+
     [Fact]
     public async Task Nos_propres_candidats_renvoyes_ne_comptent_pas_comme_un_appariement()
     {

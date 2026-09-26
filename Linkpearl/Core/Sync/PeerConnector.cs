@@ -36,8 +36,29 @@ public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, stri
 /// </remarks>
 public sealed class PeerConnector(
     PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log,
-    TimeSpan? announceBudget = null, IOpenCircle? circle = null) : IPeerDialer
+    TimeSpan? announceBudget = null, IOpenCircle? circle = null, Func<IPAddress, bool>? acceptOpenAddress = null) : IPeerDialer
 {
+    /// <summary>
+    /// L'adresse à joindre pour un nom du cercle ouvert, ou null s'il ne mène qu'au réseau local.
+    /// </summary>
+    /// <remarks>
+    /// On se connecte à l'adresse filtrée et non au nom, pour qu'une seconde
+    /// résolution ne puisse pas rendre autre chose que ce qui a été vérifié.
+    /// </remarks>
+    public static async Task<string?> PublicHostAsync(
+        string host, Func<string, CancellationToken, Task<IPAddress[]>> resolve,
+        Func<IPAddress, bool> accept, CancellationToken ct)
+    {
+        IPAddress[] resolved = IPAddress.TryParse(host, out var literal)
+            ? [literal]
+            : await resolve(host, ct).ConfigureAwait(false);
+
+        return resolved
+            .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+            .FirstOrDefault(accept)?
+            .ToString();
+    }
+
     /// <summary>
     /// Combien de temps une annonce reste tenue au rendez-vous.
     /// </summary>
@@ -226,7 +247,7 @@ public sealed class PeerConnector(
 
         // Le pair n'est peut-être pas en ligne, et son absence n'est pas une
         // erreur. Mais on attend assez pour qu'il nous trouve s'il essaie.
-        var dialer = new LiveDialer();
+        var dialer = new LiveDialer(open, acceptOpenAddress ?? ServiceConsensus.IsPublicAddress);
 
         var match = await AnnounceInCirclesAsync(
             dialer, open, pair.Rendezvous, announcement, OpenHead, _announceBudget, ct).ConfigureAwait(false);
@@ -383,7 +404,7 @@ public sealed class PeerConnector(
     /// distinguer un pair absent d'un réseau sans lieu commun. Une instance par
     /// tentative, donc le compteur n'a pas à se remettre à zéro.
     /// </remarks>
-    private sealed class LiveDialer : IRendezvousDialer
+    private sealed class LiveDialer(IReadOnlyList<RendezvousAddress> open, Func<IPAddress, bool> acceptOpen) : IRendezvousDialer
     {
         private int _reached;
 
@@ -392,8 +413,16 @@ public sealed class PeerConnector(
         public async Task<byte[]?> AnnounceAsync(
             RendezvousAddress at, Announcement announcement, CancellationToken ct)
         {
+            // Un lieu du cercle ouvert n'a pas été choisi par l'utilisateur :
+            // on résout son nom nous-mêmes et on ne joint qu'une adresse
+            // publique. L'ancrage garde la confiance qu'il a toujours eue.
+            var host = open.Contains(at)
+                ? await PublicHostAsync(at.Host, Dns.GetHostAddressesAsync, acceptOpen, ct).ConfigureAwait(false)
+                    ?? throw new IOException($"{at} ne mène à aucune adresse publique")
+                : at.Host;
+
             await using var client = new RendezvousClient();
-            await client.ConnectAsync(at.Host, at.Port, ct).ConfigureAwait(false);
+            await client.ConnectAsync(host, at.Port, ct).ConfigureAwait(false);
 
             Interlocked.Increment(ref _reached);
 
