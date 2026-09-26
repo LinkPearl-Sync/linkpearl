@@ -108,6 +108,20 @@ public class PeerConnectorTests
     }
 
     [Fact]
+    public async Task Nos_propres_candidats_renvoyes_ne_comptent_pas_comme_un_appariement()
+    {
+        // Un service d'avant le correctif apparie nos deux annonces entre
+        // elles quand il est dans les deux cercles sous deux noms : il nous
+        // renvoie alors notre propre bloc, qui n'est pas un pair.
+        var dialer = new TimedDialer(new() { ["alias.ch"] = [9] });
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [At("alias.ch")], [], Some(), TimeSpan.Zero, TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+        Assert.Null(match);
+    }
+
+    [Fact]
     public async Task Un_service_des_deux_cercles_n_est_annonce_qu_une_fois()
     {
         var dialer = new TimedDialer([]);

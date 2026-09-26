@@ -153,7 +153,12 @@ public sealed class PeerConnector(
 
                 var theirs = await dialer.AnnounceAsync(place, announcement, deadline.Token).ConfigureAwait(false);
 
-                return theirs is null ? null : (place, theirs);
+                // Notre propre bloc, que son aléa rend unique : un service qui a
+                // apparié nos deux annonces entre elles, pas un pair.
+                if (theirs is null || theirs.AsSpan().SequenceEqual(announcement.SealedCandidates))
+                    return null;
+
+                return (place, theirs);
             }
             catch (Exception)
             {
