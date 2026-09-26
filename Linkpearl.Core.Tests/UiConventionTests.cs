@@ -42,7 +42,7 @@ public class UiConventionTests
     {
         {
             "ImGui.Checkbox(", "un réglage oui/non passe par Toggle", [],
-            ["Pages.GroupsPage.cs", "Pages.SettingsPage.cs"]
+            ["Pages.SettingsPage.cs"]
         },
         {
             "ImGui.CollapsingHeader(", "un en-tête repliable passe par Fold", [],

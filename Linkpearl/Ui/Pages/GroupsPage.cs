@@ -211,54 +211,24 @@ internal sealed class GroupsPage(
         }
     }
 
-    /// <summary>
-    /// Les trois catégories d'effets, en boutons allumés ou éteints comme le mode d'admission.
-    /// </summary>
+    /// <summary>Les effets reçus des joueurs du Public que l'on n'a pas réglés un par un.</summary>
     private void DrawPublicEffects(GroupRecord @public)
     {
         Text.Label("Effets reçus");
 
-        var receive = @public.DefaultReceive;
-
-        (string Label, FontAwesomeIcon Icon, bool On, Func<bool, TransientCategories> With)[] toggles =
-        [
-            ("Animations", Icons.Animations, receive.Animations, on => receive with { Animations = on }),
-            ("VFX", Icons.Vfx, receive.Vfx, on => receive with { Vfx = on }),
-            ("Sons", Icons.Sounds, receive.Sounds, on => receive with { Sounds = on }),
-        ];
-
-        for (var i = 0; i < toggles.Length; i++)
-        {
-            var (label, icon, on, with) = toggles[i];
-
-            if (i > 0)
-                ImGui.SameLine(0f, Theme.S(Theme.GapXs));
-
-            if (Btn.Draw(label, on ? BtnTone.Selected : BtnTone.Secondary, BtnSize.Small, icon, id: $"public_fx_{i}",
-                         tooltip: on ? "Reçus. Cliquer pour les bloquer." : "Bloqués. Cliquer pour les recevoir."))
-                actions.SetDefaultReceive(PublicGroup.Id, with(on is false));
-        }
+        if (EffectsPicker.Draw(@public.DefaultReceive, "public_fx") is { } changed)
+            actions.SetDefaultReceive(PublicGroup.Id, changed);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapXs));
         Text.Small("Pour les joueurs que vous n'avez pas réglés un par un.", Theme.TextFaint);
     }
 
-    /// <summary>Vrai quand la liste des joueurs rencontrés est dépliée.</summary>
-    /// <remarks>Repliée par défaut : dans une foule, elle repousserait les groupes privés hors de l'écran.</remarks>
-    private bool _publicMembersOpen;
-
+    /// <summary>Les joueurs du Public déjà croisés, repliés par défaut.</summary>
+    /// <remarks>Dans une foule, la liste dépliée repousserait les groupes privés hors de l'écran.</remarks>
     private void DrawPublicMembers(GroupRecord @public)
     {
-        var glyph = _publicMembersOpen ? Icons.Expanded : Icons.Collapsed;
-
-        if (Btn.Draw($"Joueurs rencontrés ({@public.Members.Count})", BtnTone.Ghost, BtnSize.Small, glyph,
-                     id: "public_members"))
-            _publicMembersOpen = !_publicMembersOpen;
-
-        if (_publicMembersOpen is false)
+        if (Fold.Draw("Joueurs rencontrés", @public.Members.Count, "public_members", defaultOpen: false) is false)
             return;
-
-        ImGui.Dummy(Theme.S(0f, Theme.GapXs));
 
         using var scope = ImRaii.PushId("public");
         DrawMembers(@public, GroupRole.Member, statuses());
@@ -853,7 +823,7 @@ internal sealed class GroupsPage(
     }
 
     /// <summary>Le bouton des animations, VFX et sons de ce membre, et son menu.</summary>
-    /// <remarks>Copie de celui des pairs : accentué dès qu'une catégorie est bloquée.</remarks>
+    /// <remarks>Le même que celui des pairs : accentué dès qu'une catégorie est bloquée.</remarks>
     private void DrawReceive(GroupRecord group, GroupMember member, string id)
     {
         var receive = group.ReceiveOf(member);
@@ -872,16 +842,8 @@ internal sealed class GroupsPage(
 
         Text.Small("Recevoir de ce membre :");
 
-        var animations = receive.Animations;
-        var vfx = receive.Vfx;
-        var sounds = receive.Sounds;
-
-        var changed = ImGui.Checkbox($"Animations##anim_{id}", ref animations);
-        changed |= ImGui.Checkbox($"VFX##vfx_{id}", ref vfx);
-        changed |= ImGui.Checkbox($"Sons##sons_{id}", ref sounds);
-
-        if (changed)
-            actions.SetReceive(group.Id, member.Fingerprint, new TransientCategories(animations, vfx, sounds));
+        if (EffectsPicker.Draw(receive, $"fx_{id}") is { } changed)
+            actions.SetReceive(group.Id, member.Fingerprint, changed);
 
         // Un membre du Public réglé à la main ne suit plus le réglage commun :
         // ce bouton l'y ramène.
