@@ -128,7 +128,9 @@ internal sealed class RequestToasts : ThemedWindow
         var id      = request.Id.ToHex();
         var visible = RequestsPage.IsVisible(_state, request);
 
-        using var card = Card.Begin($"toast_{id}", accent: Theme.Accent);
+        // Opaque : la fenêtre n'a pas de fond et flotte sur le décor du jeu,
+        // une carte translucide s'y lirait mal sur la neige ou le sable.
+        using var card = Card.Begin($"toast_{id}", background: Theme.BgSurface, accent: Theme.Accent);
 
         Text.WithIcon(Icons.Requests, "Demande de pairage", Theme.Accent, Theme.TextMuted);
         Text.H2(request.CharacterName);
@@ -144,7 +146,7 @@ internal sealed class RequestToasts : ThemedWindow
         if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept, id: $"toast_accept_{id}"))
             _accept(request);
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Refuser", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: $"toast_decline_{id}"))
             _decline(request);
@@ -155,7 +157,7 @@ internal sealed class RequestToasts : ThemedWindow
         var id      = Convert.ToHexString(pending.Nonce);
         var visible = RequestsPage.IsVisible(_state, pending);
 
-        using var card = Card.Begin($"toast_admission_{id}", accent: Theme.Accent);
+        using var card = Card.Begin($"toast_admission_{id}", background: Theme.BgSurface, accent: Theme.Accent);
 
         Text.WithIcon(Icons.Groups, "Demande d'entrée dans un groupe", Theme.Accent, Theme.TextMuted);
         Text.H2(Glyphs.Safe(pending.CharacterName));
@@ -172,7 +174,7 @@ internal sealed class RequestToasts : ThemedWindow
         if (Btn.Draw("Accepter", BtnTone.Action, BtnSize.Small, Icons.Accept, id: $"toast_admission_accept_{id}"))
             _approve(pending);
 
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Refuser", BtnTone.Ghost, BtnSize.Small, Icons.Decline, id: $"toast_admission_decline_{id}"))
             _declineAdmission(pending);

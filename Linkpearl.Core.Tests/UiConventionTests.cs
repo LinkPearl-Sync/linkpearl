@@ -50,7 +50,7 @@ public class UiConventionTests
         },
         {
             "ImGui.SameLine()", "l'espacement se dit, il ne se laisse pas au défaut d'ImGui", [],
-            ["NameplateLegend.cs", "Pages.RequestsPage.cs", "Pages.SettingsPage.cs", "RequestToasts.cs"]
+            ["NameplateLegend.cs", "Pages.SettingsPage.cs"]
         },
         {
             "ImGui.Button(", "un bouton passe par Btn", ["Components.Btn.cs"], []
