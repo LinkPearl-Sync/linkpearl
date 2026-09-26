@@ -102,7 +102,7 @@ That's it: your looks are exchanged whenever you are within range of each other.
 
 A group syncs all its members with each other, without pairing them one by one: a free company, a roleplay circle. Everything happens on the **Groupes** (Groups) page of the window.
 
-- **Create**: **Créer un groupe** (create a group), give it a name, optionally a password, then **Créer** (create). With a password, any member online lets in whoever knows it. Without one, you or a moderator approve each newcomer.
+- **Create**: **Créer un groupe** (create a group), give it a name (letters, digits and dashes, no spaces), optionally a password, then **Créer** (create). With a password, any member online lets in whoever knows it. Without one, you or a moderator approve each newcomer.
 - **Share the code**: under **Inviter** (invite), the code (`ABCD-EFGH-JKLM@service`) and its **Copier le code** (copy the code) button. Send it by /tell. The page shows it to the owner and the moderators only.
 - **Join**: **Rejoindre un groupe** (join a group), paste the code, the password if the group has one, then **Rejoindre** (join). A member must be online to answer, or a moderator if the group approves each newcomer. Joining needs **Me signaler aux autres joueurs** (let other players see me) turned on: that is how the group answers you.
 - **Approve**: requests to join show up on the **Demandes** (Requests) page for the owner and the moderators, with **Accepter** (accept) and **Refuser** (decline).

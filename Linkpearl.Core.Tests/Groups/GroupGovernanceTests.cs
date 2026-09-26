@@ -35,6 +35,13 @@ public sealed class GroupGovernanceTests : IDisposable
         => Assert.Equal(PolicyOffer.Adopted, book.OfferPolicy(id, encoded));
 
     [Fact]
+    public void Un_groupe_ne_nait_pas_avec_un_espace_dans_son_nom()
+    {
+        Assert.Throws<ArgumentException>(
+            () => GroupGovernance.Create("Les Mogs", "", PolicyFixture.Service, OwnerPoint, _clock.UtcNow));
+    }
+
+    [Fact]
     public void Un_groupe_cree_est_complet_et_valide()
     {
         var created = GroupGovernance.Create("Compagnie", "lune", PolicyFixture.Service, OwnerPoint, _clock.UtcNow);

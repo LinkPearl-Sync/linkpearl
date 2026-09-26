@@ -29,8 +29,9 @@ public static class GroupGovernance
     public static CreatedGroup Create(
         string name, string password, RendezvousAddress service, byte[] ownerIdentityKey, DateTimeOffset now)
     {
-        if (GroupPolicyCodec.IsValidName(name) is false)
-            throw new ArgumentException("nom de groupe invalide : 1 à 32 caractères", nameof(name));
+        if (GroupPolicyCodec.IsCreatableName(name) is false)
+            throw new ArgumentException(
+                "nom de groupe invalide : 1 à 32 lettres, chiffres ou tirets, sans espace", nameof(name));
 
         // Une clé propre au groupe, jamais une identité : un propriétaire peut
         // ainsi créer plusieurs groupes, chacun avec son identifiant.

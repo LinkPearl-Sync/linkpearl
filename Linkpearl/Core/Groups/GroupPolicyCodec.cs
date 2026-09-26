@@ -52,11 +52,27 @@ public static class GroupPolicyCodec
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Un nom de groupe : 1 à 32 caractères, sans caractère de contrôle, pas seulement des espaces.</summary>
+    /// <remarks>
+    /// La règle de réception, plus large que celle de création : des groupes
+    /// sont nés avec des espaces avant le 26 septembre, et la resserrer ferait
+    /// rejeter leur politique par chaque membre.
+    /// </remarks>
     public static bool IsValidName(string? name)
         => name is { Length: > 0 and <= MaxNameChars }
            && string.IsNullOrWhiteSpace(name) is false
            && name.Any(char.IsControl) is false
            && Encoding.UTF8.GetByteCount(name) <= MaxNameBytes;
+
+    /// <summary>Un caractère permis dans le nom d'un nouveau groupe : lettre, accentuée ou non, chiffre, tiret.</summary>
+    /// <remarks>
+    /// Demandé le 26 septembre : ni espace ni caractère spécial, pour un nom
+    /// qui se tape et se dit sans ambiguïté. Le trait de soulignement reste,
+    /// faute d'espace pour séparer deux mots.
+    /// </remarks>
+    public static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c is '-' or '_';
+
+    /// <summary>Un nom qu'un nouveau groupe peut porter : la règle de réception, et rien que des caractères permis.</summary>
+    public static bool IsCreatableName(string? name) => IsValidName(name) && name!.All(IsNameChar);
 
     public static byte[] Encode(GroupPolicy policy)
     {

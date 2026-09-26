@@ -150,6 +150,30 @@ public sealed class GroupPolicyTests : IDisposable
     public void Un_nom_hors_regles_est_refuse(string name)
         => Assert.False(GroupPolicyCodec.IsValidName(name));
 
+    [Theory]
+    [InlineData("Les Mogs")]
+    [InlineData("Mogs!")]
+    [InlineData("Mogs@Ravana")]
+    [InlineData("Mogs.Club")]
+    public void Un_nouveau_nom_n_a_ni_espace_ni_caractere_special(string name)
+        => Assert.False(GroupPolicyCodec.IsCreatableName(name));
+
+    [Theory]
+    [InlineData("LesMogs")]
+    [InlineData("Łódź")]
+    [InlineData("Club-des-Mogs")]
+    [InlineData("mogs_42")]
+    public void Un_nouveau_nom_garde_lettres_accents_chiffres_et_tirets(string name)
+        => Assert.True(GroupPolicyCodec.IsCreatableName(name));
+
+    [Fact]
+    public void Un_ancien_nom_avec_espace_reste_accepte_a_la_reception()
+    {
+        // Resserrer la réception ferait rejeter par chaque membre la politique
+        // des groupes nés avant la règle, qui cesseraient de fonctionner.
+        Assert.True(GroupPolicyCodec.IsValidName("Les Mogs"));
+    }
+
     [Fact]
     public void Les_bornes_sont_appliquees_au_decodage()
     {

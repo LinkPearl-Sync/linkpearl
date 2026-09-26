@@ -99,7 +99,7 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 
 Un groupe synchronise tous ses membres entre eux, sans les pairer un à un : une compagnie libre, un cercle de jeu de rôle. Tout se passe sur la page **Groupes** de la fenêtre.
 
-- **Créer** : **Créer un groupe**, donnez-lui un nom, un mot de passe si vous le souhaitez, puis **Créer**. Avec un mot de passe, n'importe quel membre en ligne fait entrer qui le connaît. Sans mot de passe, vous ou un modérateur validez chaque entrée.
+- **Créer** : **Créer un groupe**, donnez-lui un nom (lettres, chiffres et tirets, sans espace), un mot de passe si vous le souhaitez, puis **Créer**. Avec un mot de passe, n'importe quel membre en ligne fait entrer qui le connaît. Sans mot de passe, vous ou un modérateur validez chaque entrée.
 - **Partager le code** : sous **Inviter**, le code (`ABCD-EFGH-JKLM@service`) et son bouton **Copier le code**. Envoyez-le par /tell. La page ne le montre qu'au propriétaire et aux modérateurs.
 - **Rejoindre** : **Rejoindre un groupe**, collez le code, le mot de passe si le groupe en a un, puis **Rejoindre**. Un membre doit être en ligne pour vous répondre, ou un modérateur si le groupe valide chaque entrée. Il faut que **Me signaler aux autres joueurs** soit activé : c'est par là que le groupe vous répond.
 - **Valider** : les demandes d'entrée arrivent sur la page **Demandes** du propriétaire et des modérateurs, avec **Accepter** et **Refuser**.

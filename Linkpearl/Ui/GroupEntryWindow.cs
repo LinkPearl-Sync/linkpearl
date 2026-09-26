@@ -194,6 +194,23 @@ public sealed class GroupEntryWindow : ThemedWindow
         }
     }
 
+    /// <summary>Écarte tout caractère qu'un nom de groupe ne peut pas porter.</summary>
+    /// <remarks>En champ : le délégué passe au code natif, il ne doit pas être recréé à chaque image.</remarks>
+    private static readonly ImGui.ImGuiInputTextCallbackDelegate KeepNameChars =
+        (ref ImGuiInputTextCallbackData data) => GroupPolicyCodec.IsNameChar((char)data.EventChar) ? 0 : 1;
+
+    /// <summary>L'indication d'un champ vide, pour un champ qui ne peut pas passer par InputTextWithHint.</summary>
+    private static void DrawHint(string value, string hint)
+    {
+        if (value.Length > 0 || ImGui.IsItemActive())
+            return;
+
+        var padding = ImGui.GetStyle().FramePadding;
+
+        ImGui.GetWindowDrawList().AddText(ImGui.GetItemRectMin() + padding,
+            ImGui.GetColorU32(ImGuiCol.TextDisabled), hint);
+    }
+
     private void DrawCreate()
     {
         Text.Small("Vous en serez le propriétaire : vous distribuez le code et décidez qui entre.", Theme.TextMuted);
@@ -201,10 +218,14 @@ public sealed class GroupEntryWindow : ThemedWindow
 
         // Le tampon en octets, la limite en caractères : un nom accentué de
         // trente-deux caractères dépasse trente-deux octets, et c'est
-        // IsValidName qui tranche, comme le fera chaque membre en le recevant.
+        // IsCreatableName qui tranche. Les espaces et caractères spéciaux sont
+        // refusés à la frappe comme au collage : le filtre d'ImGui voit les
+        // deux. InputTextWithHint n'accepte pas de filtre dans les bindings de
+        // Dalamud, d'où l'indication dessinée à la main.
         ImGui.SetNextItemWidth(FieldWidth);
-        ImGui.InputTextWithHint("##group_name", "Nom du groupe (32 caractères)", ref _createName,
-                                GroupPolicyCodec.MaxNameBytes);
+        ImGui.InputText("##group_name", ref _createName, GroupPolicyCodec.MaxNameBytes,
+                        ImGuiInputTextFlags.CallbackCharFilter, KeepNameChars);
+        DrawHint(_createName, "Nom du groupe, sans espace (32 caractères)");
 
         ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputTextWithHint("##group_create_password", "Mot de passe (facultatif)", ref _createPassword,
@@ -213,8 +234,8 @@ public sealed class GroupEntryWindow : ThemedWindow
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
         if (Btn.Draw("Créer", BtnTone.Action, BtnSize.Small, Icons.Accept, id: "group_create",
-                     disabled: GroupPolicyCodec.IsValidName(_createName.Trim()) is false)
-            && _actions.Create(_createName.Trim(), _createPassword))
+                     disabled: GroupPolicyCodec.IsCreatableName(_createName) is false)
+            && _actions.Create(_createName, _createPassword))
         {
             // Fermée seulement si le groupe existe : un refus est dit dans le
             // chat, et la saisie reste là pour être corrigée.
