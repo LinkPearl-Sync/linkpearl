@@ -133,13 +133,16 @@ internal static class Feedback
         if (hint is null)
             return;
 
-        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXs)));
-        Centered(hint, Theme.TextFaint, small: true);
+        // Titre et phrase à la mesure du logo de 160 px : en en-tête de section
+        // et en petit texte, vus en jeu le 26 septembre, ils paraissaient
+        // minuscules dessous.
+        ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapS)));
+        Centered(hint, Theme.TextMuted);
     }
 
-    private static void Centered(string text, Vector4 color, bool small = false, bool heading = false)
+    private static void Centered(string text, Vector4 color, bool heading = false)
     {
-        using var font = heading ? Fonts.PushH2() : small ? Fonts.PushSmall() : Fonts.PushBody();
+        using var font = heading ? Fonts.PushTitle() : Fonts.PushBody();
 
         var safe = Glyphs.Safe(text);
         var size = ImGui.CalcTextSize(safe);
