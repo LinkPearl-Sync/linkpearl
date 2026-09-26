@@ -130,13 +130,7 @@ internal sealed class PairsPage(
         if (pairs.Count == 0)
             return;
 
-        var flags = defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-
-        using var header = ImRaii.PushColor(ImGuiCol.Header, Theme.BgSurface)
-                                 .Push(ImGuiCol.HeaderHovered, Theme.BgRaised)
-                                 .Push(ImGuiCol.HeaderActive, Theme.BgRaised);
-
-        if (ImGui.CollapsingHeader($"{title} ({pairs.Count})###groupe_{title}", flags) is false)
+        if (Fold.Draw(title, pairs.Count, $"pairs_{title}", defaultOpen) is false)
             return;
 
         using var table = ImRaii.Table($"pairs_{title}", 4, ImGuiTableFlags.NoBordersInBody | ImGuiTableFlags.PadOuterX);
@@ -271,16 +265,8 @@ internal sealed class PairsPage(
 
         Text.Small("Recevoir de ce pair :");
 
-        var animations = receive.Animations;
-        var vfx = receive.Vfx;
-        var sounds = receive.Sounds;
-
-        var changed = ImGui.Checkbox($"Animations##anim_{id}", ref animations);
-        changed |= ImGui.Checkbox($"VFX##vfx_{id}", ref vfx);
-        changed |= ImGui.Checkbox($"Sons##sons_{id}", ref sounds);
-
-        if (changed)
-            setReceive(pair.Id, new TransientCategories(animations, vfx, sounds));
+        if (EffectsPicker.Draw(receive, $"fx_{id}") is { } changed)
+            setReceive(pair.Id, changed);
     }
 
     /// <summary>Centre un texte d'une ligne sur la hauteur d'un bouton.</summary>
