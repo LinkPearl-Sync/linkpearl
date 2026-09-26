@@ -51,10 +51,12 @@ public abstract class ThemedWindow : Window
     /// Opacité du fond de fenêtre.
     /// </summary>
     /// <remarks>
-    /// Légèrement translucide, avec le flou natif de Dalamud derrière : le décor
-    /// du jeu transparaît sans nuire à la lisibilité du texte.
+    /// À peine translucide. Vu en jeu le 26 septembre : à 94 %, un sol clair
+    /// (les pavés d'une ville) se lisait nettement à travers la nuit marine, qui
+    /// l'assombrit bien moins que ne le faisait l'ancien gris. Le flou de
+    /// Dalamud n'y change rien quand l'utilisateur l'a coupé.
     /// </remarks>
-    protected virtual float BackgroundOpacity => 0.94f;
+    protected virtual float BackgroundOpacity => 0.97f;
 
     protected ThemedWindow(string name, ImGuiWindowFlags flags = ImGuiWindowFlags.None)
         : base(name, flags | ImGuiWindowFlags.NoCollapse)

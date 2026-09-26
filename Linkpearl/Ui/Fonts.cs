@@ -77,13 +77,17 @@ internal static class Fonts
             _atlas = pi.UiBuilder.CreateFontAtlas(
                 FontAtlasAutoRebuildMode.Async, isGlobalScaled: true, "Linkpearl");
 
+            // Nunito a un œil plus petit qu'Inter : à taille égale, son texte
+            // paraît d'un point plus petit, et Small devenait flou en jeu. Le
+            // corps et les métadonnées prennent donc un pixel de plus.
+            //
             // FontAwesome est fusionné dans les quatre niveaux : les pastilles
             // emploient Small et les en-têtes emploient H2, ils ont donc besoin
             // des icônes autant que le corps de texte.
             Body  = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 15f)));
+                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 16f)));
             Small = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 12f)));
+                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 13f)));
             H2    = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
                 p => Compose(p, "Fonts.Fredoka-SemiBold.ttf", "Fonts.Inter-SemiBold.ttf", 17f)));
             Title = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(

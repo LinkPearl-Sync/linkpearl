@@ -166,14 +166,15 @@ internal static class Surface
                                    top, top, bottom, bottom);
         dl.AddRectFilled(new Vector2(min.X, max.Y - r - 1f), max, bottom, r, ImDrawFlags.RoundCornersBottom);
 
-        // L'ellipse du site : 70 % de la largeur, 480 px de haut, centrée à
-        // 160 px du bord. Sa largeur n'atteint pas les angles, et le rognage
-        // l'arrête au bord haut.
+        // L'ellipse du site, 70 % de la largeur, remontée contre le bord haut et
+        // adoucie. Vu en jeu le 26 septembre : centrée à 160 px et pleine, elle
+        // tombait juste derrière le texte des pages, qui perdait son contraste.
+        // Sa largeur n'atteint pas les angles, et le rognage l'arrête au bord.
         var width = max.X - min.X;
 
         dl.PushClipRect(min, max, true);
-        Halo(dl, new Vector2(min.X + width * 0.5f, min.Y + Theme.S(160f)),
-             new Vector2(width * 0.35f, Theme.S(240f)), Theme.Alpha(Theme.NightHalo, opacity));
+        Halo(dl, new Vector2(min.X + width * 0.5f, min.Y + Theme.S(40f)),
+             new Vector2(width * 0.35f, Theme.S(220f)), Theme.Alpha(Theme.NightHalo, opacity * 0.60f));
         dl.PopClipRect();
     }
 
