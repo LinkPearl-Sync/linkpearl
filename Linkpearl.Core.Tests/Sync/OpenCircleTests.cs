@@ -49,6 +49,19 @@ public sealed class OpenCircleTests : IDisposable
         };
 
     [Fact]
+    public void Les_cles_de_confiance_sont_des_points_publics_complets()
+    {
+        // Une clé mal collée serait ignorée sans bruit : aucune liste ne
+        // passerait, et le cercle ouvert resterait inerte sans que rien le dise.
+        Assert.NotEmpty(ConsensusKeys.Trusted);
+        Assert.All(ConsensusKeys.Trusted, key =>
+        {
+            Assert.Equal(ServiceConsensus.PublicPointSize, key.Length);
+            Assert.Equal(0x04, key[0]);
+        });
+    }
+
+    [Fact]
     public void Sans_liste_aucun_service_ouvert()
         => Assert.Empty(Circle().PlacesFor(Pair()));
 
