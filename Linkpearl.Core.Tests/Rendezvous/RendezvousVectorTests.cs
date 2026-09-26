@@ -62,6 +62,8 @@ public class RendezvousVectorTests
         ("annuaire-candidature", () => RendezvousWire.DirectorySubmit("rdv.nouveau.ch", "Chez le nouveau")),
         ("bannissement-demande", () => RendezvousWire.BanListQuery(1)),
         ("bannissement-page", () => RendezvousWire.BanListData(0, 2, "{\"version\":1}")),
+        ("consensus-demande", () => RendezvousWire.ConsensusQuery(1)),
+        ("consensus-page", () => RendezvousWire.ConsensusPage(0, 2, new byte[] { 0xAB, 0xCD })),
     ];
 
     /// <summary>Les vecteurs, retrouvés dans les sources du dépôt.</summary>
@@ -129,6 +131,8 @@ public class RendezvousVectorTests
     [InlineData("adresseAnnuaireMax", RendezvousWire.MaxDirectoryAddressLength)]
     [InlineData("entreesParPageBannissement", RendezvousWire.BanListPageEntries)]
     [InlineData("pagesBannissementMax", RendezvousWire.MaxBanListPages)]
+    [InlineData("octetsParPageConsensus", RendezvousWire.ConsensusPageBytes)]
+    [InlineData("pagesConsensusMax", RendezvousWire.MaxConsensusPages)]
     public void Les_plafonds_sont_les_memes_des_deux_cotes(string name, int expected)
     {
         // Un plafond qui diverge ne casse pas le format : il fait refuser chez
