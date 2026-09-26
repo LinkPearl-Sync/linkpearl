@@ -74,12 +74,15 @@ internal sealed class PairsPage(
 
             (pair.Trust is PairTrust.Blocked ? blocked
              : pair.Paused ? paused
-             : status is { State: not PeerSessionState.Disconnected } ? online
+             : Linked(status) ? online
              : offline).Add(pair);
         }
 
+        // « En attente de lien » et non « hors ligne » : on y trouve aussi ceux
+        // que le moteur est en train de chercher, et ceux dont l'essai a échoué.
+        // La puce de chacun dit lequel.
         Group("En ligne", online, byPeer, defaultOpen: true);
-        Group("Hors ligne", offline, byPeer, defaultOpen: true);
+        Group("En attente de lien", offline, byPeer, defaultOpen: true);
         Group("En pause", paused, byPeer, defaultOpen: false);
         Group("Bloqués", blocked, byPeer, defaultOpen: false);
 
@@ -177,10 +180,10 @@ internal sealed class PairsPage(
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
 
-        var canReapply = status is { State: not PeerSessionState.Disconnected };
+        var canReapply = Linked(status);
 
         if (Btn.Icon(Icons.Refresh, $"reapply_{id}",
-                     tooltip: canReapply ? "Réappliquer : redemander la dernière apparence et la reposer" : "Hors ligne",
+                     tooltip: canReapply ? "Réappliquer : redemander la dernière apparence et la reposer" : "Pas encore relié",
                      disabled: canReapply is false))
             reapply(pair.Id);
 
@@ -249,12 +252,22 @@ internal sealed class PairsPage(
     private static void AlignToFrame()
         => ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((ImGui.GetFrameHeight() - ImGui.GetTextLineHeight()) * 0.5f));
 
+    /// <summary>Une session est ouverte : le reste de la phase parle de son apparence.</summary>
+    private static bool Linked(PeerStatus? status)
+        => status?.Phase is PeerPhase.AwaitingAppearance or PeerPhase.Receiving
+                         or PeerPhase.OutOfView or PeerPhase.Applied;
+
     private static Vector4 Tint(PairRecord pair, PeerStatus? status)
         => pair.Trust is PairTrust.Blocked ? Theme.Danger
          : pair.Paused ? Theme.Idle
-         : status is null || status.State is PeerSessionState.Disconnected ? Theme.TextFaint
-         : status.Applied ? Theme.Online
-         : Theme.Accent;
+         : status is null ? Theme.TextFaint
+         : status.Phase switch
+           {
+               PeerPhase.Applied                       => Theme.Online,
+               PeerPhase.Searching or PeerPhase.Failing => Theme.Idle,
+               PeerPhase.Absent                        => Theme.TextFaint,
+               _                                       => Theme.Accent,
+           };
 
     /// <summary>
     /// Direct ou par le relais, et la latence.
@@ -302,35 +315,59 @@ internal sealed class PairsPage(
             return;
         }
 
-        if (status is null || status.State is PeerSessionState.Disconnected)
+        if (status is null)
         {
-            Chip.Draw("hors ligne", Theme.TextFaint, Icons.Waiting);
+            Chip.Draw("recherche du pair…", Theme.Idle, Icons.Waiting);
             return;
         }
 
-        if (status.Applied)
+        switch (status.Phase)
         {
-            Chip.Draw("apparence posée", Theme.Online, Icons.Applied);
-            return;
+            case PeerPhase.Searching:
+                Chip.Draw("recherche du pair…", Theme.Idle, Icons.Waiting);
+                Feedback.TooltipOnHover("Linkpearl le cherche au rendez-vous. Cela prend jusqu'à 25 secondes.");
+                return;
+
+            case PeerPhase.Absent:
+                Chip.Draw("absent", Theme.TextFaint, Icons.Waiting);
+                Feedback.TooltipOnHover(
+                    "Il n'était pas au rendez-vous : hors ligne, ou il vous a mis en pause. "
+                  + "Linkpearl continue de le chercher toutes les 30 secondes.");
+                return;
+
+            case PeerPhase.Failing:
+                Chip.Draw($"échec, nouvel essai {Countdown(status.NextAttempt)}", Theme.Idle, Icons.Warning);
+                Feedback.TooltipOnHover(status.LastFailure ?? "La dernière tentative a échoué.");
+                return;
+
+            case PeerPhase.Applied:
+                Chip.Draw("apparence posée", Theme.Online, Icons.Applied);
+                return;
+
+            case PeerPhase.OutOfView:
+                Chip.Draw("prêt, hors de vue", Theme.Accent, Icons.Connected);
+                return;
+
+            case PeerPhase.Receiving:
+                var received = status.View.ReceivedBytes / 1024 / 1024;
+                var total    = status.View.MissingBytes / 1024 / 1024;
+
+                Chip.Draw($"réception {received} / {total} Mo", Theme.Idle, Icons.Receiving);
+                return;
+
+            default:
+                Chip.Draw("en attente de son apparence", Theme.Accent, Icons.Connected);
+                return;
         }
+    }
 
-        var view = status.View;
+    /// <summary>« dans 12 s », « dans 3 min », ou « imminent ».</summary>
+    private static string Countdown(DateTimeOffset? next)
+    {
+        var left = (next ?? DateTimeOffset.UtcNow) - DateTimeOffset.UtcNow;
 
-        if (view.Ready)
-        {
-            Chip.Draw("prêt, hors de vue", Theme.Accent, Icons.Connected);
-            return;
-        }
-
-        if (view.MissingBytes > 0)
-        {
-            var received = view.ReceivedBytes / 1024 / 1024;
-            var total    = view.MissingBytes / 1024 / 1024;
-
-            Chip.Draw($"réception {received} / {total} Mo", Theme.Idle, Icons.Receiving);
-            return;
-        }
-
-        Chip.Draw("connecté", Theme.Accent, Icons.Connected);
+        return left.TotalSeconds < 1 ? "imminent"
+             : left.TotalSeconds < 60 ? $"dans {Math.Ceiling(left.TotalSeconds):0} s"
+             : $"dans {Math.Ceiling(left.TotalMinutes):0} min";
     }
 }
