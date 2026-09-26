@@ -62,7 +62,18 @@ public sealed class MainWindow : ThemedWindow
         _cacheChooser = new CacheChooser(cacheKeeper);
 
         var nearby = new NearbyPage(state, presence, pairing, requestPair, serviceBans);
-        var pairs  = new PairsPage(pairing, statuses, setPaused, reapply, unpair, setPairReceive, serviceBans);
+        var nudge = new BackupNudge(
+            Due: () => configuration.BackedUp is false && configuration.BackupNudgeDismissed is false,
+            // Le shell naît plus bas dans ce constructeur ; le clic, bien après.
+            Open: () => _shell?.Navigate("settings"),
+            Dismiss: () =>
+            {
+                configuration.BackupNudgeDismissed = true;
+                configuration.Save();
+            });
+
+        var pairs  = new PairsPage(
+            pairing, statuses, setPaused, reapply, unpair, setPairReceive, serviceBans, nudge);
         _backup = new BackupCard(backupState, backup, restore);
         var settings = new SettingsPage(
             configuration, discovery, discover, _backup, setUploadLimited, _cacheChooser, cacheKeeper, showOnboarding);

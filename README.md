@@ -94,7 +94,7 @@ That's it: your looks are exchanged whenever you are within range of each other.
 - **Pause a peer**: **Pairs** page, pause button. The connection closes and their look is removed.
 - **Block animations, effects or sounds**: for everyone from the window's title bar, or for a single peer from the **Pairs** page. Nothing you block is downloaded.
 - **The cache**: folder and size in **Réglages > Cache** (Settings > Cache). Past the size you chose, the oldest looks go first, never the ones currently in front of you.
-- **Back up your identity**: **Réglages > Identité** (Settings > Identity). A single file, password-protected if you like. After a reinstall or on another PC, restoring it saves you from pairing with everyone again.
+- **Back up your identity**: **Réglages > Sauvegarde** (Settings > Backup), at the top of the page. A single file, password-protected if you like. After a reinstall or on another PC, restoring it saves you from pairing with everyone again.
 
 ---
 

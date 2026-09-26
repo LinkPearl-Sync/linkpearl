@@ -134,6 +134,16 @@ public sealed class Configuration : IPluginConfiguration, ICacheConfiguration
     /// </remarks>
     public bool BackupReminded { get; set; }
 
+    /// <summary>Une sauvegarde a été faite, ou restaurée : le rappel de la page Pairs se tait.</summary>
+    /// <remarks>
+    /// Pour tout le poste et non par personnage : une sauvegarde les emporte
+    /// tous. Un personnage créé après elle n'y figure pas, et n'est pas rappelé.
+    /// </remarks>
+    public bool BackedUp { get; set; }
+
+    /// <summary>L'utilisateur a demandé à ne plus voir le rappel de la page Pairs.</summary>
+    public bool BackupNudgeDismissed { get; set; }
+
     /// <summary>
     /// Vrai une fois l'avertissement de Public lu.
     /// </summary>

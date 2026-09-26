@@ -91,7 +91,7 @@ C'est tout : vos apparences s'échangent dès que vous êtes à portée l'un de 
 - **Mettre un pair en pause** : page **Pairs**, bouton pause. La connexion se ferme et son apparence est retirée.
 - **Bloquer animations, effets ou sons** : pour tout le monde depuis la barre de titre de la fenêtre, ou pour un seul pair depuis la page **Pairs**. Rien n'est téléchargé de ce que vous bloquez.
 - **Le cache** : dossier et taille dans **Réglages > Cache**. Au-delà de la taille choisie, les apparences les plus anciennes partent, jamais celles que vous avez sous les yeux.
-- **Sauvegarder votre identité** : **Réglages > Identité**. Un seul fichier, protégé par un mot de passe si vous le souhaitez. Après une réinstallation ou sur un autre PC, le restaurer évite de refaire chaque pairage.
+- **Sauvegarder votre identité** : **Réglages > Sauvegarde**, en tête de page. Un seul fichier, protégé par un mot de passe si vous le souhaitez. Après une réinstallation ou sur un autre PC, le restaurer évite de refaire chaque pairage.
 
 ---
 

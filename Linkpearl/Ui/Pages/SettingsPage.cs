@@ -55,10 +55,12 @@ internal sealed class SettingsPage(
     {
         Text.PageHeader("Réglages");
 
+        // La sauvegarde en tête : c'est la seule carte dont l'oubli coûte
+        // cher, et une réinstallation n'attend pas qu'on ait fait défiler.
+        DrawIdentity();
         DrawVisibility();
         DrawCache();
         DrawNetwork();
-        DrawIdentity();
         DrawDiscovery();
     }
 
@@ -227,7 +229,7 @@ internal sealed class SettingsPage(
     {
         using var card = Card.Begin("settings_identity");
 
-        Text.WithIcon(Icons.Backup, "Identité", Theme.Accent);
+        Text.WithIcon(Icons.Backup, "Sauvegarde", Theme.Accent);
         ImGui.Dummy(Theme.S(0f, Theme.GapS));
 
         backup.Draw();

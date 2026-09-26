@@ -24,7 +24,7 @@ namespace Linkpearl.Ui.Pages;
 internal sealed class PairsPage(
     PairingService pairing, Func<IReadOnlyList<PeerStatus>> statuses,
     Action<PeerId, bool> setPaused, Action<PeerId> reapply, Action<PeerId> unpair,
-    Action<PeerId, TransientCategories> setReceive, IServiceBans bans)
+    Action<PeerId, TransientCategories> setReceive, IServiceBans bans, BackupNudge backupNudge)
 {
     private string _filter = "";
 
@@ -50,6 +50,8 @@ internal sealed class PairsPage(
 
             return;
         }
+
+        DrawBackupNudge();
 
         ImGui.SetNextItemWidth(-1f);
         ImGui.InputTextWithHint("##filtre_pairs", "Filtrer par nom", ref _filter, 64);
@@ -88,6 +90,39 @@ internal sealed class PairsPage(
 
         if (shown.Count == 0)
             Text.Small("aucun pair ne correspond au filtre.", Theme.TextFaint);
+    }
+
+    /// <summary>
+    /// Le rappel de sauvegarder, tant qu'aucune sauvegarde n'est faite.
+    /// </summary>
+    /// <remarks>
+    /// Ici et pas ailleurs : c'est en regardant ses pairs qu'on mesure ce qu'une
+    /// réinstallation ferait perdre. Le rappel unique dans le chat passait, et
+    /// la carte des réglages ne se trouve qu'en la cherchant.
+    /// </remarks>
+    private void DrawBackupNudge()
+    {
+        if (backupNudge.Due() is false)
+            return;
+
+        using (Card.Begin("backup_nudge", interactive: false))
+        {
+            Text.WithIcon(Icons.Backup, "Pensez à sauvegarder", Theme.Idle, Theme.Text);
+            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+            Text.Wrapped("Vos pairs sont liés à ce PC. Sans sauvegarde, une réinstallation de Windows "
+                       + "oblige à refaire chaque pairage.", Theme.TextMuted);
+            ImGui.Dummy(Theme.S(0f, Theme.GapS));
+
+            if (Btn.Draw("Sauvegarder", BtnTone.Action, BtnSize.Small, Icons.Backup, id: "nudge_backup"))
+                backupNudge.Open();
+
+            ImGui.SameLine(0f, Theme.S(Theme.GapS));
+
+            if (Btn.Draw("Ne plus rappeler", BtnTone.Ghost, BtnSize.Small, id: "nudge_dismiss"))
+                backupNudge.Dismiss();
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapM));
     }
 
     private void Group(string title, List<PairRecord> pairs, Dictionary<PeerId, PeerStatus> byPeer, bool defaultOpen)
@@ -371,3 +406,6 @@ internal sealed class PairsPage(
              : $"dans {Math.Ceiling(left.TotalMinutes):0} min";
     }
 }
+
+/// <summary>Le rappel de sauvegarde de la page Pairs : quand le montrer, où mener, comment le taire.</summary>
+internal sealed record BackupNudge(Func<bool> Due, Action Open, Action Dismiss);

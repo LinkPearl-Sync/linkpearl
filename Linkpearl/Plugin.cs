@@ -1021,7 +1021,7 @@ public sealed class Plugin : IDalamudPlugin
         _configuration.BackupReminded = true;
         _configuration.Save();
 
-        Report("pensez à sauvegarder votre identité (Réglages, « Sauvegarde de l'identité ») : "
+        Report("pensez à sauvegarder vos personnages (Réglages, « Sauvegarde ») : "
              + "sans elle, une réinstallation de Windows oblige à refaire chaque pairage.");
     }
 
@@ -1121,6 +1121,7 @@ public sealed class Plugin : IDalamudPlugin
             IdentityBackupService.WriteFile(destination, content);
 
             _configuration.BackupReminded = true;
+            _configuration.BackedUp = true;
             _configuration.Save();
 
             var saved = entries.Count == 1 ? "1 personnage sauvegardé" : $"{entries.Count} personnages sauvegardés";
@@ -1198,6 +1199,7 @@ public sealed class Plugin : IDalamudPlugin
             if (outcome.Restored)
             {
                 _configuration.BackupReminded = true;
+                _configuration.BackedUp = true;
                 _configuration.Save();
             }
 
