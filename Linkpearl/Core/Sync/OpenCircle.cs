@@ -44,8 +44,10 @@ public sealed class OpenCircle(IReadOnlyList<byte[]> trustedKeys, IClock clock) 
         {
             // Une liste plus ancienne que celle qu'on tient ne remplace rien :
             // sans cette règle, rejouer une vieille liste signée ramènerait
-            // des services que l'autorité a depuis écartés.
-            if (_list is { } held && list!.Version < held.Version)
+            // des services que l'autorité a depuis écartés. Une liste détenue
+            // mais expirée ne protège plus rien : la faire valoir bloquerait
+            // une autorité repartie plus bas jusqu'au rechargement du plugin.
+            if (_list is { } held && clock.UtcNow.ToUnixTimeSeconds() < held.Expires && list!.Version < held.Version)
             {
                 rejection = $"version {list.Version} antérieure à celle détenue ({held.Version})";
                 return false;

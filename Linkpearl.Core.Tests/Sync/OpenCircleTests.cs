@@ -85,6 +85,21 @@ public sealed class OpenCircleTests : IDisposable
     }
 
     [Fact]
+    public void Une_liste_expiree_ne_bloque_plus_une_version_inferieure()
+    {
+        // Une autorité dont le registre a été remis à zéro repart plus bas :
+        // tant que la liste détenue vaut encore, la règle de version protège ;
+        // une fois expirée, elle ne protège plus rien et ne doit rien bloquer.
+        var circle = Circle();
+        circle.Offer(Document(version: 5), out _);
+
+        _clock.Advance(ServiceConsensus.Lifetime);
+
+        Assert.True(circle.Offer(Document(version: 1), out var why), why);
+        Assert.Equal(1u, circle.Current!.Version);
+    }
+
+    [Fact]
     public void Une_liste_alteree_est_refusee_et_la_precedente_reste()
     {
         var circle = Circle();
