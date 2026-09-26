@@ -64,13 +64,18 @@ internal sealed class AppShell
 
         closeRequested = TitleBar.Draw(available.X, Receive?.Invoke(), SetReceive);
 
+        // L'interligne d'ImGui qui suivrait le corps est rendu au corps : sans
+        // cela, une bande de nuit sépare la barre latérale de la barre d'état.
+        var spacing    = ImGui.GetStyle().ItemSpacing.Y;
         var bodyHeight = available.Y
                        - Theme.S(Theme.TitleBarHeight)
-                       - Theme.S(Theme.StatusBarHeight);
+                       - Theme.S(Theme.StatusBarHeight)
+                       + spacing;
 
         if (fullScreen != null)
         {
             DrawContent("##shellfull", available.X, bodyHeight, fullScreen);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - spacing);
             StatusBar.Draw(status);
             return;
         }
@@ -85,6 +90,7 @@ internal sealed class AppShell
                     bodyHeight,
                     Active().Draw);
 
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - spacing);
         StatusBar.Draw(status);
     }
 

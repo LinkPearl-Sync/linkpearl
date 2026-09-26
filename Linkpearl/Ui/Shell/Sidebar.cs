@@ -23,7 +23,11 @@ internal static class Sidebar
     {
         var width = Theme.S(Theme.SidebarWidth);
 
+        // Angles vifs : c'est une colonne du cadre, pas une carte. Arrondie au
+        // rayon des cartes, elle découpait des coins de nuit contre le contenu
+        // et contre la barre d'état.
         using var background = ImRaii.PushColor(ImGuiCol.ChildBg, Theme.BgSidebar);
+        using var rounding   = ImRaii.PushStyle(ImGuiStyleVar.ChildRounding, 0f);
         using var child = ImRaii.Child("##sidebar", new Vector2(width, height), false,
                                        ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
