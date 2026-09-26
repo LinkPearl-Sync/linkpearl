@@ -58,6 +58,7 @@ Relevés à la lecture du code. Ils seront reportés dans la spec à la tâche 1
    - Une probation interrompue par 24 heures de silence recommence au retour, au lieu de traîner un ratio irrattrapable.
    - L'oubli vaut pour tout service non listé resté 7 jours sans sonde réussie, et pas seulement pour celui qui n'a jamais répondu.
 8. **Une sonde ne vise jamais une adresse non publique** (bouclage, réseau privé, lien local, CGNAT, multicast). Sinon, une candidature `127.0.0.1:47901` ferait sonder à l'autorité sa propre console d'administration.
+9. **La candidature est renvoyée chaque jour**, et non une seule fois au démarrage : une autorité oublie un service resté injoignable 7 jours, et il devrait sinon redémarrer pour se représenter (tâche 7b).
 
 ## Review Focus
 
@@ -1952,7 +1953,6 @@ Dépôt : **RDV**.
   - un nouveau gestionnaire après `HandleBanListQueryAsync`, l.543-570.
 - Modify : `Linkpearl.Rendezvous/PeerSession.cs` (l.49, à côté de `BanPagesServed`)
 - Modify : `Linkpearl.Rendezvous/Program.cs` (aide l.29-68, construction l.90-133)
-- Modify : `Linkpearl.Rendezvous/Announcer.cs` (commentaire de classe)
 - Modify : `Linkpearl.Rendezvous.Tests/ServerHarness.cs` (`StartAsync` gagne le paramètre `IConsensusSource? consensus = null`)
 
 **Interfaces :**
@@ -2352,20 +2352,188 @@ if (authority is not null)
     running.Add(authority.RunAsync(stopping.Token));
 ```
 
-- [ ] **Step 7 : amender le commentaire d'`Announcer`**
-
-Dans le commentaire de classe d'`Announcer.cs`, la phrase qui en fait « la seule connexion sortante qu'un service ouvre de lui-même » devient : « la seule connexion sortante d'un service ordinaire. Une autorité du cercle ouvert en ouvre d'autres, vers les candidats qu'elle sonde (voir `ServiceProbe`). »
-
-- [ ] **Step 8 : vérifier le succès, puis toute la suite**
+- [ ] **Step 7 : vérifier le succès, puis toute la suite**
 
 Run : `dotnet build Linkpearl.Rendezvous/Linkpearl.Rendezvous.csproj -c Release && dotnet test Linkpearl.Rendezvous.Tests/Linkpearl.Rendezvous.Tests.csproj`
 Expected : build sans warning, tests PASS.
 
-- [ ] **Step 9 : commit**
+- [ ] **Step 8 : commit**
 
 ```bash
 git add Linkpearl.Rendezvous Linkpearl.Rendezvous.Tests
 git commit -m "feat(autorité): sondes périodiques, émission signée et service par pages"
+```
+
+### Task 7b : la candidature quotidienne
+
+Dépôt : **RDV**.
+
+Un service candidat qui reste injoignable 7 jours est oublié par l'autorité, et la file des candidatures évince les plus anciennes au-delà de 256. Avec une candidature envoyée une seule fois au démarrage, il faudrait redémarrer le service pour qu'il se représente. Il la renvoie donc une fois par jour.
+
+**Files :**
+- Modify : `Linkpearl.Rendezvous/Announcer.cs`
+- Modify : `Linkpearl.Rendezvous/Program.cs` (l.98-110, la boucle sur `--announce-to`, et l'aide l.49-51)
+- Create : `Linkpearl.Rendezvous.Tests/AnnouncerTests.cs`
+
+**Interfaces :**
+- Consumes : `Announcer.SubmitAsync` (existant)
+- Produces :
+  - `Announcer.Interval` (24 h) ;
+  - `static Task Announcer.SubmitEveryAsync(RendezvousAddress to, string self, string label, TimeSpan interval, CancellationToken ct)`.
+
+- [ ] **Step 1 : écrire les tests qui échouent**
+
+```csharp
+using System.Buffers.Binary;
+using System.Net;
+using System.Net.Sockets;
+using Linkpearl.Core.Transport.Rendezvous;
+using Xunit;
+
+namespace Linkpearl.Rendezvous.Tests;
+
+/// <summary>La candidature renvoyée à intervalle régulier, jusqu'à l'arrêt du service.</summary>
+public sealed class AnnouncerTests
+{
+    /// <summary>Un faux annuaire qui compte les candidatures reçues.</summary>
+    private static async Task CountAsync(TcpListener listener, Action<DirectoryEntry> received, CancellationToken ct)
+    {
+        while (ct.IsCancellationRequested is false)
+        {
+            using var socket = await listener.AcceptTcpClientAsync(ct);
+            var stream = socket.GetStream();
+            var header = new byte[4];
+            await stream.ReadExactlyAsync(header, ct);
+            var body = new byte[BinaryPrimitives.ReadInt32BigEndian(header)];
+            await stream.ReadExactlyAsync(body, ct);
+
+            if (body[0] == RendezvousKind.DirectorySubmit && RendezvousWire.TryReadDirectory(body, out var entries, out _))
+                received(entries.Single());
+        }
+    }
+
+    [Fact]
+    public async Task La_candidature_est_renvoyee_a_chaque_intervalle()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var received = new List<DirectoryEntry>();
+        var twice = new TaskCompletionSource();
+
+        var directory = Task.Run(() => CountAsync(listener, entry =>
+        {
+            lock (received)
+            {
+                received.Add(entry);
+
+                if (received.Count >= 2)
+                    twice.TrySetResult();
+            }
+        }, stop.Token));
+
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var announcing = Announcer.SubmitEveryAsync(
+            new RendezvousAddress("127.0.0.1", port), "rdv.candidat.ch", "Candidat", TimeSpan.FromMilliseconds(200), stop.Token);
+
+        await twice.Task.WaitAsync(stop.Token);
+
+        Assert.All(received, entry => Assert.Equal("rdv.candidat.ch", entry.Address));
+
+        await stop.CancelAsync();
+        await announcing;
+        listener.Stop();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => directory);
+    }
+
+    [Fact]
+    public async Task Un_annuaire_injoignable_n_arrete_pas_la_boucle()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+
+        // Trois tentatives échouent sans lever ; la boucle ne s'arrête qu'à l'annulation.
+        await Announcer.SubmitEveryAsync(
+            new RendezvousAddress("127.0.0.1", port), "rdv.candidat.ch", "", TimeSpan.FromMilliseconds(200), stop.Token);
+
+        Assert.True(stop.IsCancellationRequested);
+    }
+}
+```
+
+- [ ] **Step 2 : vérifier l'échec**
+
+Run : `dotnet test Linkpearl.Rendezvous.Tests/Linkpearl.Rendezvous.Tests.csproj --filter AnnouncerTests`
+Expected : échec de compilation, `SubmitEveryAsync` n'existe pas.
+
+- [ ] **Step 3 : implémenter**
+
+Dans `Announcer.cs`, remplacer le commentaire de classe par :
+
+```csharp
+/// <summary>
+/// La candidature d'un service auprès d'un annuaire.
+/// </summary>
+/// <remarks>
+/// La seule connexion sortante d'un service ordinaire : une candidature au
+/// démarrage, puis une par jour. Hors de là il ne consulte jamais un autre
+/// annuaire, ne vérifie jamais un autre service, et ne propage jamais ce qu'il
+/// a reçu. Une autorité du cercle ouvert en ouvre d'autres, vers les candidats
+/// qu'elle sonde (voir <see cref="ServiceProbe"/>).
+///
+/// Renvoyée chaque jour parce qu'une autorité oublie un service resté
+/// injoignable une semaine, et qu'une file pleine évince les plus anciennes
+/// candidatures : sans cela, il faudrait redémarrer le service pour qu'il se
+/// représente. Une fois par jour ne remplit aucun journal, et l'annuaire en
+/// refuse de toute façon plus d'une par heure et par adresse.
+/// </remarks>
+```
+
+et ajouter, à côté de `SubmitAsync` :
+
+```csharp
+    /// <summary>Intervalle entre deux candidatures.</summary>
+    public static readonly TimeSpan Interval = TimeSpan.FromDays(1);
+
+    /// <summary>
+    /// Se porte candidat tout de suite, puis à chaque <paramref name="interval"/>,
+    /// jusqu'à l'arrêt du service.
+    /// </summary>
+    public static async Task SubmitEveryAsync(
+        RendezvousAddress to, string self, string label, TimeSpan interval, CancellationToken ct)
+    {
+        while (ct.IsCancellationRequested is false)
+        {
+            await SubmitAsync(to, self, label, ct).ConfigureAwait(false);
+
+            try
+            {
+                await Task.Delay(interval, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+```
+
+Dans `Program.cs`, remplacer l'appel `_ = Announcer.SubmitAsync(` de la boucle `--announce-to` par `_ = Announcer.SubmitEveryAsync(`, avec `Announcer.Interval` avant `stopping.Token`. Dans l'aide, la ligne de `--announce-to` devient : « annuaire auprès duquel se porter candidat, au démarrage puis chaque jour. Répétable. »
+
+- [ ] **Step 4 : vérifier le succès**
+
+Run : `dotnet test Linkpearl.Rendezvous.Tests/Linkpearl.Rendezvous.Tests.csproj`
+Expected : PASS.
+
+- [ ] **Step 5 : commit**
+
+```bash
+git add Linkpearl.Rendezvous/Announcer.cs Linkpearl.Rendezvous/Program.cs Linkpearl.Rendezvous.Tests/AnnouncerTests.cs
+git commit -m "feat(annuaire): candidature renvoyée chaque jour"
 ```
 
 ### Task 8 : la console
@@ -3801,7 +3969,7 @@ La section « Ce que cette conception rouvre » de la spec du cercle ouvert cite
 
 - [ ] **Step 2 : reporter les écarts dans la spec du cercle ouvert**
 
-Ajouter à la fin de `2026-09-26-cercle-ouvert-design.md` une section « Corrigé à la mise en œuvre ». Elle reprend les huit points de la section « Écarts assumés avec la spec » de ce plan, sur le même ton que la section du même nom de `rendezvous/docs/specs/2026-09-23-console-et-moderation.md`.
+Ajouter à la fin de `2026-09-26-cercle-ouvert-design.md` une section « Corrigé à la mise en œuvre ». Elle reprend les neuf points de la section « Écarts assumés avec la spec » de ce plan, sur le même ton que la section du même nom de `rendezvous/docs/specs/2026-09-23-console-et-moderation.md`.
 
 - [ ] **Step 3 : `docs/protocol.md`**
 
