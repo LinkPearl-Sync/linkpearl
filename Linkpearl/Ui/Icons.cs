@@ -19,11 +19,17 @@ namespace Linkpearl.Ui;
 internal static class Icons
 {
     // ─── Navigation ───────────────────────────────────────────────────────────
-    public const FontAwesomeIcon Nearby   = FontAwesomeIcon.Users;
+    // Une personne dans son décor, et non un groupe : vu en jeu le 26
+    // septembre, Autour, Pairs et Groupes étaient trois foules qui se
+    // confondaient dans la barre latérale.
+    public const FontAwesomeIcon Nearby   = FontAwesomeIcon.StreetView;
     public const FontAwesomeIcon Pairs    = FontAwesomeIcon.UserFriends;
     public const FontAwesomeIcon Requests = FontAwesomeIcon.Envelope;
     public const FontAwesomeIcon Groups   = FontAwesomeIcon.PeopleGroup;
     public const FontAwesomeIcon Settings = FontAwesomeIcon.Cog;
+
+    /// <summary>Les membres d'un groupe, dans le décompte de sa carte.</summary>
+    public const FontAwesomeIcon Members  = FontAwesomeIcon.Users;
 
     // ─── État d'un pair ───────────────────────────────────────────────────────
     public const FontAwesomeIcon Connected  = FontAwesomeIcon.Link;
@@ -90,7 +96,7 @@ internal static class Icons
     /// </remarks>
     public static readonly FontAwesomeIcon[] All =
     [
-        Nearby, Pairs, Requests, Groups, Settings,
+        Nearby, Pairs, Requests, Groups, Settings, Members,
         Connected, Applied, Receiving, Waiting, Paused, Resume, Blocked, Verified, Unverified,
         Direct, Relayed,
         Character, World, Rendezvous, Cache, Appearance, Discoverable, Hidden,

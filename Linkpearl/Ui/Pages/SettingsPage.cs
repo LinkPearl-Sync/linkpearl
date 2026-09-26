@@ -286,7 +286,7 @@ internal sealed class SettingsPage(
 
         using var card = Card.Begin("settings_discovery", accent: Theme.Accent);
 
-        Text.WithIcon(Icons.Nearby, $"Services connus de {Glyphs.Safe(discovery.From?.ToString() ?? "")}",
+        Text.WithIcon(Icons.Rendezvous, $"Services connus de {Glyphs.Safe(discovery.From?.ToString() ?? "")}",
                       Theme.Accent);
 
         ImGui.Dummy(Theme.S(0f, Theme.GapS));

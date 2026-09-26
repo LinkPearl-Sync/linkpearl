@@ -463,7 +463,7 @@ internal sealed class GroupsPage(
         Chip.Draw(label, Theme.Accent, icon);
 
         ImGui.SameLine(0f, Theme.S(Theme.GapS));
-        Chip.Draw(group.Members.Count == 1 ? "1 membre" : $"{group.Members.Count} membres", Theme.TextMuted, Icons.Nearby);
+        Chip.Draw(group.Members.Count == 1 ? "1 membre" : $"{group.Members.Count} membres", Theme.TextMuted, Icons.Members);
 
         // Le mode d'entrée n'intéresse que ceux qui distribuent le code : un
         // membre n'a rien à en faire, et le modérateur ne peut pas le changer
