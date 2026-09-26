@@ -7,8 +7,9 @@ using System.Text.Unicode;
 namespace Linkpearl.Ui;
 
 /// <summary>
-/// Polices du plugin : Inter embarqué, avec FontAwesome fusionné dans le corps
-/// de texte pour que les icônes s'écrivent au fil du texte, sans bascule.
+/// Polices du plugin : Fredoka pour les titres, Nunito pour le texte, les
+/// polices du site. Inter est fusionné derrière chacune, et FontAwesome dans le
+/// corps de texte pour que les icônes s'écrivent au fil du texte, sans bascule.
 /// </summary>
 /// <remarks>
 /// L'atlas est isolé : une reconstruction ne touche ni celui de Dalamud ni
@@ -49,8 +50,9 @@ internal static class Fonts
         try
         {
             // Ces plages doivent couvrir tout ce que le fichier Inter contient :
-            // un glyphe présent dans le fichier mais absent d'ici n'est pas
-            // chargé dans l'atlas et s'affiche en caractère de remplacement.
+            // il sert de secours derrière Fredoka et Nunito, et un glyphe
+            // absent d'ici n'est pas chargé dans l'atlas, il s'affiche en
+            // caractère de remplacement.
             _textRanges = new FluentGlyphRangeBuilder()
                 .With(UnicodeRanges.BasicLatin)
                 .With(UnicodeRanges.Latin1Supplement)
@@ -79,13 +81,13 @@ internal static class Fonts
             // emploient Small et les en-têtes emploient H2, ils ont donc besoin
             // des icônes autant que le corps de texte.
             Body  = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Inter-Regular.ttf", 15f)));
+                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 15f)));
             Small = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Inter-Regular.ttf", 12f)));
+                p => Compose(p, "Fonts.Nunito-Regular.ttf", "Fonts.Inter-Regular.ttf", 12f)));
             H2    = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Inter-SemiBold.ttf", 17f)));
+                p => Compose(p, "Fonts.Fredoka-SemiBold.ttf", "Fonts.Inter-SemiBold.ttf", 17f)));
             Title = _atlas.NewDelegateFontHandle(tk => tk.OnPreBuild(
-                p => Compose(p, "Fonts.Inter-SemiBold.ttf", 22f)));
+                p => Compose(p, "Fonts.Fredoka-SemiBold.ttf", "Fonts.Inter-SemiBold.ttf", 22f)));
         }
         catch (Exception e)
         {
@@ -97,7 +99,7 @@ internal static class Fonts
         }
     }
 
-    private static void Compose(IFontAtlasBuildToolkitPreBuild p, string resource, float sizePx)
+    private static void Compose(IFontAtlasBuildToolkitPreBuild p, string resource, string fallback, float sizePx)
     {
         var cfg = new SafeFontConfig { SizePx = sizePx, GlyphRanges = _textRanges };
 
@@ -105,6 +107,17 @@ internal static class Fonts
             ?? throw new FileNotFoundException($"ressource de police introuvable : {resource}");
 
         var font = p.AddFontFromStream(stream, in cfg, leaveOpen: false, resource);
+
+        // Inter derrière, sur les mêmes plages. ImGui garde le premier glyphe
+        // venu : Fredoka et Nunito dessinent tout ce qu'elles ont, Inter ne
+        // comble que leurs trous. Mesuré le 25 septembre : Nunito n'a ni →, ni
+        // ◆, ni ◇, et Fredoka ne couvre que 10 caractères sur 128 du latin
+        // étendu A, qu'un nom de groupe peut porter.
+        using var fallbackStream = Asm.GetManifestResourceStream(fallback)
+            ?? throw new FileNotFoundException($"ressource de police introuvable : {fallback}");
+
+        var secours = new SafeFontConfig { SizePx = sizePx, GlyphRanges = _textRanges, MergeFont = font };
+        p.AddFontFromStream(fallbackStream, in secours, leaveOpen: false, fallback);
 
         // Accents et alphabets supplémentaires selon la langue réglée dans Dalamud.
         var extra = new SafeFontConfig { SizePx = sizePx, MergeFont = font };
@@ -121,8 +134,8 @@ internal static class Fonts
         p.AddFontAwesomeIconFont(in icons);
 
         // Les symboles du jeu, dont le HQ qui sert de marque au plugin. Ils
-        // vivent dans la zone d'usage privé et ne chevauchent donc ni Inter ni
-        // FontAwesome.
+        // vivent dans la zone d'usage privé et ne chevauchent donc ni les polices de
+        // texte ni FontAwesome.
         var symbols = new SafeFontConfig { SizePx = sizePx, MergeFont = font };
         p.AddGameSymbol(in symbols);
         p.SetFontScaleMode(font, FontScaleMode.Default);

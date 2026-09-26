@@ -20,12 +20,16 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
 
-  <!-- Inter, sous-ensemblé, embarqué. Sous licence SIL OFL, dont le texte
-       accompagne les fichiers. Les noms logiques sont ceux que Fonts.cs
-       demande à l'assembly. -->
+  <!-- Fredoka pour les titres et Nunito pour le texte, les polices du site,
+       tirées en statique par scripts/generer-polices.sh. Inter, sous-ensemblé,
+       reste fusionné derrière pour les glyphes qu'elles n'ont pas. Toutes sous
+       licence SIL OFL, dont les textes accompagnent les fichiers. Les noms
+       logiques sont ceux que Fonts.cs demande à l'assembly. -->
   <ItemGroup>
-    <EmbeddedResource Include="Assets\Fonts\Inter-Regular.ttf"  LogicalName="Fonts.Inter-Regular.ttf" />
-    <EmbeddedResource Include="Assets\Fonts\Inter-SemiBold.ttf" LogicalName="Fonts.Inter-SemiBold.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\Fredoka-SemiBold.ttf" LogicalName="Fonts.Fredoka-SemiBold.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\Nunito-Regular.ttf"   LogicalName="Fonts.Nunito-Regular.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\Inter-Regular.ttf"    LogicalName="Fonts.Inter-Regular.ttf" />
+    <EmbeddedResource Include="Assets\Fonts\Inter-SemiBold.ttf"   LogicalName="Fonts.Inter-SemiBold.ttf" />
   </ItemGroup>
 
   <!-- La bannière de la présentation. Deux fois la largeur logique de la
