@@ -181,7 +181,9 @@ public sealed class MainWindow : ThemedWindow
         return new ShellStatus(
             Connected: _presence.Connected,
             Failure: _presence.LastFailure,
-            Character: _state.Self?.Display ?? "aucun personnage",
+            // Null tant que le personnage n'est pas encore lu, les premières
+            // secondes après un rechargement : la barre ne dit alors que l'état.
+            Character: _state.Self?.Display,
             Pairs: _pairing.Book.Active.Count(),
             Applied: statuses.Count(status => status.Applied));
     }

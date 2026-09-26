@@ -12,7 +12,7 @@ namespace Linkpearl.Ui.Shell;
 internal readonly record struct ShellStatus(
     bool Connected,
     string? Failure,
-    string Character,
+    string? Character,
     int Pairs,
     int Applied);
 
