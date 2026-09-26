@@ -132,9 +132,9 @@ L'historique des sondes (horodatage, succès) est persisté dans
 | Événement | Effet |
 |---|---|
 | Première sonde réussie | le candidat entre en probation |
-| 7 jours de probation à au moins 95 % de sondes réussies | il entre dans la liste signée |
+| 72 heures de probation à au moins 95 % de sondes réussies | il entre dans la liste signée |
 | 24 heures sans sonde réussie | il sort de la liste |
-| Retour dans les 7 jours suivant sa sortie | il reprend sa place sans nouvelle probation |
+| Retour dans les 72 heures suivant sa sortie | il reprend sa place sans nouvelle probation |
 | Retour plus tard | la probation recommence |
 | Candidat jamais joignable pendant 7 jours | il est oublié |
 
