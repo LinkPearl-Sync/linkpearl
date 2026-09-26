@@ -105,7 +105,9 @@ internal static class Feedback
         ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXl)));
 
         var width = ImGui.GetContentRegionAvail().X;
-        var side  = Theme.S(72f);
+        // Vu en jeu le 26 septembre : à 72 px, le logo se perdait au milieu
+        // d'une page vide. Il y a la place, c'est lui qui la remplit.
+        var side  = Theme.S(160f);
         var at    = ImGui.GetCursorScreenPos() + new Vector2((width - side) * 0.5f, 0f);
 
         // Le logo quand il est là : une page vide est le moment où le plugin se
