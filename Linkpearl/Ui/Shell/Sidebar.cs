@@ -6,7 +6,7 @@ namespace Linkpearl.Ui.Shell;
 
 /// <summary>
 /// Barre de navigation latérale : pictogramme et libellé par entrée, l'entrée
-/// active signalée par une pastille de fond et un liseré d'accent à gauche.
+/// active signalée par un halo et un liseré.
 /// </summary>
 /// <remarks>
 /// Les pictogrammes sont centrés sur une gouttière de largeur fixe, pour que
@@ -90,31 +90,27 @@ internal static class Sidebar
         if (active || hovered)
         {
             var inset = Theme.S(Theme.GapM);
+            var min   = origin + new Vector2(inset, Theme.S(2f));
+            var max   = origin + new Vector2(width - inset, item - Theme.S(2f));
+            var r     = Theme.S(Theme.RadiusCard);
 
-            dl.AddRectFilled(
-                origin + new Vector2(inset, Theme.S(2f)),
-                origin + new Vector2(width - inset, item - Theme.S(2f)),
-                ImGui.GetColorU32(active
-                    ? Theme.Alpha(Theme.Accent, 0.16f)
-                    : Theme.Alpha(Theme.BgHover, 0.65f)),
-                Theme.S(Theme.RadiusCard));
-        }
+            // L'entrée active dans le halo, bordée comme le bouton de langue
+            // choisi sur le site ; le survol, à peine éclairé.
+            if (active)
+                Surface.Glow(dl, min, max, r, Theme.Accent, spread: 5f);
 
-        if (active)
-        {
-            var bar = Theme.S(20f);
-            var mid = origin.Y + item * 0.5f;
+            dl.AddRectFilled(min, max, ImGui.GetColorU32(active
+                ? Theme.Alpha(Theme.Accent, 0.18f)
+                : Theme.Alpha(Theme.Text, 0.06f)), r);
 
-            dl.AddRectFilled(
-                new Vector2(origin.X, mid - bar * 0.5f),
-                new Vector2(origin.X + Theme.S(3f), mid + bar * 0.5f),
-                ImGui.GetColorU32(Theme.Accent), Theme.S(2f));
+            if (active)
+                dl.AddRect(min, max, ImGui.GetColorU32(Theme.Alpha(Theme.Accent, 0.80f)), r, ImDrawFlags.None, 1f);
         }
 
         if (hovered)
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
-        var tint = ImGui.GetColorU32(active ? Theme.Accent : hovered ? Theme.Text : Theme.TextMuted);
+        var tint = ImGui.GetColorU32(active || hovered ? Theme.Text : Theme.TextMuted);
 
         // Icône alignée sur une gouttière fixe, pour que les libellés démarrent
         // tous à la même abscisse quelle que soit la largeur du pictogramme.

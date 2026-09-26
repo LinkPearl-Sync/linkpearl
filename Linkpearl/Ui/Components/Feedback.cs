@@ -105,9 +105,19 @@ internal static class Feedback
         ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapXl)));
 
         var width = ImGui.GetContentRegionAvail().X;
+        var side  = Theme.S(72f);
+        var at    = ImGui.GetCursorScreenPos() + new Vector2((width - side) * 0.5f, 0f);
 
-        using (Fonts.PushTitle())
+        // Le logo quand il est là : une page vide est le moment où le plugin se
+        // présente. L'icône de la page sinon, le temps que la texture arrive.
+        if (Brand.Draw(ImGui.GetWindowDrawList(), at, side, glow: true))
         {
+            ImGui.Dummy(new Vector2(0f, side));
+        }
+        else
+        {
+            using var font = Fonts.PushTitle();
+
             var glyph = icon.S();
             var size  = ImGui.CalcTextSize(glyph);
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (width - size.X) * 0.5f);
@@ -116,7 +126,7 @@ internal static class Feedback
 
         ImGui.Dummy(new Vector2(0f, Theme.S(Theme.GapM)));
 
-        Centered(title, Theme.TextMuted);
+        Centered(title, Theme.Text, heading: true);
 
         if (hint is null)
             return;
@@ -125,9 +135,9 @@ internal static class Feedback
         Centered(hint, Theme.TextFaint, small: true);
     }
 
-    private static void Centered(string text, Vector4 color, bool small = false)
+    private static void Centered(string text, Vector4 color, bool small = false, bool heading = false)
     {
-        using var font = small ? Fonts.PushSmall() : Fonts.PushBody();
+        using var font = heading ? Fonts.PushH2() : small ? Fonts.PushSmall() : Fonts.PushBody();
 
         var safe = Glyphs.Safe(text);
         var size = ImGui.CalcTextSize(safe);

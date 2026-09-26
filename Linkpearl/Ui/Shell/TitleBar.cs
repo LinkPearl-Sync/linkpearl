@@ -1,4 +1,3 @@
-using Dalamud.Game.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using System.Numerics;
@@ -53,21 +52,19 @@ internal static class TitleBar
             ImGui.SetWindowPos(ImGui.GetWindowPos() + ImGui.GetIO().MouseDelta);
 
         // ── Marque ────────────────────────────────────────────────────────────
-        // Le symbole HQ du jeu, comme dans la barre de statut : le même glyphe
-        // partout, pour que le plugin se reconnaisse d'un coup d'œil.
+        // Le logo du site en pastille, puis le nom en Fredoka : le plugin se
+        // reconnaît à ce qu'on a vu en l'installant.
         using (Fonts.PushH2())
         {
-            var glyph = SeIconChar.HighQuality.ToIconString();
             const string text = "Linkpearl";
 
-            var glyphSize = ImGui.CalcTextSize(glyph);
-            var textSize  = ImGui.CalcTextSize(text);
-            var x = origin.X + Theme.S(Theme.PadWindowX);
+            var logo = MathF.Round(height - Theme.S(Theme.GapM) * 2f);
+            var x    = origin.X + Theme.S(Theme.PadWindowX);
 
-            dl.AddText(new Vector2(x, origin.Y + (height - glyphSize.Y) * 0.5f),
-                ImGui.GetColorU32(Theme.Text), glyph);
+            if (Brand.Draw(dl, new Vector2(x, MathF.Round(origin.Y + (height - logo) * 0.5f)), logo))
+                x += logo + Theme.S(Theme.GapS);
 
-            x += glyphSize.X + Theme.S(Theme.GapS);
+            var textSize = ImGui.CalcTextSize(text);
 
             dl.AddText(new Vector2(x, origin.Y + (height - textSize.Y) * 0.5f),
                 ImGui.GetColorU32(Theme.Text), text);

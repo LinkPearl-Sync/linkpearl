@@ -36,6 +36,8 @@
        fenêtre, pour rester nette à 200 %. -->
   <ItemGroup>
     <EmbeddedResource Include="Assets\Images\banner.png" LogicalName="Images.banner.png" />
+    <!-- Le logo du site, pour la barre de titre et les pages vides. -->
+    <EmbeddedResource Include="Assets\Images\logo.png" LogicalName="Images.logo.png" />
   </ItemGroup>
 
   <Import Project="..\build\Core.Deps.props" />

@@ -345,6 +345,7 @@ public sealed class Plugin : IDalamudPlugin
         // fond, et la fenêtre retombe sur celle de Dalamud tant qu'il ne l'est
         // pas, sans jamais rester vide.
         Fonts.Build(PluginInterface);
+        Brand.Initialize(Textures.GetFromManifestResource(Assembly.GetExecutingAssembly(), "Images.logo.png"));
 
         _groupEntry = new GroupEntryWindow(_candidate, _groupActions);
 
@@ -1685,6 +1686,7 @@ public sealed class Plugin : IDalamudPlugin
         _penumbra.Dispose();
         _glamourer.Dispose();
         _links.Dispose();
+        Brand.Dispose();
         Fonts.Dispose();
 
         _selfLoop.Dispose();
