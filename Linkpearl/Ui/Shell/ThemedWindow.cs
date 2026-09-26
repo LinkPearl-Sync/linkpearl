@@ -117,7 +117,11 @@ public abstract class ThemedWindow : Window
         // la nuit ne couvre pas la colonne de l'ascenseur, et la bordure est
         // retracée par-dessus. Sans quoi une fenêtre qui défile à 150 % gardait
         // un ascenseur invisible, et son contenu semblait simplement coupé.
-        var scrollbar = ImGui.GetScrollMaxY() > 0f ? ImGui.GetStyle().ScrollbarSize : 0f;
+        // Seulement si la fenêtre en dessine un : la fenêtre principale pose
+        // NoScrollbar, et son contenu qui dépassait d'un pixel laissait une
+        // bande transparente sur tout son bord droit (vu en jeu le 26).
+        var scrolls   = (Flags & ImGuiWindowFlags.NoScrollbar) == 0 && ImGui.GetScrollMaxY() > 0f;
+        var scrollbar = scrolls ? ImGui.GetStyle().ScrollbarSize : 0f;
         var rounding  = Theme.S(Theme.RadiusWindow);
 
         dl.PushClipRect(position, position + size, false);
