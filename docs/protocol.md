@@ -89,6 +89,7 @@ service, en clair. Il en découle :
 | Rendez-vous honnête mais curieux, ayant vu passer le pairage | savoir quels personnages se sont pairés | calculer le secret de paire, qui vient d'un accord éphémère ; lire une session |
 | Rendez-vous malveillant, **au moment du pairage** | substituer sa propre clé des deux côtés et s'intercaler dans toutes les sessions suivantes de cette paire | agir sur une paire formée ailleurs |
 | Rendez-vous malveillant, **après le pairage** | refuser le service, mentir sur une adresse, relayer ou non | faire accepter une autre identité : la clé est épinglée dans le carnet |
+| Service malveillant du **cercle ouvert** | refuser, mentir sur une annonce, observer qui relaie avec qui | voir une clé, s'intercaler dans un pairage : il ne porte que des pairs épinglés |
 
 C'est donc une **confiance au premier contact** (TOFU), dont le premier contact
 passe par le serveur. Pour un membre de groupe, ce premier contact n'est pas le
@@ -645,6 +646,56 @@ BanListData   0x16 | page (2, BE) | pages (2, BE) | JSON UTF-8 d'une BanList
   d'un inconnu) sont plafonnées à 20 par minute ; au-delà, la demande est
   ignorée.
 
+## Cercle ouvert
+
+Fichiers : `Core/Transport/Rendezvous/ServiceConsensus.cs`, `Core/Sync/ServicePlacement.cs`,
+`Core/Sync/OpenCircle.cs`, `Core/Sync/PeerConnector.cs`. Conception :
+`docs/superpowers/specs/2026-09-26-cercle-ouvert-design.md`.
+
+Deux cercles de services. Le **cercle d'ancrage** est la liste des réglages,
+composée à la main : il porte tout ce qui dérive de `nom@monde`, donc les
+pairages, et c'est le seul qui voit passer une clé. Le **cercle ouvert** est
+une liste signée par une autorité, qui y admet des services après 72 heures de
+sondes à 95 %. Il ne porte que ce qui dérive d'un secret entre pairs dont la
+clé est épinglée : l'annonce et le relais d'une paire du carnet, ou d'un membre
+épinglé d'un groupe privé. Un membre non épinglé et le groupe Public restent
+dans l'ancrage.
+
+**Liste signée**, en ECDSA P-256 / SHA-256, signature r‖s de 64 octets :
+
+```
+liste     = version(4) || emise(8) || expire(8) || nombre(2) || entree*
+entree    = longueur(1) || adresse || longueur(1) || libelle || famille(8)
+signature = identifiant_cle(8) || r||s(64)
+document  = liste || nombre_signatures(1) || signature*
+
+famille         = SHA-256("linkpearl:family:v1" || /24 IPv4 ou /48 IPv6)[0..8]
+identifiant_cle = SHA-256(clé publique compressée)[0..8]
+```
+
+Elle vaut sept jours. Le client n'accepte que les clés inscrites dans le plugin
+(`ConsensusKeys`), refuse une version antérieure à celle qu'il détient, et la
+redemande à l'autorité toutes les six heures, par pages :
+
+```
+ConsensusQuery  0x17 | page (2, BE)
+ConsensusPage   0x18 | page (2, BE) | pages (2, BE) | tranche du document (≤ 32 Kio)
+```
+
+**Placement** d'une paire, par hachage de rendez-vous :
+
+```
+score(s) = SHA-256("linkpearl:place:v1" || secret_de_paire || hote_en_minuscules:port)
+```
+
+Les deux meilleurs scores de familles différentes sont retenus. Aucune rotation
+dans le temps : la place dépend du secret, qu'un attaquant ignore.
+
+**Annonce.** Le client s'annonce sur ses deux services ouverts tout de suite, et
+sur l'ancrage dix secondes plus tard, ou dès que les deux services ouverts ont
+échoué. Le premier appariement gagne et désigne le relais. Sans liste valable,
+tout passe par l'ancrage comme avant.
+
 ## Rendez-vous et connexion
 
 Fichiers : `Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Sync/PeerConnector.cs`,
@@ -888,6 +939,8 @@ Ce qu'un tiers ou un rendez-vous peut faire consommer, et ce qui l'arrête.
 | Renvoi d'un même défi | une fois par 30 s | `AdmissionHost` |
 | Réponses d'admission déposées | 20 par minute | `PresenceService` |
 | Échecs de mot de passe | 5 par clé de candidat et par fenêtre de 30 min, par membre | `AdmissionHost` |
+| Liste signée | 1 024 entrées, 16 pages de 32 Kio, 16 pages servies par connexion | `ServiceConsensus`, `RendezvousWire` |
+| Admissions au cercle ouvert | 5 par jour, 2 par famille | `AuthorityLedger` (service) |
 
 Un rendez-vous malveillant peut toujours refuser tout service : c'est la
 raison d'être de la liste de services. Un pair malveillant, déjà au carnet,

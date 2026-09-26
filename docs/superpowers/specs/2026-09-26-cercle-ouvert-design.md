@@ -330,3 +330,34 @@ services choisis pour leur paire : ils doivent se retrouver par l'ancrage.
 - **Plusieurs autorités** et un seuil de signatures.
 - **Des miroirs** de la liste signée sur les services d'ancrage, si l'autorité
   devient un goulet.
+
+## Corrigé à la mise en œuvre
+
+Relevé en lisant le code au moment d'écrire le plan, ou en l'exécutant.
+
+1. **Les paires du carnet n'ont pas de boîte de présence.** Seuls les groupes
+   en ont. Pour une paire du carnet, le cercle ouvert ne porte donc que
+   l'annonce et le relais.
+2. **La présence de groupe dans le cercle ouvert est reportée à la phase 2.**
+   En phase 1 elle aurait été publiée sur les deux cercles, donc vue encore par
+   l'ancrage : du coût sans gain. Elle viendra avec la phase 2.
+3. **Le groupe Public reste dans l'ancrage.** Son secret est public, donc
+   n'importe qui calcule où se placent ses membres : l'argument « personne ne
+   peut viser une boîte » ne tient pas pour lui.
+4. **Le vecteur figé du document porte une signature factice.** ECDSA n'est pas
+   déterministe dans la bibliothèque standard. Le vecteur fige l'encodage, et
+   la cryptographie est testée par un aller-retour avec une clé engendrée.
+5. **Les vecteurs de placement restent dans le plugin.** Le service ne place
+   jamais rien : un seul côté, donc pas de dérive à attraper entre deux dépôts.
+6. **La liste est gardée dans `consensus.bin`**, à la racine du dossier de
+   configuration du plugin, et non dans `Configuration`.
+7. **Deux règles de probation sont précisées.** Une probation interrompue par
+   24 heures de silence recommence au retour, au lieu de traîner un ratio
+   irrattrapable. L'oubli vaut pour tout service non listé resté 7 jours sans
+   sonde réussie.
+8. **Une sonde ne vise jamais une adresse non publique** (bouclage, privée,
+   lien local, CGNAT, multicast). Sans quoi une candidature `127.0.0.1:47901`
+   ferait sonder la console de l'autorité par elle-même.
+9. **La candidature est renvoyée chaque jour**, et non une seule fois au
+   démarrage : une autorité oublie un service resté injoignable 7 jours, et il
+   devrait sinon redémarrer pour se représenter.

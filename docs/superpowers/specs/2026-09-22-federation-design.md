@@ -86,11 +86,20 @@ le maître l'exécution de code sur tous les rendez-vous : une seule compromissi
 et le réseau entier est pris. L'annonce d'une version disponible reste
 acceptable, elle ne porte qu'un numéro et un lien, jamais un binaire.
 
+**Amendé le 26 septembre 2026.** Un maître peut faire autorité sur le cercle
+ouvert, qui ne voit jamais passer une clé ; il ne fait qu'informer sur le
+cercle d'ancrage. Voir `2026-09-26-cercle-ouvert-design.md`.
+
 ### Rien n'entre dans une liste sans un geste humain
 
 L'annuaire propose, l'utilisateur coche. Un serveur peut se porter candidat
 auprès d'un annuaire, mais sa candidature attend l'approbation de l'opérateur.
 C'est ce qui empêche l'annuaire de devenir une autorité par accumulation.
+
+**Amendé le 26 septembre 2026.** Rien n'entre dans le **cercle d'ancrage**
+sans un geste humain. Le cercle ouvert, lui, admet après sonde et probation,
+parce qu'il ne porte que ce qui dérive d'un secret entre pairs épinglés. Voir
+`2026-09-26-cercle-ouvert-design.md`.
 
 ## Ce que ce document ne traite pas
 
@@ -207,6 +216,11 @@ consulte jamais un autre annuaire, ne vérifie jamais un autre serveur, et ne
 propage jamais ce qu'il a reçu. La soumission est un drapeau,
 `--announce-to <hôte>`, qui envoie une trame `DirectorySubmit` (0x14) une fois au
 démarrage, puis referme.
+
+**Amendé le 26 septembre 2026.** Sauf le rôle d'autorité, qui sonde les
+candidats. Et la candidature est renvoyée chaque jour, pour qu'un service
+oublié après une semaine de silence se représente sans redémarrer. Voir
+`2026-09-26-cercle-ouvert-design.md`.
 
 Côté annuaire, l'entrée tombe dans une file d'attente **persistée sur disque**,
 pour qu'une seule candidature suffise et qu'un redémarrage ne la perde pas.
