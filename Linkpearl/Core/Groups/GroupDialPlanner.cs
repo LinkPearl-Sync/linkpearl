@@ -123,7 +123,7 @@ public sealed class GroupDialPlanner(IClock clock)
             PairedAt = group.JoinedAt,
             PinnedFingerprint = theirs,
             Receive = group.ReceiveOf(known),
-            Group = new GroupOrigin(group.Id, ours, theirs),
+            Group = new GroupOrigin(group.Id, ours, theirs) { Pinned = known?.Id is not null, Public = group.IsPublic },
         };
     }
 }

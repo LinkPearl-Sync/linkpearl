@@ -10,7 +10,19 @@ namespace Linkpearl.Core.Groups;
 /// Les deux empreintes servent à choisir l'initiateur du handshake : l'identifiant
 /// du pair n'est pas connu d'avance, et les deux côtés doivent faire le même choix.
 /// </remarks>
-public sealed record GroupOrigin(GroupId Group, PlayerFingerprint Ours, PlayerFingerprint Theirs);
+public sealed record GroupOrigin(GroupId Group, PlayerFingerprint Ours, PlayerFingerprint Theirs)
+{
+    /// <summary>Vrai si la clé du membre est déjà épinglée dans le carnet de groupe.</summary>
+    /// <remarks>
+    /// Avant l'épinglage, le premier handshake est une confiance au premier
+    /// contact que ne lie pas le secret du groupe : un service du cercle ouvert
+    /// pourrait le gagner. Ce drapeau garde ces membres dans l'ancrage.
+    /// </remarks>
+    public bool Pinned { get; init; }
+
+    /// <summary>Vrai pour le groupe Public, dont le secret est connu de tous.</summary>
+    public bool Public { get; init; }
+}
 
 /// <summary>Un membre rencontré.</summary>
 /// <remarks>

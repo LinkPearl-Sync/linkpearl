@@ -39,6 +39,26 @@ public sealed class GroupDialPlannerTests
     }
 
     [Fact]
+    public void Le_pair_de_groupe_porte_l_epinglage_du_membre()
+    {
+        var group = Group(Secret);
+        var pinned = group with
+        {
+            Members = new Dictionary<PlayerFingerprint, GroupMember>
+            {
+                [Bob] = new() { Fingerprint = Bob, DisplayName = "Bob", Id = PeerId.Of(new byte[65]) },
+            },
+        };
+
+        var fresh = Assert.Single(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(group.Id, Bob, "Bob")], [group], []));
+        var known = Assert.Single(new GroupDialPlanner(_clock).Plan(Alice, [new GroupSighting(group.Id, Bob, "Bob")], [pinned], []));
+
+        Assert.False(fresh.Group!.Pinned);
+        Assert.True(known.Group!.Pinned);
+        Assert.False(known.Group.Public);
+    }
+
+    [Fact]
     public void On_ne_se_compose_ni_avec_soi_ni_dans_un_groupe_inconnu()
     {
         var group = Group(Secret);
