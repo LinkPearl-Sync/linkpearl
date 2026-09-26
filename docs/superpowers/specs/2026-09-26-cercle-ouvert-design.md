@@ -361,3 +361,14 @@ Relevé en lisant le code au moment d'écrire le plan, ou en l'exécutant.
 9. **La candidature est renvoyée chaque jour**, et non une seule fois au
    démarrage : une autorité oublie un service resté injoignable 7 jours, et il
    devrait sinon redémarrer pour se représenter.
+10. **Une candidature est liée à l'adresse qui l'envoie.** Le service n'entre que
+    s'il répond depuis cette adresse (ou ce /64 en IPv6), et `peers.txt` n'est
+    plus sondé d'office. Sans ce lien, n'importe qui inscrivait le service d'un
+    autre, ou l'alias d'un service d'ancrage, qui se retrouvait alors dans les
+    deux cercles et appariait un client avec lui-même.
+11. **Le client filtre lui aussi les adresses d'un service ouvert** : il résout
+    le nom, ne garde qu'une adresse publique et s'y connecte. Le filtre est
+    partagé avec la sonde, dans `ServiceConsensus`.
+12. **La version de la liste ne descend jamais sous l'heure** (secondes Unix),
+    et le client n'applique la règle de version qu'à une liste encore valable :
+    un registre perdu ne bloque plus les clients.
