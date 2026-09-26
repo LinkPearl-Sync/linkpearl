@@ -35,9 +35,8 @@ internal sealed class PairsPage(
 
     public void Draw()
     {
-        Text.Title("Pairs");
-        Text.Small("Ce que chacun vous montre, et où en est le transfert.");
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        Text.PageHeader("Pairs",
+            "Ce que chacun vous montre, et où en est le transfert.");
 
         var pairs = pairing.Book.Listed;
 

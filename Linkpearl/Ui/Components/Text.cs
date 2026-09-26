@@ -24,6 +24,26 @@ internal static class Text
         Draw(text, color ?? Theme.Text);
     }
 
+    /// <summary>En-tête de page : le titre, sa phrase d'explication, puis l'espace avant le contenu.</summary>
+    /// <remarks>
+    /// Vu en jeu le 26 septembre : en petit texte collé sous un titre en
+    /// Fredoka, la phrase se lisait mal et semblait accrochée au titre. Elle
+    /// passe au corps de texte, avec un souffle entre les deux, et chaque page
+    /// laisse le même espace avant son contenu.
+    /// </remarks>
+    public static void PageHeader(string title, string? subtitle = null)
+    {
+        Title(title);
+
+        if (subtitle is not null)
+        {
+            ImGui.Dummy(Theme.S(0f, Theme.GapXs));
+            Draw(subtitle, Theme.TextMuted);
+        }
+
+        ImGui.Dummy(Theme.S(0f, Theme.GapL));
+    }
+
     /// <summary>En-tête de section, ou nom d'un pair sur sa carte.</summary>
     public static void H2(string text, Vector4? color = null)
     {

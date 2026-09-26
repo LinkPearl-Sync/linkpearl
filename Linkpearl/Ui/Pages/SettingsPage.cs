@@ -53,8 +53,7 @@ internal sealed class SettingsPage(
 
     public void Draw()
     {
-        Text.Title("Réglages");
-        ImGui.Dummy(Theme.S(0f, Theme.GapL));
+        Text.PageHeader("Réglages");
 
         DrawVisibility();
         DrawCache();

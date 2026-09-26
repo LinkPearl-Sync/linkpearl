@@ -94,9 +94,8 @@ internal sealed class GroupsPage(
 
     public void Draw()
     {
-        Text.Title("Groupes");
-        Text.Small("Un groupe synchronise tous ses membres entre eux, sans les pairer un à un.");
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        Text.PageHeader("Groupes",
+            "Un groupe synchronise tous ses membres entre eux, sans les pairer un à un.");
 
         DrawPublic();
         DrawEntry();

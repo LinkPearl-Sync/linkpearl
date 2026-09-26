@@ -34,9 +34,8 @@ internal sealed class NearbyPage(
         var users  = state.Nearby.Where(player => presence.Detected.ContainsKey(player.Fingerprint)).ToList();
         var others = state.Nearby.Count - users.Count;
 
-        Text.Title("Autour de vous");
-        Text.Small("Les joueurs à portée qui utilisent Linkpearl et se laissent trouver.");
-        ImGui.Dummy(Theme.S(0f, Theme.GapM));
+        Text.PageHeader("Autour de vous",
+            "Les joueurs à portée qui utilisent Linkpearl et se laissent trouver.");
 
         if (users.Count == 0)
         {
