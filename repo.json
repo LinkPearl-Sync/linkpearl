@@ -5,7 +5,7 @@
     "InternalName": "LinkpearlSync",
     "AssemblyVersion": "0.3.1.0",
     "TestingAssemblyVersion": "0.3.1.0",
-    "Description": "Syncs your modded appearance with the people you explicitly paired with, peer to peer. Files go straight from one player to another, end-to-end encrypted: no server stores or redistributes them. The interface is in French for now.",
+    "Description": "Syncs your modded appearance with the people you paired with and the groups you joined, peer to peer. Files go straight from one player to another, end-to-end encrypted: no server stores or redistributes them. The interface is in French for now.",
     "Punchline": "See your friends' mods, with no server in between.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/LinkPearl-Sync/linkpearl-sync-plugin",
