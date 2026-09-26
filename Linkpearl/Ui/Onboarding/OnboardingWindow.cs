@@ -188,11 +188,16 @@ internal sealed class OnboardingWindow : ThemedWindow
         var radius = Theme.S(4f);
         var spacing = Theme.S(14f);
 
+        // L'étape courante en perle, les autres en points éteints : la même
+        // pastille que la barre d'état, pour que le plugin parle une seule langue.
         for (var i = 0; i < _steps.Length; i++)
         {
             var center = origin + new Vector2(radius + spacing * i, Theme.S(14f));
-            dl.AddCircleFilled(center, radius,
-                ImGui.GetColorU32(i == _step ? Theme.Accent : Theme.Alpha(Theme.TextFaint, 0.5f)));
+
+            if (i == _step)
+                Surface.Pearl(dl, center, radius * 1.25f, glow: false);
+            else
+                dl.AddCircleFilled(center, radius, ImGui.GetColorU32(Theme.Alpha(Theme.TextFaint, 0.5f)));
         }
 
         var last = _step == _steps.Length - 1;

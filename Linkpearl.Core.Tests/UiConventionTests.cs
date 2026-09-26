@@ -50,7 +50,7 @@ public class UiConventionTests
         },
         {
             "ImGui.SameLine()", "l'espacement se dit, il ne se laisse pas au défaut d'ImGui", [],
-            ["NameplateLegend.cs"]
+            []
         },
         {
             "ImGui.Button(", "un bouton passe par Btn", ["Components.Btn.cs"], []
@@ -60,7 +60,7 @@ public class UiConventionTests
         },
         {
             "Hex(0x", "une couleur vient d'un jeton de Theme", ["Theme.cs"],
-            ["NameplateGlyphs.cs", "Onboarding.OnboardingArt.cs"]
+            []
         },
     };
 

@@ -152,6 +152,39 @@ Deux régressions vues en jeu sur la v0.3.1, à deux comptes sur une machine.
   d'une animation empruntée) était pris pour un fichier local et signalé absent
   du disque (`ResourcePathClassifier`).
 
+## Ce qui a changé le 25
+
+- **L'interface a pris l'apparence du site et du logo** : nuit marine, halo
+  bleu, orange pompon réservé à l'action principale, perle, Fredoka pour les
+  titres et Nunito pour le texte. Voir
+  `superpowers/specs/2026-09-25-design-nuit-design.md`.
+- Inter reste embarqué, fusionné derrière les deux polices, pour les glyphes
+  qu'elles n'ont pas. `scripts/generer-polices.sh` régénère les fichiers et
+  échoue si un caractère de l'interface n'a plus de police.
+- `UiConventionTests` refuse, sous Linux, ce qui contournerait les composants :
+  case ImGui brute, en-tête repliable natif, `SameLine()` sans espacement,
+  bouton hors de `Btn`, couleur en dur, `BtnTone.Primary`.
+
+## Ce qui a changé le 26
+
+Pendant les essais en jeu de la refonte, hors du plan :
+
+- **La page Pairs dit où en est chaque pair.** Le moteur calcule une phase
+  (`PeerPhase`) : recherche au rendez-vous, absent, échec avec l'heure du
+  prochain essai, attente de l'apparence, réception, prête hors de vue, posée.
+  Jusque-là, l'interface ne regardait que l'existence d'une session, et un
+  pair repris s'affichait « hors ligne » pendant toute sa recherche. Un pair
+  absent le reste pendant les essais suivants, sans quoi sa ligne clignotait
+  entre « recherche » et « absent » toutes les trente secondes.
+- **Le nom d'un nouveau groupe** n'a ni espace ni caractère spécial, refusés
+  dès la frappe (`GroupPolicyCodec.IsCreatableName`). La règle de réception
+  reste plus large : la resserrer ferait rejeter la politique des groupes nés
+  avant elle.
+- **La sauvegarde** passe en tête des réglages, sous ce nom, et la page Pairs
+  la rappelle tant qu'aucune n'a été faite ou restaurée sur ce PC.
+- La barre d'état dit « En ligne » ou « Hors ligne » en toutes lettres, et le
+  nom du monde plutôt que son numéro.
+
 ## Ce qui reste de mémoire
 
 - **L'éviction du cache ne connaît pas ce qui est à l'écran.** `EvictToAsync`
@@ -189,6 +222,14 @@ Deux régressions vues en jeu sur la v0.3.1, à deux comptes sur une machine.
 - **Un service tiers resté à 16 boîtes par session refuse l'ouverture dès huit
   groupes**, et plus tôt au fil des fenêtres : c'est la limite de
   `MaxMailboxesPerSession` du rendez-vous. À relever avant la généralisation.
+
+- **Une pause ne se voit pas de l'autre côté.** Celui qu'on met en pause nous
+  voit « absent », comme si l'on avait quitté le jeu. Le dire demanderait un
+  avis de pause dans le protocole.
+- **`Une_session_qui_tombe_se_rejoint_sans_attendre` est intermittent** : une
+  fois sur une vingtaine, sous la charge de toute la suite. Il laisse environ
+  400 ms de temps réel à une poignée de main qui tourne sur le pool de threads ;
+  il faudrait l'attendre à l'horloge du test plutôt qu'à des pauses réelles.
 
 ## Défauts connus, non corrigés
 
@@ -245,3 +286,11 @@ Deux régressions vues en jeu sur la v0.3.1, à deux comptes sur une machine.
   au rechargement d'un matériau, et les teintures avancées partent avec lui.
 - Penumbra rend la cible d'un échange de chemin avec des antislashs, comme un
   chemin Windows : ce n'est pas pour autant un fichier local.
+- Les bindings ImGui de Dalamud n'ont ni dégradé radial ni ellipse : le halo
+  est un éventail de triangles colorés par sommet (`Surface.Halo`), que la carte
+  graphique interpole sans marches.
+- La liste de dessin d'une fenêtre est rognée en deçà des marges : un fond peint
+  depuis `Draw` doit pousser son propre rectangle de rognage, sans intersection.
+- `InputTextWithHint` n'accepte pas de filtre de caractères dans les bindings
+  de Dalamud : un champ filtré passe par `InputText` et dessine son indication
+  à la main (`GroupEntryWindow.DrawHint`).

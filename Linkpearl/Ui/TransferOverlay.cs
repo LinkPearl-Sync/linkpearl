@@ -98,7 +98,9 @@ internal sealed class TransferOverlay(IGameGui gameGui, IObjectTable objects)
         var max = min + new Vector2(width, height);
         var rounding = Theme.S(6f);
 
-        dl.AddRectFilled(min, max, ImGui.GetColorU32(Theme.Alpha(Theme.BgSurface, 0.88f)), rounding);
+        // La nuit, presque opaque : le badge flotte sur n'importe quel décor du
+        // jeu, et en deçà de 85 % le texte se perd dans une scène claire.
+        dl.AddRectFilled(min, max, ImGui.GetColorU32(Theme.Alpha(Theme.BgBase, 0.90f)), rounding);
         dl.AddRect(min, max, ImGui.GetColorU32(Theme.Alpha(Theme.Accent, 0.55f)), rounding);
 
         dl.AddText(new Vector2(min.X + (width - size.X) * 0.5f, min.Y + padY),

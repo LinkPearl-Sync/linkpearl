@@ -47,7 +47,7 @@ internal static class OnboardingArt
         CenteredText(dl, middle + new Vector2(0f, Theme.S(26f)), "chiffré, de joueur à joueur", Theme.Accent);
 
         Person(dl, left, Theme.Online, "vous");
-        Person(dl, right, Theme.Hex(0x6FB6F2), "votre ami");
+        Person(dl, right, Theme.Accent, "votre ami");
 
         ImGui.Dummy(new Vector2(width, height));
     }

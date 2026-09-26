@@ -20,7 +20,7 @@ internal static class NameplateLegend
     private static void Line(NameplateMark mark, string meaning)
     {
         Feedback.StatusDot(NameplateGlyphs.ColorOf(mark));
-        ImGui.SameLine();
+        ImGui.SameLine(0f, Theme.S(Theme.GapS));
         Text.Small(meaning);
     }
 }

@@ -36,17 +36,18 @@ internal sealed class NameplateGlyphs : IDisposable
 
     /// <summary>La couleur d'une marque, partagée avec la légende des réglages.</summary>
     /// <remarks>
-    /// Plus saturées que le reste du thème pour l'orange et le bleu : un glyphe
-    /// de quelques pixels posé sur la scène se lit mal en pastel.
+    /// Les couleurs vives de la palette : un glyphe de quelques pixels posé sur
+    /// la scène se lit mal en pastel. L'orange pompon pour qui attend qu'on
+    /// l'aborde, le halo pour une demande, la lavande de la perle pour un groupe.
     /// </remarks>
     public static Vector4 ColorOf(NameplateMark mark) => mark switch
     {
         NameplateMark.Online      => Theme.Online,
-        NameplateMark.Available   => Theme.Hex(0xF2A65A),
-        NameplateMark.Requesting  => Theme.Hex(0x6FB6F2),
+        NameplateMark.Available   => Theme.Action,
+        NameplateMark.Requesting  => Theme.Accent,
         NameplateMark.Offline     => Theme.TextFaint,
         NameplateMark.Trouble     => Theme.Danger,
-        NameplateMark.GroupMember => Theme.Hex(0xB48CF2),
+        NameplateMark.GroupMember => Theme.PearlRim,
         _                         => Theme.Text,
     };
 
