@@ -130,6 +130,15 @@ internal sealed class FailingDialer(bool peerWasAbsent) : IPeerDialer
     }
 }
 
+/// <summary>Une tentative qui ne se conclut jamais, comme une annonce en cours au rendez-vous.</summary>
+internal sealed class NeverDialer : IPeerDialer
+{
+    public Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
+        => Task.Delay(Timeout.Infinite, ct).ContinueWith(
+            _ => new ConnectionAttempt(null, true, null), CancellationToken.None,
+            TaskContinuationOptions.None, TaskScheduler.Default);
+}
+
 /// <summary>Un pair absent, dont l'annonce tient un moment au rendez-vous avant d'abandonner.</summary>
 internal sealed class AnnouncingDialer(MovableClock clock, TimeSpan announce) : IPeerDialer
 {
@@ -451,6 +460,31 @@ public sealed class SyncEngineTests : IDisposable
 
             _clock.Advance(TimeSpan.FromSeconds(30));
         }
+    }
+
+    [Fact]
+    public async Task Un_pair_recherche_ne_se_dit_pas_hors_ligne()
+    {
+        // Vu en jeu le 26 septembre : pendant les vingt-cinq secondes d'annonce
+        // au rendez-vous, un pair repris s'affichait « hors ligne ».
+        await using var engine = Solitary(new NeverDialer());
+
+        await engine.TickAsync([], default);
+
+        Assert.Equal(PeerPhase.Searching, engine.Statuses.Single().Phase);
+    }
+
+    [Theory]
+    [InlineData(true, PeerPhase.Absent)]
+    [InlineData(false, PeerPhase.Failing)]
+    public async Task Une_tentative_vaine_dit_si_le_pair_etait_absent_ou_en_echec(bool absent, PeerPhase expected)
+    {
+        await using var engine = Solitary(new FailingDialer(peerWasAbsent: absent));
+
+        await engine.TickAsync([], default);
+        await engine.TickAsync([], default);
+
+        Assert.Equal(expected, engine.Statuses.Single().Phase);
     }
 
     [Fact]

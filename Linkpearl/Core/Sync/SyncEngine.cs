@@ -114,6 +114,7 @@ public readonly record struct PeerRoute(bool Relayed, int RoundTripMs);
 
 /// <summary>L'état d'un pair, tel que l'interface l'affiche.</summary>
 /// <param name="Route">Absent tant qu'aucune session n'est ouverte.</param>
+/// <param name="Phase">Ce que la liste des pairs doit en dire ; calculée par le moteur, voir <see cref="PeerPhases"/>.</param>
 public sealed record PeerStatus(
     PeerId Peer,
     string DisplayName,
@@ -124,7 +125,8 @@ public sealed record PeerStatus(
     string? LastFailure,
     DateTimeOffset? NextAttempt,
     PeerRoute? Route = null,
-    GroupId? Group = null);
+    GroupId? Group = null,
+    PeerPhase Phase = PeerPhase.Searching);
 
 /// <summary>
 /// Le moteur : il fait vivre une session par pair et décide quoi poser à l'écran.
@@ -247,7 +249,11 @@ public sealed class SyncEngine : IAsyncDisposable
             entry.Value.LastFailure,
             entry.Value.Session is null ? entry.Value.NextAttempt : null,
             entry.Value.Session?.Link is { } link ? new PeerRoute(link.IsRelayed, link.RoundTripMs) : null,
-            entry.Value.Pair.Group?.Group))
+            entry.Value.Pair.Group?.Group,
+            PeerPhases.Of(
+                entry.Value.Dial is not null, entry.Value.Session is not null, _clock.UtcNow,
+                entry.Value.NextAttempt, entry.Value.LastFailure, entry.Value.WasAbsent,
+                entry.Value.Exchange?.View ?? EmptyView, entry.Value.AppliedOn is not null)))
         .ToList();
 
     private static PeerView EmptyView { get; } = new(null, null, null, 0, 0, false);
@@ -590,6 +596,7 @@ public sealed class SyncEngine : IAsyncDisposable
         limiter.Bypassed = _uploadLimited is false;
         runtime.Failures = 0;
         runtime.LastFailure = null;
+        runtime.WasAbsent = false;
         runtime.Life = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
 
         // Deux tâches et non une : le service des blobs d'un pair dure des
@@ -720,6 +727,7 @@ public sealed class SyncEngine : IAsyncDisposable
                 // pas encore revenu au rendez-vous quand on l'y cherchait.
                 runtime.Failures = 0;
                 runtime.LastFailure = null;
+                runtime.WasAbsent = false;
                 runtime.NextAttempt = _clock.UtcNow;
             }
             else
@@ -1111,6 +1119,7 @@ public sealed class SyncEngine : IAsyncDisposable
     private void Retry(Runtime runtime, bool peerWasAbsent, string? failure)
     {
         runtime.LastFailure = peerWasAbsent ? null : failure;
+        runtime.WasAbsent = peerWasAbsent;
 
         if (peerWasAbsent)
         {
@@ -1189,6 +1198,9 @@ public sealed class SyncEngine : IAsyncDisposable
         public DateTimeOffset SessionSince { get; set; }
 
         public string? LastFailure { get; set; }
+
+        /// <summary>Le pair n'était pas au rendez-vous au dernier essai : l'interface le dit absent.</summary>
+        public bool WasAbsent { get; set; }
 
         public GameObjectRef? AppliedOn { get; set; }
 
