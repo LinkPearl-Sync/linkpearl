@@ -79,6 +79,40 @@ if (args.Length > 0 && args[0] == "federation")
     return;
 }
 
+if (args.Length > 0 && args[0] == "cercle-ouvert")
+{
+    // Cinq services tournent à côté : trois ouverts, un d'ancrage, et une
+    // autorité dont la clé publique se relève dans son journal au démarrage.
+    Linkpearl.Core.Transport.Rendezvous.RendezvousAddress Address(string text)
+    {
+        if (Linkpearl.Core.Transport.Rendezvous.RendezvousAddress.TryParse(text, out var parsed, out var why))
+            return parsed;
+
+        Console.WriteLine($"{text} illisible : {why}");
+        Environment.Exit(2);
+        return default;
+    }
+
+    var authorityKey = ArgString("--cle-autorite", "");
+
+    if (authorityKey.Length is 0)
+    {
+        Console.WriteLine("--cle-autorite manque : la clé publique que l'autorité affiche au démarrage.");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    Environment.ExitCode = await OpenCircleRun.ExecuteAsync(
+        new OpenCircleSettings(
+            Open: [.. ArgString("--rdv-ouverts", "127.0.0.1:47911,127.0.0.1:47912,127.0.0.1:47913").Split(',').Select(Address)],
+            Anchor: Address(ArgString("--rdv-ancre", "127.0.0.1:47914")),
+            Authority: Address(ArgString("--rdv-autorite", "127.0.0.1:47915")),
+            AuthorityKey: Convert.FromHexString(authorityKey),
+            TimeoutSeconds: Arg("--timeout", 60)),
+        CancellationToken.None) ? 0 : 1;
+    return;
+}
+
 if (args.Length > 0 && args[0] == "fakepeer")
 {
     var cache = ArgString("--cache", "/mnt/c/Users/yann/AppData/Local/Linkpearl/cache");

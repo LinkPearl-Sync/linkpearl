@@ -167,7 +167,7 @@ public static class FederationRun
     }
 
     /// <summary>Une apparence minuscule : ce run répond à une question binaire, pas à une mesure.</summary>
-    private static async Task<CharacterManifest> TinyAppearanceAsync(IBlobStore store, CancellationToken ct)
+    internal static async Task<CharacterManifest> TinyAppearanceAsync(IBlobStore store, CancellationToken ct)
     {
         var replacements = new List<FileReplacement>();
 
@@ -189,9 +189,9 @@ public static class FederationRun
         return new CharacterManifest(CharacterManifest.CurrentVersion, replacements, string.Empty, null);
     }
 
-    private static RendezvousEndpoint Endpoint(RendezvousAddress at) => new(at.Host, at.Port);
+    internal static RendezvousEndpoint Endpoint(RendezvousAddress at) => new(at.Host, at.Port);
 
-    private static PairRecord Pair(
+    internal static PairRecord Pair(
         PeerId id, byte[] publicKey, byte[] secret, string name, IReadOnlyList<RendezvousAddress> places)
         => new()
         {
@@ -204,7 +204,7 @@ public static class FederationRun
             PairedAt = DateTimeOffset.UnixEpoch,
         };
 
-    private static Task Poll(PeerLinkFactory links, CancellationToken ct)
+    internal static Task Poll(PeerLinkFactory links, CancellationToken ct)
         => Task.Run(async () =>
         {
             while (ct.IsCancellationRequested is false)
