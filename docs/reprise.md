@@ -76,7 +76,7 @@ Ce sont elles qui ont invalidé le plus de travail. À ne pas réinventer.
 | 1, boucle jeu locale | **Clos**, voir `jalon-1-resultats.md`. |
 | 2, débit | **Mesuré**, voir `jalon-2-debit.md`, puis dépassé le 23 (voir plus bas). Le ping en jeu reste à mesurer. |
 | 2 bis, traversée de NAT | NAT classé favorable. Test de paire réel en attente d'une seconde personne. |
-| 3, crypto et protocole | **Clos**. Relecture externe toujours due, voir plus bas. |
+| 3, crypto et protocole | **Clos**. Pas de relecture formelle (#8, fermée le 24), voir plus bas. |
 | 4, cache et transfert | **Clos**. Transfert par tronçons depuis le 23. |
 | 5, rendez-vous et relais | **Clos**, déployé et éprouvé depuis l'internet. Le serveur vit dans son propre dépôt. |
 | 6, moteur de synchronisation | **Éprouvé en jeu**, à deux personnages sur une même machine. |
@@ -187,13 +187,9 @@ Pendant les essais en jeu de la refonte, hors du plan :
 
 ## Ce qui reste de mémoire
 
-- **L'éviction du cache ne connaît pas ce qui est à l'écran.** `EvictToAsync`
-  prend un ensemble d'épinglés que personne ne lui donne : le moteur devrait lui
-  passer les blobs des apparences posées, sinon le cache peut retirer sous les
-  pieds ce qu'un pair porte.
 - **Un client d'avant les tronçons ne peut plus échanger** avec un client
   d'après. Le receveur le dit dans le journal, mais la version du protocole n'a
-  pas été relevée : ses vecteurs figés servent à la relecture externe. De même,
+  pas été relevée, pour ne pas invalider ses vecteurs figés. De même,
   un client d'avant les intégrations refuse les manifestes v2 (« version de
   manifeste inconnue ») : décidé ainsi puisque les transferts étaient déjà
   incompatibles.
@@ -233,9 +229,11 @@ Pendant les essais en jeu de la refonte, hors du plan :
 
 ## Défauts connus, non corrigés
 
-- **Le handshake SIGMA-I n'a pas été relu par quelqu'un d'autre.** C'est une
-  condition de diffusion, pas une amélioration souhaitable. `protocol.md` existe
-  pour cela.
+- **Le handshake SIGMA-I n'a pas eu de relecture formelle, et n'en aura pas.**
+  Décidé le 24 (#8) : deux passes de relecture de `protocol.md` ont mené à de
+  vraies corrections, livrées en v0.3.0 (#17), et le document dit franchement
+  son modèle de confiance et ses limites. L'enjeu est des fichiers de mods : ces
+  limites sont un compromis assumé, plus une condition de diffusion.
 - **Les trames de contrôle de LiteNetLib restent en clair**, donc falsifiables
   par qui connaît l'adresse. Déni de service, pas atteinte à la confidentialité.
 
