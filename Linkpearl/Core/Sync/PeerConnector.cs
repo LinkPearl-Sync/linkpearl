@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using Linkpearl.Core.Abstractions;
 using Linkpearl.Core.Crypto;
@@ -21,8 +22,8 @@ public interface IRendezvousDialer
     Task<byte[]?> AnnounceAsync(RendezvousAddress at, Announcement announcement, CancellationToken ct);
 }
 
-/// <summary>Ce qu'une tentative de connexion a donné.</summary>
-public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, string? Failure);
+/// <summary>Ce qu'une tentative de connexion a donné, et par quel lieu elle est passée.</summary>
+public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, string? Failure, RendezvousAddress? Via = null);
 
 /// <summary>
 /// Enchaîne ce qu'il faut pour joindre un pair : réflexion, annonce, perçage, relais.
@@ -35,7 +36,7 @@ public sealed record ConnectionAttempt(IPeerLink? Link, bool PeerWasAbsent, stri
 /// </remarks>
 public sealed class PeerConnector(
     PeerLinkFactory links, RendezvousEndpoint rendezvous, IClock clock, ILogSink log,
-    TimeSpan? announceBudget = null) : IPeerDialer
+    TimeSpan? announceBudget = null, IOpenCircle? circle = null) : IPeerDialer
 {
     /// <summary>
     /// Combien de temps une annonce reste tenue au rendez-vous.
@@ -50,6 +51,18 @@ public sealed class PeerConnector(
     public static readonly TimeSpan DefaultAnnounceBudget = TimeSpan.FromSeconds(25);
 
     private readonly TimeSpan _announceBudget = announceBudget ?? DefaultAnnounceBudget;
+
+    /// <summary>
+    /// L'avance laissée au cercle ouvert avant d'annoncer aussi sur l'ancrage.
+    /// </summary>
+    /// <remarks>
+    /// Assez pour que deux clients récents s'y trouvent, et que l'ancrage ne
+    /// voie pas passer leur annonce. Trop peu pour qu'un client d'avant le
+    /// cercle ouvert, qui n'annonce que sur l'ancrage, soit manqué : les
+    /// annonces ouvertes restent tenues tout le budget, et celles de l'ancrage
+    /// en couvrent encore quinze secondes.
+    /// </remarks>
+    public static readonly TimeSpan OpenHead = TimeSpan.FromSeconds(10);
 
     private static ReadOnlySpan<byte> CandidateKeyInfo => "linkpearl:candidates:v2"u8;
     private static ReadOnlySpan<byte> TokenInfo => "linkpearl:token:v1"u8;
@@ -96,23 +109,51 @@ public sealed class PeerConnector(
     /// relais si le direct échoue, puisque c'est le seul que les deux ont
     /// atteint.
     /// </remarks>
-    public static async Task<(RendezvousAddress At, byte[] Theirs)?> AnnounceEverywhereAsync(
+    public static Task<(RendezvousAddress At, byte[] Theirs)?> AnnounceEverywhereAsync(
         IRendezvousDialer dialer, IReadOnlyList<RendezvousAddress> places,
         Announcement announcement, TimeSpan budget, CancellationToken ct)
+        => AnnounceInCirclesAsync(dialer, places, [], announcement, TimeSpan.Zero, budget, ct);
+
+    /// <summary>
+    /// S'annonce sur le cercle ouvert tout de suite, et sur l'ancrage après
+    /// <paramref name="head"/>, ou dès que tous les services ouverts ont
+    /// échoué. Le premier appariement gagne.
+    /// </summary>
+    public static async Task<(RendezvousAddress At, byte[] Theirs)?> AnnounceInCirclesAsync(
+        IRendezvousDialer dialer, IReadOnlyList<RendezvousAddress> open, IReadOnlyList<RendezvousAddress> anchor,
+        Announcement announcement, TimeSpan head, TimeSpan budget, CancellationToken ct)
     {
-        if (places.Count == 0)
+        // Un service des deux cercles n'est annoncé qu'une fois, et côté
+        // ouvert : deux annonces d'un même client chez lui s'apparieraient
+        // entre elles.
+        var openKeys = open.Select(ServiceConsensus.Canonical).ToHashSet(StringComparer.Ordinal);
+        var fallback = anchor.Where(place => openKeys.Contains(ServiceConsensus.Canonical(place)) is false).ToList();
+
+        if (open.Count == 0 && fallback.Count == 0)
             return null;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(budget);
 
-        var attempts = places.Select(async place =>
+        var openExhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var openLeft = new StrongBox<int>(open.Count);
+
+        if (open.Count == 0)
+            openExhausted.TrySetResult();
+
+        async Task<(RendezvousAddress At, byte[] Theirs)?> TryAnnounceAsync(RendezvousAddress place, bool isOpen)
         {
             try
             {
+                if (isOpen is false)
+                {
+                    await Task.WhenAny(Task.Delay(head, deadline.Token), openExhausted.Task).ConfigureAwait(false);
+                    deadline.Token.ThrowIfCancellationRequested();
+                }
+
                 var theirs = await dialer.AnnounceAsync(place, announcement, deadline.Token).ConfigureAwait(false);
 
-                return theirs is null ? null : ((RendezvousAddress At, byte[] Theirs)?)(place, theirs);
+                return theirs is null ? null : (place, theirs);
             }
             catch (Exception)
             {
@@ -122,7 +163,24 @@ public sealed class PeerConnector(
                 // resterait non observée après qu'une autre a gagné.
                 return null;
             }
-        }).ToList();
+        }
+
+        async Task<(RendezvousAddress At, byte[] Theirs)?> AttemptAsync(RendezvousAddress place, bool isOpen)
+        {
+            var result = await TryAnnounceAsync(place, isOpen).ConfigureAwait(false);
+
+            // Seul un échec libère l'ancrage. Un appariement ouvert ne doit
+            // pas le faire : l'ancrage partirait avant que l'annulation qui
+            // suit la victoire ait eu le temps de l'arrêter.
+            if (isOpen && result is null && Interlocked.Decrement(ref openLeft.Value) == 0)
+                openExhausted.TrySetResult();
+
+            return result;
+        }
+
+        var attempts = open.Select(place => AttemptAsync(place, isOpen: true))
+            .Concat(fallback.Select(place => AttemptAsync(place, isOpen: false)))
+            .ToList();
 
         while (attempts.Count > 0)
         {
@@ -143,7 +201,9 @@ public sealed class PeerConnector(
 
     public async Task<ConnectionAttempt> ConnectAsync(PairRecord pair, CancellationToken ct)
     {
-        if (pair.Rendezvous.Count == 0)
+        var open = circle?.PlacesFor(pair) ?? [];
+
+        if (pair.Rendezvous.Count == 0 && open.Count == 0)
             return new ConnectionAttempt(null, false, "aucun lieu de rendez-vous enregistré pour ce pair");
 
         // Un pair en relais seul ne reçoit aucune de nos adresses : c'est tout
@@ -163,8 +223,8 @@ public sealed class PeerConnector(
         // erreur. Mais on attend assez pour qu'il nous trouve s'il essaie.
         var dialer = new LiveDialer();
 
-        var match = await AnnounceEverywhereAsync(
-            dialer, pair.Rendezvous, announcement, _announceBudget, ct).ConfigureAwait(false);
+        var match = await AnnounceInCirclesAsync(
+            dialer, open, pair.Rendezvous, announcement, OpenHead, _announceBudget, ct).ConfigureAwait(false);
 
         if (match is null)
         {
@@ -176,6 +236,9 @@ public sealed class PeerConnector(
                 ? new ConnectionAttempt(null, true, null)
                 : new ConnectionAttempt(null, false, "aucun lieu de rendez-vous commun joignable");
         }
+
+        var viaOpen = open.Contains(match.Value.At);
+        log.Info($"{pair.DisplayName} : apparié sur {match.Value.At}{(viaOpen ? " (cercle ouvert)" : "")}.");
 
         if (TryOpenCandidates(pair.PairSecret, match.Value.Theirs, out var plain) is false)
             return new ConnectionAttempt(
@@ -199,7 +262,7 @@ public sealed class PeerConnector(
             var link = await links.ConnectAsync(ordered, token, PunchBudget, ct).ConfigureAwait(false);
 
             if (link is not null)
-                return new ConnectionAttempt(link, false, null);
+                return new ConnectionAttempt(link, false, null, Via: match.Value.At);
 
             log.Info($"{pair.DisplayName} : perçage sans réponse, passage au relais.");
         }
@@ -213,7 +276,7 @@ public sealed class PeerConnector(
 
         return relayed is null
             ? new ConnectionAttempt(null, false, "ni perçage ni relais : le service refuse peut-être de relayer")
-            : new ConnectionAttempt(relayed, false, null);
+            : new ConnectionAttempt(relayed, false, null, Via: match.Value.At);
     }
 
     /// <summary>

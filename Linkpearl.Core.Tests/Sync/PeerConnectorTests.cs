@@ -27,9 +27,98 @@ internal sealed class ScriptedDialer(Dictionary<string, byte[]?> answers) : IRen
     }
 }
 
+/// <summary>Un annonceur qui date chaque appel, et dont certains lieux lèvent aussitôt.</summary>
+internal sealed class TimedDialer(Dictionary<string, byte[]?> answers, HashSet<string>? failing = null) : IRendezvousDialer
+{
+    private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+
+    public List<(string Host, TimeSpan At)> Asked { get; } = [];
+
+    public async Task<byte[]?> AnnounceAsync(RendezvousAddress at, Announcement announcement, CancellationToken ct)
+    {
+        lock (Asked)
+            Asked.Add((at.Host, _watch.Elapsed));
+
+        if (failing?.Contains(at.Host) is true)
+            throw new IOException("service injoignable");
+
+        if (answers.TryGetValue(at.Host, out var answer) is false)
+        {
+            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+            return null;
+        }
+
+        return answer;
+    }
+}
+
 public class PeerConnectorTests
 {
     private static Announcement Some() => new([new byte[16]], [9]);
+
+    private static RendezvousAddress At(string host) => new(host, 47900);
+
+    [Fact]
+    public async Task Le_cercle_ouvert_apparie_sans_deranger_l_ancrage()
+    {
+        var dialer = new TimedDialer(new() { ["ouvert.ch"] = [1] });
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [At("ouvert.ch")], [At("ancre.ch")], Some(), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal("ouvert.ch", match!.Value.At.Host);
+        Assert.DoesNotContain(dialer.Asked, asked => asked.Host == "ancre.ch");
+    }
+
+    [Fact]
+    public async Task L_ancrage_attend_la_tete_laissee_au_cercle_ouvert()
+    {
+        var dialer = new TimedDialer(new() { ["ancre.ch"] = [1] });
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [At("ouvert.ch")], [At("ancre.ch")], Some(), TimeSpan.FromMilliseconds(300), TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal("ancre.ch", match!.Value.At.Host);
+        Assert.True(dialer.Asked.Single(asked => asked.Host == "ancre.ch").At >= TimeSpan.FromMilliseconds(250));
+    }
+
+    [Fact]
+    public async Task Des_services_ouverts_injoignables_liberent_l_ancrage_aussitot()
+    {
+        var dialer = new TimedDialer(new() { ["ancre.ch"] = [1] }, failing: ["ouvert1.ch", "ouvert2.ch"]);
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [At("ouvert1.ch"), At("ouvert2.ch")], [At("ancre.ch")], Some(),
+            TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20), CancellationToken.None);
+
+        Assert.Equal("ancre.ch", match!.Value.At.Host);
+        Assert.True(dialer.Asked.Single(asked => asked.Host == "ancre.ch").At < TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task Sans_cercle_ouvert_l_ancrage_part_aussitot()
+    {
+        var dialer = new TimedDialer(new() { ["ancre.ch"] = [1] });
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [], [At("ancre.ch")], Some(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20), CancellationToken.None);
+
+        Assert.Equal("ancre.ch", match!.Value.At.Host);
+        Assert.True(dialer.Asked.Single().At < TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task Un_service_des_deux_cercles_n_est_annonce_qu_une_fois()
+    {
+        var dialer = new TimedDialer([]);
+
+        var match = await PeerConnector.AnnounceInCirclesAsync(
+            dialer, [At("rdv.x.ch")], [new RendezvousAddress("RDV.X.CH", 47900)], Some(),
+            TimeSpan.Zero, TimeSpan.FromMilliseconds(300), CancellationToken.None);
+
+        Assert.Null(match);
+        Assert.Single(dialer.Asked);
+    }
 
     [Fact]
     public async Task Tous_les_lieux_sont_essayes_en_meme_temps()
