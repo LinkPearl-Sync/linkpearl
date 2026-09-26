@@ -5,10 +5,12 @@ using Linkpearl.Core.Abstractions;
 namespace Linkpearl.Integration;
 
 /// <summary>Un joueur visible, avec son nom tel que le jeu l'affiche.</summary>
+/// <param name="WorldName">Le nom du monde, lu dans les feuilles du jeu ; l'identifiant s'il n'y est pas.</param>
 public sealed record NearbyPlayer(
-    GameObjectRef Object, PlayerFingerprint Fingerprint, string Name, ushort WorldId)
+    GameObjectRef Object, PlayerFingerprint Fingerprint, string Name, ushort WorldId, string WorldName)
 {
-    public string Display => $"{Name}@{WorldId}";
+    /// <summary>« Nom@Monde », comme le jeu l'écrit. Vu le 26 septembre : « @97 » ne parlait à personne.</summary>
+    public string Display => $"{Name}@{WorldName}";
 }
 
 /// <summary>
@@ -50,7 +52,8 @@ public sealed class DalamudObjectSource(IObjectTable objects, IClientState clien
                     new GameObjectRef(player.ObjectIndex, player.GameObjectId),
                     PlayerFingerprint.Of(Normalize(name), world),
                     name,
-                    world));
+                    world,
+                    WorldName(player)));
             }
 
             return nearby;
@@ -74,10 +77,17 @@ public sealed class DalamudObjectSource(IObjectTable objects, IClientState clien
                 new GameObjectRef(player.ObjectIndex, player.GameObjectId),
                 PlayerFingerprint.Of(Normalize(name), world),
                 name,
-                world);
+                world,
+                WorldName(player));
         });
 
     public bool IsLoggedIn => clientState.IsLoggedIn;
+
+    /// <summary>Le nom du monde d'origine. Depuis le thread du framework, comme toute lecture d'un joueur.</summary>
+    private static string WorldName(IPlayerCharacter player)
+        => player.HomeWorld.ValueNullable?.Name.ExtractText() is { Length: > 0 } name
+               ? name
+               : player.HomeWorld.RowId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Forme du nom qui entre dans l'empreinte.
