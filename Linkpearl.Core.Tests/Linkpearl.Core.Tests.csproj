@@ -38,6 +38,12 @@
     </None>
   </ItemGroup>
 
+  <!-- Les sources de l'interface, embarquées pour UiConventionTests. Jamais
+       compilées ici : elles dépendent de Dalamud. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\Linkpearl\Ui\**\*.cs" LinkBase="UiSources" />
+  </ItemGroup>
+
   <Import Project="..\build\Core.Deps.props" />
   <Import Project="..\build\Core.Sources.props" />
 

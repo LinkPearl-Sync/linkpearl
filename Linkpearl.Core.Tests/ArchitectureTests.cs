@@ -19,7 +19,11 @@ public class ArchitectureTests
         var assembly = Assembly.GetExecutingAssembly();
 
         return assembly.GetManifestResourceNames()
-            .Where(name => name.EndsWith(".cs", StringComparison.Ordinal))
+            // Le préfixe, pas seulement l'extension : les sources de
+            // l'interface sont embarquées aussi, pour UiConventionTests, et
+            // elles ont le droit d'importer Dalamud.
+            .Where(name => name.Contains(".CoreSources.", StringComparison.Ordinal)
+                        && name.EndsWith(".cs", StringComparison.Ordinal))
             .Select(name =>
             {
                 using var stream = assembly.GetManifestResourceStream(name)!;
