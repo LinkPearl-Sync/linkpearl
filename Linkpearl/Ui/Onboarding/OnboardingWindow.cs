@@ -107,7 +107,7 @@ internal sealed class OnboardingWindow : ThemedWindow
     /// <summary>Toute fermeture compte : la croix, Échap, ou « C'est parti ».</summary>
     public override void OnClose() => _closed();
 
-    public override void Draw()
+    protected override void DrawContents()
     {
         _cacheChooser.DrawDialogs();
 

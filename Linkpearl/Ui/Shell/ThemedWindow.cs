@@ -81,6 +81,43 @@ public abstract class ThemedWindow : Window
     /// </summary>
     protected virtual void OnCloseButton() => IsOpen = false;
 
+    /// <summary>La nuit sous le contenu, puis le contenu.</summary>
+    /// <remarks>
+    /// Scellée : une fenêtre qui oublierait d'appeler la peinture du fond
+    /// resterait transparente sur le décor du jeu. Les fenêtres sans fond,
+    /// comme les notifications, n'en reçoivent pas.
+    /// </remarks>
+    public sealed override void Draw()
+    {
+        if ((Flags & ImGuiWindowFlags.NoBackground) == 0)
+            PaintNight();
+
+        DrawContents();
+    }
+
+    /// <summary>Le contenu de la fenêtre, dessiné sur la nuit.</summary>
+    protected abstract void DrawContents();
+
+    private void PaintNight()
+    {
+        var position = ImGui.GetWindowPos();
+        var size     = ImGui.GetWindowSize();
+        var dl       = ImGui.GetWindowDrawList();
+
+        // Sous la barre de titre native quand elle existe : elle est dessinée
+        // avant le contenu dans la même liste, la recouvrir effacerait le titre.
+        var titled = (Flags & ImGuiWindowFlags.NoTitleBar) == 0;
+        var top    = titled ? ImGui.GetFrameHeight() : 0f;
+
+        // Hors de la zone de contenu : la liste de la fenêtre est rognée en deçà
+        // des marges, et le fond n'irait pas jusqu'au bord.
+        dl.PushClipRect(position, position + size, false);
+        Surface.NightBackground(dl, position + new Vector2(0f, top), position + size,
+                                Theme.S(Theme.RadiusWindow), roundTop: titled is false,
+                                opacity: BackgroundOpacity);
+        dl.PopClipRect();
+    }
+
     public override void PreDraw()
     {
         // Avant les métriques : les contraintes et le calcul de disposition se
@@ -134,9 +171,10 @@ public abstract class ThemedWindow : Window
             .Var(ImGuiStyleVar.SelectableTextAlign, new Vector2(0f,   0.5f))
 
             // ─── Fonds et bordures ────────────────────────────────────────────
-            // Seul le fond de fenêtre est translucide : les cartes restent
-            // opaques, sans quoi le décor du jeu remonterait derrière le texte.
-            .Color(ImGuiCol.WindowBg,     Theme.Alpha(Theme.BgBase, BackgroundOpacity))
+            // Le fond natif s'efface : c'est la nuit, peinte au début de Draw,
+            // qui porte l'opacité. Les cartes posées dessus sont translucides à
+            // leur tour, comme sur le site, et laissent voir le halo.
+            .Color(ImGuiCol.WindowBg,     Vector4.Zero)
             .Color(ImGuiCol.ChildBg,      Vector4.Zero)
             .Color(ImGuiCol.PopupBg,      Theme.BgSurface)
             .Color(ImGuiCol.Border,       Theme.BorderSoft)

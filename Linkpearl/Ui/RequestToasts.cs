@@ -98,7 +98,7 @@ internal sealed class RequestToasts : ThemedWindow
         base.PostDraw();
     }
 
-    public override void Draw()
+    protected override void DrawContents()
     {
         var requests = _presence.PeekRequests();
         var admissions = _admissions();

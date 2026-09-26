@@ -38,11 +38,14 @@ internal static class StatusBar
 
         var mid = origin.Y + height * 0.5f;
 
-        // Pastille d'état, à gauche.
-        dl.AddCircleFilled(
-            new Vector2(origin.X + Theme.S(Theme.PadWindowX), mid),
-            Theme.S(3.5f),
-            ImGui.GetColorU32(status.Connected ? Theme.Online : Theme.TextFaint));
+        // Pastille d'état, à gauche : la perle quand le service répond, un
+        // point éteint sinon. Sans halo, la barre est trop basse pour lui.
+        var dot = new Vector2(origin.X + Theme.S(Theme.PadWindowX), mid);
+
+        if (status.Connected)
+            Surface.Pearl(dl, dot, Theme.S(4.5f), glow: false);
+        else
+            dl.AddCircleFilled(dot, Theme.S(3.5f), ImGui.GetColorU32(Theme.TextFaint));
 
         // Nommer l'état : un point de trois pixels n'a jamais rien dit à
         // personne, et le plugin sert pour de bon sans rendez-vous joignable.

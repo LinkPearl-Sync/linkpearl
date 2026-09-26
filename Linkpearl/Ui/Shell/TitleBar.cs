@@ -25,18 +25,14 @@ internal static class TitleBar
         var end    = new Vector2(origin.X + width, origin.Y + height);
         var dl     = ImGui.GetWindowDrawList();
 
-        // Bandeau dans le ton foncé de l'accent : la nacre claire porterait mal
-        // du texte clair, son contraste tombant sous le seuil de lisibilité.
-        // Le rayon est celui de la fenêtre, sinon le fond déborde aux angles.
-        dl.AddRectFilled(origin, end, ImGui.GetColorU32(Theme.AccentActive),
+        // Bandeau un cran sous la nuit, comme les barres du site : c'est le
+        // contenu qui porte la lumière, pas le chrome. Le rayon est celui de la
+        // fenêtre, sinon le fond déborde aux angles.
+        dl.AddRectFilled(origin, end, ImGui.GetColorU32(Theme.BgSidebar),
             Theme.S(Theme.RadiusWindow), ImDrawFlags.RoundCornersTop);
 
-        // Reflet vers la gauche : un aplat uni sur toute la largeur est plus plat
-        // qu'un bandeau qui capte la lumière d'un côté. C'est le seul endroit où
-        // la nacre se comporte en nacre.
-        var glow  = ImGui.GetColorU32(Theme.Alpha(Theme.Accent, 0.38f));
-        var clear = ImGui.GetColorU32(Theme.Alpha(Theme.Accent, 0f));
-        dl.AddRectFilledMultiColor(origin, end, glow, clear, clear, glow);
+        dl.AddLine(new Vector2(origin.X, end.Y - 0.5f), new Vector2(end.X, end.Y - 0.5f),
+            ImGui.GetColorU32(Theme.Border), 1f);
 
         // Bouton carré calé sur la hauteur de la barre, et non sur la hauteur
         // d'un cadre ImGui : celle-ci dépend de la police et du padding, si bien

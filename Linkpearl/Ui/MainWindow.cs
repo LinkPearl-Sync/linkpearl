@@ -135,7 +135,7 @@ public sealed class MainWindow : ThemedWindow
     {
     }
 
-    public override void Draw()
+    protected override void DrawContents()
     {
         // Une demande en attente passe devant : c'est la seule chose qui ne peut
         // pas attendre que l'utilisateur pense à aller voir.

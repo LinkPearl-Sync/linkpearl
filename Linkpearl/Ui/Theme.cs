@@ -7,9 +7,10 @@ namespace Linkpearl.Ui;
 /// Jetons de design du plugin.
 /// </summary>
 /// <remarks>
-/// La palette est celle de l'objet : une perle sur de l'ardoise. Fonds neutres
-/// froids, accent nacré. Rien de vif, parce que rien ici n'est une alerte : le
-/// plugin montre des gens, pas des notifications.
+/// La palette est celle du site et du logo : la nuit marine où se tiennent les
+/// deux mogs, le halo bleu de la perle, et l'orange de leurs pompons, réservé à
+/// l'action principale d'un écran. Chaque valeur cite la variable CSS du site
+/// dont elle vient, pour que les deux ne dérivent pas.
 ///
 /// Toute dimension en pixels passe par <see cref="S(float)"/>. Sans cela
 /// l'interface devient illisible dès que l'utilisateur monte l'échelle Dalamud,
@@ -32,57 +33,90 @@ internal static class Theme
     // une interface sombre lisible : chaque niveau doit être distinct du
     // précédent, sinon les cartes disparaissent dans le fond et tout paraît plat.
     //
-    //   BgSunken  <  BgBase  <  BgSidebar  <  BgSurface  <  BgRaised  <  BgHover
+    //   BgSunken  <  BgSidebar  <  BgBase  <  BgSurface  <  BgRaised  <  BgHover
+    //
+    // BgSurface, BgRaised et BgHover valent le blanc à 5, 9 et 14 % posé sur
+    // --deep : ce sont les cartes du site, précalculées en opaque pour ce qui
+    // doit masquer le décor (infobulles, notifications, menus).
 
-    public static readonly Vector4 BgSunken  = Hex(0x1A1C22); // champs de saisie
-    public static readonly Vector4 BgBase    = Hex(0x1F222A); // fond de fenêtre
-    public static readonly Vector4 BgSidebar = Hex(0x24272F); // barre latérale, barre d'état
-    public static readonly Vector4 BgSurface = Hex(0x2A2E38); // cartes, panneaux
-    public static readonly Vector4 BgRaised  = Hex(0x343945); // carte survolée, boutons neutres
-    public static readonly Vector4 BgHover   = Hex(0x404654); // survol d'un élément surélevé
+    public static readonly Vector4 BgSunken  = Hex(0x040B26); // --field, champs de saisie
+    public static readonly Vector4 BgBase    = Hex(0x07123A); // --deep, fond de fenêtre
+    public static readonly Vector4 BgSidebar = Hex(0x060F33); // barres, un cran sous le fond
+    public static readonly Vector4 BgSurface = Hex(0x131E44); // cartes opaques, infobulles
+    public static readonly Vector4 BgRaised  = Hex(0x1D274C); // surface survolée
+    public static readonly Vector4 BgHover   = Hex(0x2A3356); // survol d'un élément surélevé
+
+    /// <summary>Fond d'une carte posée sur la nuit : translucide, pour laisser voir le halo.</summary>
+    public static readonly Vector4 CardFill      = Hex(0xFFFFFF, 0.05f);
+    public static readonly Vector4 CardFillHover = Hex(0xFFFFFF, 0.09f);
+
+    /// <summary>Haut du dégradé de fond, et cœur du halo, tirés du fond du site.</summary>
+    public static readonly Vector4 NightTop  = Hex(0x0C1E5C);
+    public static readonly Vector4 NightHalo = Hex(0x1D3B9A);
 
     /// <summary>Ombre portée sous les surfaces surélevées.</summary>
     public static readonly Vector4 Shadow = Hex(0x000000, 0.50f);
 
     // ─── Accents ──────────────────────────────────────────────────────────────
     //
-    // Nacre : un bleu très désaturé qui tire sur le lavande. Il se détache du
-    // gris sans crier, et se distingue de l'or de l'interface native du jeu,
-    // avec laquelle il ne faut pas que l'on confonde la nôtre.
+    // Le halo bleu (--glow) marque ce qui est actif ou choisi. L'orange pompon
+    // (--pom) ne sert qu'à l'action principale d'un écran, comme le bouton
+    // « Copier » du site : répandu, il ne désignerait plus rien.
 
-    public static readonly Vector4 Accent       = Hex(0xA8C0E8);
-    public static readonly Vector4 AccentHover  = Hex(0xC8D8F5);
-    public static readonly Vector4 AccentActive = Hex(0x50658C);
+    public static readonly Vector4 Accent       = Hex(0x5FB4FF);
+    public static readonly Vector4 AccentHover  = Hex(0x8FCBFF);
+    public static readonly Vector4 AccentActive = Hex(0x3D8FE0);
 
     /// <summary>Version assourdie, pour les fonds et les voiles.</summary>
-    public static readonly Vector4 AccentMuted = Hex(0x3E4E6B);
+    public static readonly Vector4 AccentMuted = Hex(0x173067);
+
+    public static readonly Vector4 Action       = Hex(0xFFA45C);
+    public static readonly Vector4 ActionHover  = Hex(0xFFB67A);
+    public static readonly Vector4 ActionActive = Hex(0xE88A40);
+
+    /// <summary>Texte posé sur l'orange, le brun du bouton « Copier » du site.</summary>
+    public static readonly Vector4 TextOnAction = Hex(0x2A1300);
+
+    // ─── Perle ────────────────────────────────────────────────────────────────
+    //
+    // Le dégradé des pastilles du site, du reflet au bord : blanc, bleu clair,
+    // bleu, lavande. Le halo est celui de leur box-shadow.
+
+    public static readonly Vector4 PearlShine = Hex(0xFFFFFF);
+    public static readonly Vector4 PearlLight = Hex(0xBFE4FF);
+    public static readonly Vector4 PearlBody  = Hex(0x7A9CFF);
+    public static readonly Vector4 PearlRim   = Hex(0xC79BFF);
+    public static readonly Vector4 PearlGlow  = Hex(0x7EC3FF);
 
     // ─── Texte ────────────────────────────────────────────────────────────────
 
-    public static readonly Vector4 Text      = Hex(0xE9EAEF);
-    public static readonly Vector4 TextMuted = Hex(0xAFB4C0);
-    public static readonly Vector4 TextFaint = Hex(0x7E8492);
-    public static readonly Vector4 Link      = Hex(0xA8C0E8);
+    public static readonly Vector4 Text      = Hex(0xEAF1FF); // --ink
+    public static readonly Vector4 TextMuted = Hex(0xA9B8E6); // --mute
+    public static readonly Vector4 TextFaint = Hex(0x7F8DC0); // --faint
+    public static readonly Vector4 Link      = Hex(0x8FD0FF); // les étoiles du site
 
-    /// <summary>Texte posé sur une surface claire, l'accent nacré par exemple.</summary>
-    public static readonly Vector4 TextOnLight = Hex(0x14161C);
+    /// <summary>Texte posé sur une surface claire, l'accent par exemple.</summary>
+    public static readonly Vector4 TextOnLight = Hex(0x0B1433);
 
     // ─── Statuts ──────────────────────────────────────────────────────────────
 
     /// <summary>Pair joint et apparence posée.</summary>
-    public static readonly Vector4 Online = Hex(0x5BCF9A);
+    public static readonly Vector4 Online = Hex(0x6FE0B0);
 
-    /// <summary>Transfert en cours, ou pair en pause.</summary>
-    public static readonly Vector4 Idle = Hex(0xE8C46A);
+    /// <summary>Transfert en cours, ou pair en pause. Jaune et non orange : l'orange est à l'action.</summary>
+    public static readonly Vector4 Idle = Hex(0xF5D06F);
 
-    public static readonly Vector4 Danger      = Hex(0xE8666B);
-    public static readonly Vector4 DangerHover = Hex(0xF48287);
+    public static readonly Vector4 Danger      = Hex(0xFF6B7D);
+    public static readonly Vector4 DangerHover = Hex(0xFF8A98);
 
     // ─── Bordures ─────────────────────────────────────────────────────────────
+    //
+    // --line du site, rgba(143,196,255,.22), posé sur --deep ; la douce à 12 %,
+    // la claire à 35 %.
 
-    public static readonly Vector4 Border      = Hex(0x3C414E);
-    public static readonly Vector4 BorderSoft  = Hex(0x2F3440);
-    public static readonly Vector4 BorderLight = Hex(0x505869);
+    public static readonly Vector4 Border      = Hex(0x253965);
+    public static readonly Vector4 BorderSoft  = Hex(0x172752);
+    public static readonly Vector4 BorderLight = Hex(0x37507F);
 
     /// <summary>
     /// Liseré clair posé sur l'arête haute d'une surface. C'est ce qui donne
@@ -92,8 +126,11 @@ internal static class Theme
 
     // ─── Métriques (en pixels non scalés : toujours passer par S()) ───────────
 
-    public const float RadiusWindow = 10f;
-    public const float RadiusCard   =  8f;
+    public const float RadiusWindow = 12f;
+
+    /// <summary>Le site en a 18 : ImGui adoucit mal un si grand rayon aux petites tailles.</summary>
+    public const float RadiusCard   = 14f;
+
     public const float RadiusFrame  =  6f;
 
     public const float SidebarWidth    = 168f;

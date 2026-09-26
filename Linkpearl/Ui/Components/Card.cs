@@ -125,13 +125,23 @@ internal static class Card
                    && ImGui.IsWindowHovered(ImGuiHoveredFlags.ChildWindows)
                    && ImGui.IsMouseHoveringRect(min, max);
 
-        var bg = background ?? (tone == CardTone.Interactive && hovered ? Theme.BgRaised : Theme.BgSurface);
+        var bg = background ?? (tone == CardTone.Interactive && hovered ? Theme.CardFillHover : Theme.CardFill);
 
-        var dl = ImGui.GetWindowDrawList();
-        Surface.Panel(dl, min, max, bg, border ?? Theme.Border);
+        var dl       = ImGui.GetWindowDrawList();
+        var rounding = Theme.S(Theme.RadiusCard);
 
+        // Une carte active se signale par un halo tout autour, comme le champ
+        // du site, et non plus par une barre à gauche. Peint avant elle : son
+        // fond recouvre l'intérieur. Sans ombre, qui assombrirait le halo.
         if (accent is { } accentColor)
-            Surface.AccentBar(dl, min, max, accentColor);
+        {
+            Surface.Glow(dl, min, max, rounding, accentColor);
+            Surface.Panel(dl, min, max, bg, Theme.Alpha(accentColor, 0.70f), rounding, shadow: false);
+        }
+        else
+        {
+            Surface.Panel(dl, min, max, bg, border ?? Theme.Border, rounding);
+        }
 
         ImGui.PushID(id);
         ImGui.Dummy(new Vector2(0f, Theme.S(Theme.CardPadY)));

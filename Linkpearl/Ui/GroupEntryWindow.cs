@@ -105,7 +105,7 @@ public sealed class GroupEntryWindow : ThemedWindow
         _createPassword = "";
     }
 
-    public override void Draw()
+    protected override void DrawContents()
     {
         if (_creating)
             DrawCreate();
