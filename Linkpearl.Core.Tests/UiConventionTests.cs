@@ -46,7 +46,7 @@ public class UiConventionTests
         },
         {
             "ImGui.CollapsingHeader(", "un en-tête repliable passe par Fold", [],
-            ["Pages.NearbyPage.cs", "Pages.PairsPage.cs"]
+            ["Pages.PairsPage.cs"]
         },
         {
             "ImGui.SameLine()", "l'espacement se dit, il ne se laisse pas au défaut d'ImGui", [],
