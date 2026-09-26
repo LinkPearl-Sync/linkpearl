@@ -51,9 +51,14 @@ internal static class Toggle
         dl.AddText(new Vector2(start.X, mid - textSize.Y * 0.5f), ImGui.GetColorU32(Theme.Text), text);
         dl.PopClipRect();
 
-        if (hint is not null || hintContent is not null)
-            DrawHint(dl, new Vector2(Math.Min(start.X + textSize.X, textEnd) + Theme.S(Theme.GapS), mid),
-                     hint, hintContent);
+        // Un clic sur ⓘ vient lire l'explication, pas changer le réglage : sur
+        // « Me signaler aux autres joueurs », il changeait la visibilité.
+        var onHint = (hint is not null || hintContent is not null)
+                  && DrawHint(dl, new Vector2(Math.Min(start.X + textSize.X, textEnd) + Theme.S(Theme.GapS), mid),
+                              hint, hintContent);
+
+        if (onHint)
+            clicked = false;
 
         DrawTrack(dl, trackMin, value, hovered);
 
@@ -109,8 +114,8 @@ internal static class Toggle
         dl.AddCircleFilled(new Vector2(min.X + radius, min.Y + radius), knob, ImGui.GetColorU32(Theme.TextFaint));
     }
 
-    /// <summary>L'icône ⓘ, dessinée à la main : la rangée entière est déjà un bouton.</summary>
-    private static void DrawHint(ImDrawListPtr dl, Vector2 at, string? hint, Action? hintContent)
+    /// <summary>L'icône ⓘ, dessinée à la main : la rangée entière est déjà un bouton. Rend vrai si elle est survolée.</summary>
+    private static bool DrawHint(ImDrawListPtr dl, Vector2 at, string? hint, Action? hintContent)
     {
         var glyph = Icons.Info.S();
         var size  = ImGui.CalcTextSize(glyph);
@@ -119,11 +124,13 @@ internal static class Toggle
         dl.AddText(min, ImGui.GetColorU32(Theme.TextFaint), glyph);
 
         if (ImGui.IsMouseHoveringRect(min, min + size) is false)
-            return;
+            return false;
 
         if (hintContent is not null)
             Feedback.Tooltip(hintContent);
         else if (hint is not null)
             Feedback.Tooltip(hint);
+
+        return true;
     }
 }

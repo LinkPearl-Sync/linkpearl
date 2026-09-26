@@ -338,14 +338,14 @@ internal sealed class PairsPage(
 
         if (status is null)
         {
-            Chip.Draw("recherche du pair…", Theme.Idle, Icons.Waiting);
+            Chip.Draw("recherche…", Theme.Idle, Icons.Waiting);
             return;
         }
 
         switch (status.Phase)
         {
             case PeerPhase.Searching:
-                Chip.Draw("recherche du pair…", Theme.Idle, Icons.Waiting);
+                Chip.Draw("recherche…", Theme.Idle, Icons.Waiting);
                 Feedback.TooltipOnHover("Linkpearl le cherche au rendez-vous. Cela prend jusqu'à 25 secondes.");
                 return;
 
@@ -357,8 +357,10 @@ internal sealed class PairsPage(
                 return;
 
             case PeerPhase.Failing:
-                Chip.Draw($"échec, nouvel essai {Countdown(status.NextAttempt)}", Theme.Idle, Icons.Warning);
-                Feedback.TooltipOnHover(status.LastFailure ?? "La dernière tentative a échoué.");
+                // Court : la colonne fait 190 px, et un libellé rogné perdait
+                // justement le compte à rebours. L'échec se dit dans l'infobulle.
+                Chip.Draw($"réessai {Countdown(status.NextAttempt)}", Theme.Idle, Icons.Warning);
+                Feedback.TooltipOnHover($"Échec de la dernière tentative : {status.LastFailure ?? "raison inconnue"}.");
                 return;
 
             case PeerPhase.Applied:
@@ -377,7 +379,7 @@ internal sealed class PairsPage(
                 return;
 
             default:
-                Chip.Draw("en attente de son apparence", Theme.Accent, Icons.Connected);
+                Chip.Draw("attend son apparence", Theme.Accent, Icons.Connected);
                 return;
         }
     }

@@ -206,9 +206,14 @@ public sealed class GroupEntryWindow : ThemedWindow
             return;
 
         var padding = ImGui.GetStyle().FramePadding;
+        var dl      = ImGui.GetWindowDrawList();
 
-        ImGui.GetWindowDrawList().AddText(ImGui.GetItemRectMin() + padding,
-            ImGui.GetColorU32(ImGuiCol.TextDisabled), hint);
+        // Rognée au cadre, comme le faisait InputTextWithHint : une indication
+        // trop longue sortait du champ. Et en TextFaint : plus claire, elle se
+        // prenait pour du texte déjà saisi.
+        dl.PushClipRect(ImGui.GetItemRectMin(), ImGui.GetItemRectMax(), true);
+        dl.AddText(ImGui.GetItemRectMin() + padding, ImGui.GetColorU32(Theme.TextFaint), hint);
+        dl.PopClipRect();
     }
 
     private void DrawCreate()
@@ -225,7 +230,7 @@ public sealed class GroupEntryWindow : ThemedWindow
         ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputText("##group_name", ref _createName, GroupPolicyCodec.MaxNameBytes,
                         ImGuiInputTextFlags.CallbackCharFilter, KeepNameChars);
-        DrawHint(_createName, "Nom du groupe, sans espace (32 caractères)");
+        DrawHint(_createName, "Nom, sans espace");
 
         ImGui.SetNextItemWidth(FieldWidth);
         ImGui.InputTextWithHint("##group_create_password", "Mot de passe (facultatif)", ref _createPassword,

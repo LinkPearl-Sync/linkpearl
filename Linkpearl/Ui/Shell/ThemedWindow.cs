@@ -113,10 +113,18 @@ public abstract class ThemedWindow : Window
 
         // Hors de la zone de contenu : la liste de la fenêtre est rognée en deçà
         // des marges, et le fond n'irait pas jusqu'au bord.
+        // ImGui a déjà dessiné, dans la même liste, l'ascenseur et la bordure :
+        // la nuit ne couvre pas la colonne de l'ascenseur, et la bordure est
+        // retracée par-dessus. Sans quoi une fenêtre qui défile à 150 % gardait
+        // un ascenseur invisible, et son contenu semblait simplement coupé.
+        var scrollbar = ImGui.GetScrollMaxY() > 0f ? ImGui.GetStyle().ScrollbarSize : 0f;
+        var rounding  = Theme.S(Theme.RadiusWindow);
+
         dl.PushClipRect(position, position + size, false);
-        Surface.NightBackground(dl, position + new Vector2(0f, top), position + size,
-                                Theme.S(Theme.RadiusWindow), roundTop: titled is false,
-                                opacity: BackgroundOpacity);
+        Surface.NightBackground(dl, position + new Vector2(0f, top), position + size - new Vector2(scrollbar, 0f),
+                                rounding, roundTop: titled is false, opacity: BackgroundOpacity);
+        dl.AddRect(position, position + size, ImGui.GetColorU32(Theme.BorderSoft), rounding, ImDrawFlags.None,
+                   ImGui.GetStyle().WindowBorderSize);
         dl.PopClipRect();
     }
 
