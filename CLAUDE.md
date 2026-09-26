@@ -20,11 +20,11 @@ spec prévoyait.
 
 Le service de rendez-vous est dans [linkpearl-sync-rendezvous](https://github.com/LinkPearl-Sync/linkpearl-sync-rendezvous),
 cloné à côté de celui-ci : `~/Projects/linkpearl-sync/plugin` et `~/Projects/linkpearl-sync/rendezvous`.
-Il porte une copie littérale de cinq fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
-`Core/Transport/Rendezvous/RendezvousTicket.cs`, `Core/Transport/Rendezvous/RendezvousAddress.cs`,
-`Core/Abstractions/IClock.cs` et `Core/Safety/BanList.cs`.
+Il porte une copie littérale de six fichiers d'ici : `Core/Transport/Rendezvous/RendezvousWire.cs`,
+`Core/Transport/Rendezvous/ServiceConsensus.cs`, `Core/Transport/Rendezvous/RendezvousTicket.cs`,
+`Core/Transport/Rendezvous/RendezvousAddress.cs`, `Core/Abstractions/IClock.cs` et `Core/Safety/BanList.cs`.
 
-Toucher à l'un des cinq oblige à recopier là-bas, et à vérifier que `diff` est vide.
+Toucher à l'un des six oblige à recopier là-bas, et à vérifier que `diff` est vide.
 `Linkpearl.Core.Tests/Safety/BanListTests.cs` est copié lui aussi : le service dérive les
 empreintes de bannissement, le client les vérifie, et une dérive entre les deux ferait une
 liste qui ne protège personne sans qu'aucun test ne tombe.
