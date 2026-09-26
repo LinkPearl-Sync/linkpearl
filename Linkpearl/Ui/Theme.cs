@@ -136,7 +136,7 @@ internal static class Theme
     public const float SidebarWidth    = 168f;
     public const float SidebarItem     = 40f;
     public const float TitleBarHeight  = 40f;
-    public const float StatusBarHeight = 26f;
+    public const float StatusBarHeight = 32f;
 
     public const float PadWindowX = 16f;
     public const float PadWindowY = 14f;

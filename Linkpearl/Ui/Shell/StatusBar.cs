@@ -34,7 +34,9 @@ internal static class StatusBar
 
         dl.AddLine(origin, new Vector2(end.X, origin.Y), ImGui.GetColorU32(Theme.BorderSoft), 1f);
 
-        using var font = Fonts.PushSmall();
+        // Corps de texte et non petit : vu en jeu le 26 septembre, l'état se
+        // lisait mal en bas d'une grande fenêtre.
+        using var font = Fonts.PushBody();
 
         var mid = origin.Y + height * 0.5f;
 
@@ -43,14 +45,16 @@ internal static class StatusBar
         // Essayée le 26 septembre, la perle bleue ne disait plus « connecté ».
         dl.AddCircleFilled(
             new Vector2(origin.X + Theme.S(Theme.PadWindowX), mid),
-            Theme.S(3.5f),
+            Theme.S(4.5f),
             ImGui.GetColorU32(status.Connected ? Theme.Online : Theme.TextFaint));
 
-        // Nommer l'état : un point de trois pixels n'a jamais rien dit à
+        // Nommer l'état en toutes lettres : un point n'a jamais rien dit à
         // personne, et le plugin sert pour de bon sans rendez-vous joignable.
-        var left = status.Connected
-            ? status.Character
-            : status.Failure is { } failure ? $"hors ligne, {failure}" : "hors ligne";
+        // « En ligne » plutôt que « connecté » : le mot ne s'accorde pas, et il
+        // fait pendant à « hors ligne ».
+        var state  = status.Connected ? "En ligne" : "Hors ligne";
+        var detail = status.Connected ? status.Character : status.Failure;
+        var left   = detail is null ? state : $"{state} · {detail}";
 
         // Décompte des pairs, à droite. Mesuré d'abord : c'est lui qui borne
         // la place laissée au texte de gauche.
@@ -62,16 +66,26 @@ internal static class StatusBar
         };
 
         var rightWidth = right is null ? 0f : ImGui.CalcTextSize(right).X + Theme.S(Theme.GapL);
-        var leftX      = origin.X + Theme.S(Theme.PadWindowX + 10f);
+        var leftX      = origin.X + Theme.S(Theme.PadWindowX + 12f);
         var room       = end.X - Theme.S(Theme.PadWindowX) - rightWidth - leftX;
 
-        // Une fenêtre étroite rognait la panne en plein mot : on l'abrège, et
-        // le texte entier reste au survol.
-        var shown     = Ellipsize(left, room);
-        var leftSize  = ImGui.CalcTextSize(shown);
-        var leftStart = new Vector2(leftX, mid - leftSize.Y * 0.5f);
+        // L'état d'abord, dans la couleur de la pastille ; le détail ensuite,
+        // plus discret. Une fenêtre étroite rognait la panne en plein mot : on
+        // abrège le détail, et le texte entier reste au survol.
+        var stateSize = ImGui.CalcTextSize(state);
+        var top       = mid - stateSize.Y * 0.5f;
 
-        dl.AddText(leftStart, ImGui.GetColorU32(status.Connected ? Theme.TextMuted : Theme.TextFaint), shown);
+        dl.AddText(new Vector2(leftX, top),
+            ImGui.GetColorU32(status.Connected ? Theme.Online : Theme.TextMuted), state);
+
+        var shownDetail = detail is null ? null : Ellipsize($" · {detail}", room - stateSize.X);
+        var leftEnd     = new Vector2(leftX + stateSize.X, top + stateSize.Y);
+
+        if (shownDetail is not null)
+        {
+            dl.AddText(new Vector2(leftX + stateSize.X, top), ImGui.GetColorU32(Theme.TextFaint), shownDetail);
+            leftEnd.X += ImGui.CalcTextSize(shownDetail).X;
+        }
 
         if (right is not null)
         {
@@ -81,17 +95,13 @@ internal static class StatusBar
                 ImGui.GetColorU32(Theme.TextFaint), right);
         }
 
-        var hoveringLeft = ImGui.IsMouseHoveringRect(leftStart, leftStart + leftSize);
+        var hoveringLeft = ImGui.IsMouseHoveringRect(new Vector2(leftX, top), leftEnd);
+        var abridged     = detail is not null && shownDetail != $" · {detail}";
 
         ImGui.Dummy(new Vector2(width, height));
 
-        if (hoveringLeft && ReferenceEquals(shown, left) is false)
-            Feedback.Tooltip(() =>
-            {
-                // La police réduite de la barre est encore poussée : l'infobulle se lit au corps normal.
-                using var body = Fonts.PushBody();
-                Text.Body(left);
-            });
+        if (hoveringLeft && abridged)
+            Feedback.Tooltip(() => Text.Body(left));
     }
 
     /// <summary>Le texte tel quel s'il tient dans la largeur, sinon abrégé par « … ».</summary>
