@@ -682,6 +682,16 @@ ConsensusQuery  0x17 | page (2, BE)
 ConsensusPage   0x18 | page (2, BE) | pages (2, BE) | tranche du document (≤ 32 Kio)
 ```
 
+L'autorité publie aussi l'état public du cercle, en JSON, pour la page du réseau
+du site. Le plugin ne le demande jamais : il ne sert qu'à l'affichage, et rien n'y
+est signé. Mêmes tranches, mêmes bornes, même plafond de pages par connexion ; un
+service ordinaire répond par une erreur.
+
+```
+NetworkStatusQuery  0x19 | page (2, BE)
+NetworkStatusPage   0x1A | page (2, BE) | pages (2, BE) | tranche du JSON (≤ 32 Kio)
+```
+
 **Placement** d'une paire, par hachage de rendez-vous :
 
 ```
